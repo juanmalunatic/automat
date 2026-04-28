@@ -109,6 +109,8 @@ Use nullable typed columns plus `field_status_json` to preserve these statuses:
 
 A discarded job is not deleted. It is simply not shown or not sent to AI by default.
 
+In the local fake pipeline runner, discarded jobs may still receive a final `triage_results` row with `NO / ARCHIVE` even when AI and economics rows are skipped.
+
 ### AI evaluation
 
 `ai_evaluations` stores semantic judgment only.
@@ -154,6 +156,8 @@ This stage owns:
 - `priority_score`
 
 `ai_reason_apply_short` is kept here for compatibility with the old manual TSV schema.
+
+Hard filter rejects may still be finalized here as `NO / ARCHIVE` even if no `ai_evaluations` or `economics_results` row was created for that snapshot.
 
 `ai_verdict_apply` should represent the base deterministic verdict before any promotion trace is applied. `ai_apply_promote` records whether the base verdict was promoted by the good-looking `Ok` override or low-cash mode.
 

@@ -157,6 +157,21 @@ Should verify:
 - payload builder includes job, client, activity, deterministic filter flags, and fit context
 - payload builder does not invent unavailable deterministic fields
 
+### `tests/test_run_pipeline.py`
+
+Should verify:
+
+- a strong local WooCommerce/plugin fixture flows through the full staged pipeline and appears in `v_decision_shortlist`
+- the returned shortlist row includes `job_key`, `final_verdict`, `queue_bucket`, `final_reason`, core AI fields, economics fields, and upstream job fields
+- the happy-path run creates one row in each staged table from `ingestion_runs` through `triage_results`
+- fake AI validation failure stops before `ai_evaluations`, `economics_results`, and `triage_results`, while earlier stages remain stored
+- hard rejects still store `jobs`, raw snapshots, normalized snapshots, and `filter_results`
+- hard rejects skip AI/economics inserts but still create a `triage_results` archive row
+- rerunning the same raw fixture with the same versioned inputs is replay-safe:
+  - a fresh `ingestion_runs` row is allowed
+  - duplicate `raw_job_snapshots` rows are reused/skipped instead of violating uniqueness
+  - duplicate versioned downstream rows are reused instead of being blindly duplicated
+
 ## Test data
 
 Use small local fixtures.
@@ -176,6 +191,8 @@ Do not require real AI calls for unit tests.
 AI tests should use fake model responses or stored fixture JSON.
 
 AI contract tests should stay pure and should not require a live model, network calls, or a database connection.
+
+Pipeline-runner tests should use only local fake payloads and fake AI output. They should not require real Upwork credentials, network calls, or live model access.
 
 For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
 

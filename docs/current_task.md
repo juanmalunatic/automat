@@ -2,123 +2,151 @@
 
 ## Task name
 
-Implement normalized job payload conversion using local fixtures.
+Implement a local fake end-to-end pipeline runner.
 
 ## Goal
 
-Create a pure, testable normalization module that:
+Create a small pipeline runner that connects the existing staged modules using only local fake payloads and fake AI output.
 
-1. accepts a fake/local raw job-like payload dict
-2. generates a stable `job_key`
-3. extracts normalized visible fields needed by the staged MVP
-4. preserves unavailable/unknown values as `None` plus `field_status_json`
-5. projects the normalized result into downstream module inputs without requiring SQLite
+The runner should:
 
-This task is normalizer-only. It should not make real Upwork API calls and it should not change filter, AI, economics, or triage logic.
+1. initialize the SQLite database
+2. create an `ingestion_runs` row
+3. normalize one raw job-like payload
+4. persist each staged output into the existing tables
+5. use supplied fake AI output instead of calling a model
+6. return the job's row from `v_decision_shortlist` when the final queue bucket is shortlist-visible
+
+This task is pipeline-runner-only. It should not add real Upwork fetching, OAuth, live AI calls, queue UI work, or TSV export.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/normalize.py`
-- `tests/test_normalize.py`
+- `src/upwork_triage/run_pipeline.py`
+- `tests/test_run_pipeline.py`
 - `docs/current_task.md`
 
 Allowed supporting edits:
 
+- `src/upwork_triage/db.py` only if a small helper is needed and still matches `docs/schema.md`
 - `docs/testing.md` if test expectations need clarification
-- `docs/design.md` if normalization wording needs clarification
+- `docs/design.md` if pipeline wording needs clarification
 - `docs/schema.md` only if a schema-level issue is discovered
 - `docs/decisions.md` only if a durable design decision is made
 - `pyproject.toml` only if needed for test/import configuration
 
 ## Required public API
 
-Implement a small pure-Python normalization layer in `src/upwork_triage/normalize.py`.
+Expose a simple orchestrator function in `src/upwork_triage/run_pipeline.py`:
 
-Expose a clear typed API, using small dataclasses or equivalently explicit typed structures.
+- `run_fake_pipeline(conn: sqlite3.Connection, raw_payload: Mapping[str, object], fake_ai_output: Mapping[str, object]) -> dict[str, object] | None`
 
-The module should provide:
+The runner should use the existing pure modules rather than duplicating their logic:
 
-- a typed normalization result for one raw job-like payload
-- a stable hash helper using deterministic JSON serialization
-- a stable job-key builder
-- typed projections suitable for:
-  - jobs-table upsert inputs
-  - raw-snapshot metadata
-  - `job_snapshots_normalized` insert inputs
-  - `FilterInput`
-  - `AiPayloadInput`
-  - `EconomicsJobInput`
+- `normalize_job_payload()`
+- `evaluate_filters()`
+- `build_ai_payload()`
+- `parse_ai_output()`
+- `serialize_ai_evaluation()`
+- `calculate_economics()`
+- `evaluate_triage()`
 
 ## Required behavior
 
-The normalizer should:
+For one fake/local raw job payload, the runner should:
 
-- accept a raw job-like dict payload
-- generate `job_key` with this strategy:
-  - visible Upwork job id -> `upwork:<id>`
-  - else stable source URL -> `url:<stable-hash-of-normalized-url>`
-  - else -> `raw:<stable-hash-of-raw-payload>`
-- never convert missing values to zero
-- preserve unavailable values as `None` plus a field-status entry
-- distinguish:
-  - `NOT_VISIBLE`
-  - `NOT_APPLICABLE`
-  - `PARSE_FAILURE`
-  - `MANUAL`
+1. call `initialize_db(conn)`
+2. create an `ingestion_runs` row
+3. normalize the payload and compute `job_key` / `raw_hash`
+4. upsert `jobs`
+5. insert or reuse `raw_job_snapshots`
+6. insert or reuse `job_snapshots_normalized`
+7. evaluate deterministic filters and insert or reuse `filter_results`
+8. for non-discarded jobs:
+   - build the AI payload
+   - validate the supplied fake AI output
+   - insert or reuse `ai_evaluations`
+   - load the default settings row
+   - calculate economics and insert or reuse `economics_results`
+   - evaluate final triage and insert or reuse `triage_results`
+9. for hard-rejected jobs:
+   - do not call or insert AI evaluation
+   - do not insert economics results
+   - still create a `triage_results` row with final `NO / ARCHIVE`
+10. return the row from `v_decision_shortlist` for the normalized `job_key`, or `None` if the final queue bucket is not shortlist-visible
 
-Numeric normalization rules:
+## Duplicate-handling choice for this task
 
-- money -> `float`
-- percentages -> numeric percent values such as `75.0`, not fractions such as `0.75`
-- minutes -> integer minutes
-- booleans -> `0/1`-compatible values or bools, while keeping DB compatibility in mind
-- proposal bands -> preserved as text such as `5 to 10`, `20 to 50`, or `50+`
+The fake runner should be safe to rerun with the same raw fixture.
 
-Contract-type handling:
+Chosen behavior for identical reruns with the same fixed stage versions:
 
-- fixed jobs should populate `j_pay_fixed` and mark hourly fields `NOT_APPLICABLE`
-- hourly jobs should populate `j_pay_hourly_low` / `j_pay_hourly_high` and mark `j_pay_fixed` `NOT_APPLICABLE`
+- create a fresh `ingestion_runs` row every time
+- reuse an existing `raw_job_snapshots` row when `(job_key, raw_hash)` already exists
+- reuse existing versioned downstream rows when the same upstream ids and versioned inputs already exist
+- avoid raising uniqueness errors for duplicate local reruns
 
-## Result requirements
+This keeps the fake runner replay-friendly without inventing new schema rules.
 
-The typed normalized result should be suitable for downstream modules and should include enough information to build:
+## Settings behavior
 
-- jobs-table identity inputs
-- raw snapshot metadata including `raw_hash`
-- normalized insert inputs with `field_status_json`
-- `FilterInput`
-- `AiPayloadInput`
-- `EconomicsJobInput`
+The runner should read the default row from `triage_settings_versions` and convert it into:
 
-Use small local fake payloads in tests. The normalizer does not need to support real Upwork payload shapes yet.
+- `EconomicsSettings`
+- `TriageSettings`
+
+Do not hardcode a separate shadow settings object inside the pipeline runner.
+
+## AI behavior
+
+The runner must accept `fake_ai_output` as a function argument.
+
+It must not:
+
+- call a real model
+- call OpenAI APIs
+- require network access
+
+If `parse_ai_output()` fails validation, the runner should stop before inserting:
+
+- `ai_evaluations`
+- `economics_results`
+- `triage_results`
+
+Earlier stages through `filter_results` should remain stored.
 
 ## Test requirements
 
-Add tests in `tests/test_normalize.py`.
+Add tests in `tests/test_run_pipeline.py`.
 
 Tests should verify:
 
-1. Upwork id generates `job_key = "upwork:<id>"`
-2. missing id but stable `source_url` generates `url:<hash>`
-3. missing id and URL generates `raw:<hash>`
-4. the same raw payload produces the same raw hash / job key
-5. money strings like `$500`, `$1.5K`, and `$25/hr` normalize correctly where supported
-6. percent strings like `75%` normalize to `75.0`, not `0.75`
-7. missing values remain `None` and get `field_status_json` entries
-8. explicit unavailable values map to `None` plus `NOT_VISIBLE`
-9. fixed jobs use `j_pay_fixed` and mark hourly fields `NOT_APPLICABLE`
-10. hourly jobs use `j_pay_hourly_low/high` and mark fixed field `NOT_APPLICABLE`
-11. proposal bands are preserved as text
-12. payment verified normalizes to true/1-compatible value
-13. missing client avg hourly does not become `0`
-14. malformed numeric values become `None` plus `PARSE_FAILURE`
-15. normalized output can build a `FilterInput`
-16. normalized output can build an `AiPayloadInput`
-17. normalized output can build an `EconomicsJobInput`
-
-Use pure unit tests. The normalizer tests should not require a database connection, real Upwork credentials, or network access.
+1. a strong fake WooCommerce/plugin job flows through all staged tables and appears in `v_decision_shortlist`
+2. the returned shortlist row includes:
+   - `job_key`
+   - `final_verdict`
+   - `queue_bucket`
+   - `final_reason`
+   - `ai_verdict_bucket`
+   - `ai_quality_fit`
+   - `b_margin_usd`
+   - `j_title`
+   - `source_url`
+3. the happy-path DB has one row in each expected staged table:
+   - `ingestion_runs`
+   - `jobs`
+   - `raw_job_snapshots`
+   - `job_snapshots_normalized`
+   - `filter_results`
+   - `ai_evaluations`
+   - `economics_results`
+   - `triage_results`
+4. fake AI validation failure stops before inserting AI/economics/triage rows
+5. a hard-rejected raw job still stores raw and normalized snapshots plus `filter_results`, but does not insert `ai_evaluations` or `economics_results`
+6. a hard-rejected job still produces a `triage_results` row with `final_verdict = NO` and `queue_bucket = ARCHIVE`
+7. running the same payload twice does not violate `UNIQUE(job_key, raw_hash)` and reuses duplicate stage rows instead of duplicating them
+8. no real network, Upwork API, or live model call is required
 
 ## Out of scope
 
@@ -126,11 +154,12 @@ Do not implement:
 
 - real Upwork API calls
 - OAuth
-- AI calls
+- real AI calls
+- OpenAI integration
 - filter changes
-- economics changes
-- triage changes
-- queue rendering
+- economics formula changes
+- triage logic changes
+- queue rendering beyond minimal debug output if needed
 - TSV export
 - database schema changes unless a real blocking issue is discovered
 
@@ -138,8 +167,8 @@ Do not implement:
 
 The task is complete when:
 
-- the normalizer module is pure and testable without SQLite or network calls
-- stable job-key generation and deterministic raw hashing are implemented
-- normalized numeric/text/status handling matches the staged schema expectations
-- downstream projection helpers can build filter, AI-payload, and economics inputs
+- the fake runner wires the existing staged modules together without duplicating their logic
+- the staged tables are populated in order from one local payload and one fake AI output
+- hard rejects and AI-validation failures behave explicitly and are tested
+- duplicate reruns are replay-safe
 - `py -m pytest` passes

@@ -174,3 +174,19 @@ These protect the main replay/dedupe/versioning paths without overcomplicating t
 Tradeoff:
 
 Some later modules may need explicit upsert behavior rather than blind insert.
+
+## 2026-04-28 - The fake local pipeline runner reuses identical versioned stage rows
+
+Decision:
+
+When the local fake runner sees the same `job_key` / `raw_hash` again with the same fixed stage versions and the same versioned inputs, it should reuse existing staged rows instead of inserting duplicates.
+
+Each rerun should still create a fresh `ingestion_runs` row so replay history remains visible.
+
+Reason:
+
+The staged schema already has uniqueness rules for raw snapshots, normalized snapshots, and filter results. Reusing identical rows keeps the fake runner replay-safe, avoids uniqueness errors during local testing, and preserves the staged architecture without inventing new schema rules.
+
+Tradeoff:
+
+The fake runner behaves idempotently for identical local reruns rather than creating a brand-new downstream history row on every replay. If later work needs deliberate re-evaluation with changed prompts or formulas, that should happen through explicit version changes.
