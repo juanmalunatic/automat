@@ -38,6 +38,32 @@ def test_hourly_high_below_25_hard_rejects() -> None:
     assert "hourly_high_below_25" in result.reject_reasons
 
 
+def test_hourly_job_with_accidental_low_fixed_budget_does_not_hard_reject_as_fixed() -> None:
+    result = evaluate_filters(
+        make_input(
+            j_contract_type="hourly",
+            j_pay_fixed=50.0,
+            j_pay_hourly_high=40.0,
+        )
+    )
+
+    assert "fixed_budget_below_100" not in result.reject_reasons
+    assert result.routing_bucket == "AI_EVAL"
+
+
+def test_fixed_job_with_accidental_low_hourly_high_does_not_hard_reject_as_hourly() -> None:
+    result = evaluate_filters(
+        make_input(
+            j_contract_type="fixed",
+            j_pay_fixed=500.0,
+            j_pay_hourly_high=20.0,
+        )
+    )
+
+    assert "hourly_high_below_25" not in result.reject_reasons
+    assert result.routing_bucket == "AI_EVAL"
+
+
 def test_interviewing_at_least_three_hard_rejects() -> None:
     result = evaluate_filters(make_input(a_interviewing=3))
 
@@ -160,11 +186,47 @@ def test_wrong_platform_or_trash_terms_lead_to_discard() -> None:
             j_title="Shopify store SEO and graphic design help",
             j_description="Need Shopify optimization and design work",
             j_skills="Shopify, SEO",
+            j_qualifications="Design portfolio",
         )
     )
 
     assert result.routing_bucket == "DISCARD"
     assert result.reject_reasons
+
+
+def test_wordpress_php_context_prevents_conditional_platform_terms_from_hard_rejecting() -> None:
+    result = evaluate_filters(
+        make_input(
+            j_title="WordPress PHP SEO maintenance",
+            j_description="Need help maintaining a custom WordPress PHP codebase",
+            j_skills="WordPress, PHP, SEO",
+            j_qualifications="PHP experience",
+        )
+    )
+
+    assert result.reject_reasons == []
+    assert result.routing_bucket in {"AI_EVAL", "LOW_PRIORITY_REVIEW"}
+
+
+def test_pure_shopify_seo_graphic_design_only_job_still_hard_rejects() -> None:
+    result = evaluate_filters(
+        make_input(
+            j_title="Shopify SEO graphic design support",
+            j_description="Need SEO, store polish, and graphic design only",
+            j_skills="Shopify, SEO, graphic design",
+            j_qualifications="Design portfolio",
+        )
+    )
+
+    assert result.routing_bucket == "DISCARD"
+    assert any(
+        reason in result.reject_reasons
+        for reason in (
+            "wrong_platform_shopify_only",
+            "trash_term_seo_only",
+            "trash_term_graphic_design_only",
+        )
+    )
 
 
 def test_clean_strong_woocommerce_plugin_api_job_routes_to_ai_eval() -> None:

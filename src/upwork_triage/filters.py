@@ -120,6 +120,7 @@ def evaluate_filters(data: FilterInput) -> FilterResult:
     lane_flags = _matched_flags(text, LANE_KEYWORDS)
     rescue_flags = _matched_flags(text, RESCUE_KEYWORDS)
     has_lane_keyword = bool(lane_flags)
+    has_protective_platform_context = _has_protective_platform_context(text)
 
     positive_flags: list[str] = []
     negative_flags: list[str] = []
@@ -165,7 +166,11 @@ def evaluate_filters(data: FilterInput) -> FilterResult:
         score -= 1
         negative_flags.append("very_low_client_avg_hourly")
 
-    trash_reasons = _trash_or_wrong_platform_reasons(text, has_lane_keyword)
+    trash_reasons = _trash_or_wrong_platform_reasons(
+        text,
+        has_lane_keyword=has_lane_keyword,
+        has_protective_platform_context=has_protective_platform_context,
+    )
     if trash_reasons:
         reject_reasons.extend(trash_reasons)
         negative_flags.extend(trash_reasons)
@@ -174,11 +179,15 @@ def evaluate_filters(data: FilterInput) -> FilterResult:
         reject_reasons.append("payment_explicitly_unverified")
         negative_flags.append("payment_explicitly_unverified")
 
-    if data.j_pay_fixed is not None and data.j_pay_fixed < 100:
+    if data.j_contract_type == "fixed" and data.j_pay_fixed is not None and data.j_pay_fixed < 100:
         reject_reasons.append("fixed_budget_below_100")
         negative_flags.append("fixed_budget_below_100")
 
-    if data.j_pay_hourly_high is not None and data.j_pay_hourly_high < 25:
+    if (
+        data.j_contract_type == "hourly"
+        and data.j_pay_hourly_high is not None
+        and data.j_pay_hourly_high < 25
+    ):
         reject_reasons.append("hourly_high_below_25")
         negative_flags.append("hourly_high_below_25")
 
@@ -332,19 +341,31 @@ def _is_vague_full_site_build(text: str, has_lane_keyword: bool) -> bool:
     return any(pattern in text for pattern in patterns)
 
 
-def _trash_or_wrong_platform_reasons(text: str, has_lane_keyword: bool) -> list[str]:
+def _trash_or_wrong_platform_reasons(
+    text: str,
+    *,
+    has_lane_keyword: bool,
+    has_protective_platform_context: bool,
+) -> list[str]:
     reasons: list[str] = []
     for term, reason in ALWAYS_REJECT_TERMS.items():
         if _has_term(text, term):
             reasons.append(reason)
 
-    if has_lane_keyword:
+    if has_lane_keyword or has_protective_platform_context:
         return reasons
 
     for term, reason in CONDITIONAL_REJECT_TERMS.items():
         if _has_term(text, term):
             reasons.append(reason)
     return reasons
+
+
+def _has_protective_platform_context(text: str) -> bool:
+    return any(
+        _has_term(text, term)
+        for term in ("wordpress", "php", "custom php", "woocommerce", "plugin", "api")
+    )
 
 
 def _should_route_manual_exception(

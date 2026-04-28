@@ -71,11 +71,11 @@ The module should provide:
 Implement these hard rejects:
 
 - payment explicitly unverified
-- fixed budget visible and below 100
-- hourly high visible and below 25
+- fixed budget visible and below 100 on fixed-price jobs
+- hourly high visible and below 25 on hourly jobs
 - interviewing count >= 3
 - invites sent >= 20
-- obvious wrong-platform or trash terms:
+- obvious wrong-platform or trash-only terms:
   - data entry
   - AI training
   - graphic design only
@@ -83,6 +83,8 @@ Implement these hard rejects:
   - Wix only
   - Squarespace only
   - SEO only
+
+Conditional platform/trash terms such as Shopify, Wix, Squarespace, SEO, and graphic design should reject obvious platform-only or trash-only jobs, but they should not reject a job with clear WordPress, PHP, WooCommerce, plugin, API, or custom-PHP context.
 
 Do not hard-reject only because of:
 
@@ -158,22 +160,25 @@ Tests should verify:
 1. payment explicitly unverified hard-rejects
 2. fixed budget below 100 hard-rejects
 3. hourly high below 25 hard-rejects
-4. interviewing >= 3 hard-rejects
-5. invites sent >= 20 hard-rejects
-6. high proposal count alone does not hard-reject
-7. low hire rate alone does not hard-reject
-8. new/thin client alone does not hard-reject
-9. missing total spend does not hard-reject
-10. missing client avg hourly does not hard-reject
-11. proposals `20 to 50` does not hard-reject by itself
-12. exact-fit weird jobs can route to `MANUAL_EXCEPTION`
-13. strong technical lane keywords increase score
-14. rescue/performance keywords increase score
-15. wrong-platform/trash terms lead to `DISCARD`
-16. a clean strong WooCommerce/plugin/API job routes to `AI_EVAL`
-17. a borderline but non-rejected job routes to `LOW_PRIORITY_REVIEW`
-18. a low-score non-exact-fit job routes to `DISCARD`
-19. returned result includes `reject_reasons`, `positive_flags`, and `negative_flags` as lists
+4. an hourly job with an accidental low `j_pay_fixed` does not hard-reject as fixed-budget
+5. a fixed job with an accidental low `j_pay_hourly_high` does not hard-reject as hourly-rate
+6. interviewing >= 3 hard-rejects
+7. invites sent >= 20 hard-rejects
+8. high proposal count alone does not hard-reject
+9. low hire rate alone does not hard-reject
+10. new/thin client alone does not hard-reject
+11. missing total spend does not hard-reject
+12. missing client avg hourly does not hard-reject
+13. proposals `20 to 50` does not hard-reject by itself
+14. exact-fit weird jobs can route to `MANUAL_EXCEPTION`
+15. strong technical lane keywords increase score
+16. rescue/performance keywords increase score
+17. WordPress/PHP/plugin/API context prevents conditional SEO/platform terms from hard-rejecting
+18. pure Shopify/SEO/graphic-design-only jobs still hard-reject
+19. a clean strong WooCommerce/plugin/API job routes to `AI_EVAL`
+20. a borderline but non-rejected job routes to `LOW_PRIORITY_REVIEW`
+21. a low-score non-exact-fit job routes to `DISCARD`
+22. returned result includes `reject_reasons`, `positive_flags`, and `negative_flags` as lists
 
 Use pure unit tests. The filtering tests should not require a database connection.
 

@@ -241,11 +241,11 @@ Weak fit examples:
 Initial hard rejects before AI:
 
 - payment explicitly unverified
-- fixed budget visible and below 100
-- hourly high visible and below 25
+- fixed budget visible and below 100 on fixed-price jobs
+- hourly high visible and below 25 on hourly jobs
 - interviewing count >= 3
 - invites sent >= 20
-- obvious wrong-platform or trash terms:
+- obvious wrong-platform or trash-only terms:
   - data entry
   - AI training
   - graphic design only
@@ -253,6 +253,8 @@ Initial hard rejects before AI:
   - Wix only
   - Squarespace only
   - SEO only
+
+Conditional platform/trash terms such as Shopify, Wix, Squarespace, SEO, and graphic design should only hard-reject obvious platform-only or trash-only jobs. They should not hard-reject a job that has clear WordPress, PHP, WooCommerce, plugin, API, or custom-PHP context.
 
 Do not hard-reject only because of:
 

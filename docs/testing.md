@@ -79,6 +79,8 @@ Should verify:
 - payment unverified hard reject
 - fixed budget below 100 hard reject
 - hourly high below 25 hard reject
+- hourly jobs do not use accidental fixed-budget values for the fixed hard reject
+- fixed jobs do not use accidental hourly-high values for the hourly hard reject
 - interviewing >= 3 hard reject
 - invites >= 20 hard reject
 - high proposal count alone is not a hard reject
@@ -90,6 +92,8 @@ Should verify:
 - exact-fit weird jobs can route to `MANUAL_EXCEPTION`
 - strong lane keywords increase score
 - rescue/performance keywords increase score
+- WordPress/PHP/plugin/API context prevents conditional SEO/platform terms from hard-rejecting
+- pure Shopify/SEO/graphic-design-only jobs still hard-reject
 - wrong-platform/trash terms route to `DISCARD`
 - a clean strong WooCommerce/plugin/API job routes to `AI_EVAL`
 - a borderline but non-rejected job routes to `LOW_PRIORITY_REVIEW`
