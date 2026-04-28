@@ -25,6 +25,7 @@ def test_load_config_with_empty_env_returns_defaults() -> None:
     assert config.upwork_client_secret is None
     assert config.upwork_access_token is None
     assert config.upwork_refresh_token is None
+    assert config.upwork_graphql_url == "https://placeholder.invalid/upwork-graphql"
     assert config.search_terms == (
         "WordPress",
         "WooCommerce",
@@ -66,6 +67,19 @@ def test_explicit_db_path_is_respected() -> None:
     config = load_config({"AUTOMAT_DB_PATH": "custom/data.sqlite3"})
 
     assert config.db_path == "custom/data.sqlite3"
+
+
+def test_upwork_graphql_url_env_override_is_respected() -> None:
+    config = load_config({"UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-graphql"})
+
+    assert config.upwork_graphql_url == "https://placeholder.invalid/custom-graphql"
+
+
+def test_empty_upwork_graphql_url_falls_back_to_default() -> None:
+    default_url = load_config({}).upwork_graphql_url
+    config = load_config({"UPWORK_GRAPHQL_URL": "   "})
+
+    assert config.upwork_graphql_url == default_url
 
 
 @pytest.mark.parametrize("run_mode", ["fake", "live"])
@@ -157,6 +171,7 @@ def test_env_example_contains_supported_variables_and_no_obvious_real_secrets() 
     assert "UPWORK_CLIENT_SECRET=" in content
     assert "UPWORK_ACCESS_TOKEN=" in content
     assert "UPWORK_REFRESH_TOKEN=" in content
+    assert "UPWORK_GRAPHQL_URL=" in content
     assert "UPWORK_SEARCH_TERMS=" in content
     assert "UPWORK_POLL_LIMIT=" in content
     assert "AUTOMAT_TARGET_RATE_USD=" in content

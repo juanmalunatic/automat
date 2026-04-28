@@ -9,6 +9,7 @@ DEFAULT_APP_ENV = "local"
 DEFAULT_DB_PATH = "data/automat.sqlite3"
 DEFAULT_RUN_MODE = "fake"
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+DEFAULT_UPWORK_GRAPHQL_URL = "https://placeholder.invalid/upwork-graphql"
 DEFAULT_POLL_LIMIT = 50
 DEFAULT_SEARCH_TERMS = (
     "WordPress",
@@ -45,6 +46,7 @@ class AppConfig:
     upwork_client_secret: str | None
     upwork_access_token: str | None
     upwork_refresh_token: str | None
+    upwork_graphql_url: str
     search_terms: tuple[str, ...]
     poll_limit: int
     target_rate_usd: float | None
@@ -67,6 +69,11 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
         upwork_client_secret=_read_secret(raw_env, "UPWORK_CLIENT_SECRET"),
         upwork_access_token=_read_secret(raw_env, "UPWORK_ACCESS_TOKEN"),
         upwork_refresh_token=_read_secret(raw_env, "UPWORK_REFRESH_TOKEN"),
+        upwork_graphql_url=_read_text(
+            raw_env,
+            "UPWORK_GRAPHQL_URL",
+            DEFAULT_UPWORK_GRAPHQL_URL,
+        ),
         search_terms=_read_search_terms(raw_env, "UPWORK_SEARCH_TERMS", DEFAULT_SEARCH_TERMS),
         poll_limit=_read_positive_int(raw_env, "UPWORK_POLL_LIMIT", DEFAULT_POLL_LIMIT),
         target_rate_usd=_read_optional_positive_float(raw_env, "AUTOMAT_TARGET_RATE_USD"),

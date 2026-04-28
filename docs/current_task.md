@@ -2,164 +2,166 @@
 
 ## Task name
 
-Implement a real AI client wrapper behind the existing AI evaluation contract.
+Implement the Upwork GraphQL ingestion boundary.
 
 ## Goal
 
-Add the integration boundary for real AI evaluation while preserving the existing pure contract validator in `src/upwork_triage/ai_eval.py`.
+Add a small, testable Upwork GraphQL client boundary that can move the project from fake-only input toward real ingestion without wiring the full live polling pipeline yet.
 
-This task should introduce a provider abstraction, an OpenAI-backed implementation, prompt/message construction, and a high-level evaluator helper. It must keep unit tests fully mocked and network-free.
+This task should isolate network and transport details behind a local client module, return raw job-like payload dicts, and keep normalization as a separate stage.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/ai_client.py`
-- `tests/test_ai_client.py`
+- `src/upwork_triage/upwork_client.py`
+- `tests/test_upwork_client.py`
+- `src/upwork_triage/config.py`
+- `tests/test_config.py`
+- `.env.example`
 - `docs/current_task.md`
 
 Allowed supporting edits:
 
-- `src/upwork_triage/config.py` only if a small config field/helper is missing
-- `src/upwork_triage/cli.py` only if a clearly bounded AI-check/demo command is useful, but do not change `fake-demo` behavior
 - `docs/testing.md` if test expectations need clarification
-- `docs/design.md` if AI integration wording needs clarification
-- `docs/decisions.md` if a durable provider-interface decision is made
-- `README.md` if setup/run instructions need a small update
-- `.env.example` only if a needed config variable is missing
-- `pyproject.toml` only if adding an optional dependency or test/import configuration is necessary
+- `docs/design.md` if ingestion/client wording needs clarification
+- `docs/decisions.md` if a durable ingestion/client boundary decision is made
+- `README.md` if setup/status wording needs a small update
+- `pyproject.toml` only if needed for test/import configuration
 
 ## Required public API
 
-Implement a focused AI client module with clear typed boundaries. Suggested public API:
+Implement a focused module in `src/upwork_triage/upwork_client.py`.
 
-- `AiProvider`
-- `OpenAiProvider`
-- `AiClientError`
-- `MissingAiCredentialsError`
-- `build_ai_messages(payload: Mapping[str, object] | AiPayloadInput) -> list[dict[str, str]]`
-- `evaluate_with_ai_provider(provider: AiProvider, payload: Mapping[str, object] | AiPayloadInput, *, model: str) -> AiEvaluation`
-- `evaluate_with_openai(config: AppConfig, payload: Mapping[str, object] | AiPayloadInput) -> AiEvaluation`
+Suggested public API:
 
-Equivalent clear naming is acceptable if the module stays small, typed, and documented.
+- `UpworkClientError`
+- `MissingUpworkCredentialsError`
+- `UpworkGraphQlError`
+- `HttpJsonTransport`
+- `RequestsHttpJsonTransport` or another small standard-library transport with an equivalent role
+- `UpworkGraphQlClient`
+- `build_job_search_query(search_terms: tuple[str, ...], limit: int) -> tuple[str, dict[str, object]]`
+- `extract_job_payloads(response_json: Mapping[str, object]) -> list[dict[str, object]]`
+- `fetch_upwork_jobs(config: AppConfig, *, transport: HttpJsonTransport | None = None) -> list[dict[str, object]]`
 
-## Provider-interface design
+Equivalent clear names are acceptable if the module stays small, typed, and documented.
 
-Do not hardwire downstream code directly to OpenAI SDK calls.
+## Config behavior
 
-Use a small local provider interface or protocol, for example:
+Extend `AppConfig` / `load_config()` with:
 
-- `complete_json(messages: list[dict[str, str]], *, model: str) -> str`
+- `upwork_graphql_url: str`
 
-The OpenAI-backed implementation may be the first real provider, but the rest of the app should depend only on the local interface.
+Environment variable:
 
-## Prompt/message contract
+- `UPWORK_GRAPHQL_URL`
 
-`build_ai_messages()` should create a compact instruction that:
+If the current live endpoint is not confidently known, it is acceptable to use a safe placeholder default and document that it may need to be set explicitly before real use.
 
-- tells the model to return strict JSON only
-- tells the model not to add markdown or code fences
-- uses the exact field names expected by `parse_ai_output()`
-- documents allowed enum values:
-  - `ai_quality_client`: `Strong | Ok | Weak`
-  - `ai_quality_fit`: `Strong | Ok | Weak`
-  - `ai_quality_scope`: `Strong | Ok | Weak`
-  - `ai_price_scope_align`: `aligned | underposted | overpriced | unclear`
-  - `ai_verdict_bucket`: `Strong | Ok | Weak | No`
-  - `ai_likely_duration`: `defined_short_term | ongoing_or_vague`
-- requires real booleans for:
-  - `proposal_can_be_written_quickly`
-  - `scope_explosion_risk`
-  - `severe_hidden_risk`
-- requires plain list fields of strings:
-  - `fit_evidence`
-  - `client_evidence`
-  - `scope_evidence`
-  - `risk_flags`
-- reminds the model not to infer deterministic fields such as Connect cost, client spend, proposal count, or payment verification
-- includes the compact payload from `build_ai_payload()`, including fit context
+Do not require `UPWORK_GRAPHQL_URL` or Upwork credentials for fake-mode tests unless a live fetch is actually requested.
 
-The expected JSON object shape is:
+## Transport boundary
 
-```json
-{
-  "ai_quality_client": "Strong|Ok|Weak",
-  "ai_quality_fit": "Strong|Ok|Weak",
-  "ai_quality_scope": "Strong|Ok|Weak",
-  "ai_price_scope_align": "aligned|underposted|overpriced|unclear",
-  "ai_verdict_bucket": "Strong|Ok|Weak|No",
-  "ai_likely_duration": "defined_short_term|ongoing_or_vague",
-  "proposal_can_be_written_quickly": true,
-  "scope_explosion_risk": false,
-  "severe_hidden_risk": false,
-  "ai_semantic_reason_short": "short semantic reason",
-  "ai_best_reason_to_apply": "best reason to apply",
-  "ai_why_trap": "main trap or risk",
-  "ai_proposal_angle": "short proposal angle",
-  "fit_evidence": ["..."],
-  "client_evidence": ["..."],
-  "scope_evidence": ["..."],
-  "risk_flags": ["..."]
-}
-```
+Define a small transport protocol that can be faked in tests, for example:
 
-## OpenAI provider constraints
+- `post_json(url: str, headers: Mapping[str, str], payload: Mapping[str, object]) -> Mapping[str, object]`
 
-The OpenAI provider must:
+The real implementation may use the standard library or `requests` if already available, but avoid adding unnecessary dependencies.
 
-- use `config.openai_api_key` and `config.openai_model`
-- raise `MissingAiCredentialsError` or a clear `AiClientError` before any network call if the API key is missing
-- keep SDK-specific calls isolated to the provider implementation
-- avoid import-time SDK initialization or network calls
-- raise a clear `AiClientError` if the optional OpenAI SDK is not installed
-- avoid printing or logging secrets
+Authorization headers should be created only inside the Upwork client boundary.
 
-The rest of the app should stay independent from SDK-specific response objects.
+## Credential scope
 
-## Integration behavior
+For this task, use an existing bearer access token only.
 
-The high-level evaluator should:
+- If `config.upwork_access_token` is missing and a live fetch is requested, raise `MissingUpworkCredentialsError` before any network call.
+- Do not implement OAuth authorization-code flow.
+- Do not implement refresh-token logic.
+- Do not print or log tokens.
 
-1. accept an `AiPayloadInput` or a prebuilt payload mapping
-2. build prompt/messages
-3. call the provider
-4. parse the returned JSON through `parse_ai_output()`
-5. return a validated `AiEvaluation`
+## GraphQL/query behavior
 
-Reuse the existing validator in `src/upwork_triage/ai_eval.py`. Do not replace it.
+Implement a query builder that accepts `search_terms` and `limit` from config.
 
-It is acceptable for `AiValidationError` to propagate as-is if that keeps the boundary clean. If wrapped, preserve the underlying message clearly.
+Do not overfit to an unverified Upwork schema. Keep the query text isolated in one function so it is easy to adjust later.
+
+It is acceptable if the first query is a best-effort placeholder that may need live adjustment later, as long as the code and docs say so honestly.
+
+## Response extraction behavior
+
+Implement `extract_job_payloads(response_json)`.
+
+It should:
+
+- raise `UpworkGraphQlError` if the response contains GraphQL errors
+- support at least these response shapes:
+  - `{"data": {"jobs": {"edges": [{"node": {...}}, ...]}}}`
+  - `{"data": {"search": {"edges": [{"node": {...}}, ...]}}}`
+  - `{"data": {"jobs": [{"id": "..."}]}}`
+  - `{"data": {"search": [{"id": "..."}]}}`
+- return a list of plain dict job payloads
+- ignore null nodes/items safely inside recognized lists
+- raise `UpworkGraphQlError` if no recognizable job list is found
+- avoid silently returning `[]` for malformed successful-looking responses unless the response explicitly contains an empty recognized list
+
+## High-level fetch behavior
+
+`fetch_upwork_jobs(config, transport=None)` should:
+
+1. validate required live credentials for the Upwork access token
+2. create or use a transport
+3. build query and variables from `config.search_terms` and `config.poll_limit`
+4. POST JSON to `config.upwork_graphql_url`
+5. parse and extract raw job payload dicts via `extract_job_payloads()`
+6. return `list[dict[str, object]]`
+
+It should not:
+
+- normalize jobs
+- insert into the DB
+- evaluate filters
+- call AI
+- run triage
+- render the queue
 
 ## Test requirements
 
-Add tests in `tests/test_ai_client.py`.
+Add tests in `tests/test_upwork_client.py`.
 
 Tests should verify:
 
-1. `build_ai_messages()` returns a non-empty list of message dicts
-2. `build_ai_messages()` includes strict JSON-only instructions
-3. `build_ai_messages()` includes the required output field names
-4. `build_ai_messages()` includes the allowed enum values
-5. `build_ai_messages()` includes the supplied payload content
-6. `evaluate_with_ai_provider()` calls the provider with the requested model
-7. `evaluate_with_ai_provider()` parses valid fake-provider JSON into `AiEvaluation`
-8. `evaluate_with_ai_provider()` rejects invalid JSON or propagates a clear validation/client error
-9. `evaluate_with_ai_provider()` rejects invalid enum fields through the existing validator
-10. `evaluate_with_openai()` raises `MissingAiCredentialsError` or a clear `AiClientError` when the API key is missing
-11. `OpenAiProvider` can be constructed without making a network call
-12. unit tests do not require a real `OPENAI_API_KEY`
-13. unit tests do not require network access
-14. if the OpenAI SDK is absent, provider behavior fails with a clear `AiClientError` rather than a raw `ImportError`
-15. the prompt/output contract uses `fit_evidence`, `client_evidence`, `scope_evidence`, and `risk_flags`, not `*_json` fields
+1. missing `upwork_access_token` raises `MissingUpworkCredentialsError` before transport is called
+2. `fetch_upwork_jobs()` sends `Authorization: Bearer <token>` to the transport
+3. `fetch_upwork_jobs()` sends a GraphQL query string and variables payload
+4. `fetch_upwork_jobs()` uses `config.search_terms` and `config.poll_limit` in query construction
+5. `extract_job_payloads()` handles `data.jobs.edges[].node`
+6. `extract_job_payloads()` handles `data.search.edges[].node`
+7. `extract_job_payloads()` handles `data.jobs` as a list
+8. `extract_job_payloads()` handles `data.search` as a list
+9. `extract_job_payloads()` ignores null nodes/items safely inside recognized lists
+10. `extract_job_payloads()` raises `UpworkGraphQlError` when the response contains GraphQL errors
+11. `extract_job_payloads()` raises `UpworkGraphQlError` for unrecognized response shapes
+12. transport/network exceptions are wrapped in `UpworkClientError` or a subclass with a clear message
+13. unit tests do not make real network calls
+14. no real Upwork credentials are required
 
-Use fake provider objects that return JSON strings. Do not make unit tests call the network.
+Update `tests/test_config.py` to cover:
+
+15. `load_config({})` includes a default `upwork_graphql_url`
+16. `UPWORK_GRAPHQL_URL` overrides the default
+17. empty `UPWORK_GRAPHQL_URL` falls back to the documented default or raises `ConfigError`, whichever the implementation documents
 
 ## Out of scope
 
 Do not implement:
 
-- real Upwork API calls
-- Upwork OAuth
+- Upwork OAuth authorization-code flow
+- token refresh
+- recurring polling
+- wiring real Upwork fetching into `fake-demo`
+- real Upwork API calls in unit tests
+- real AI calls
 - DB schema changes
 - normalization changes
 - deterministic filter changes
@@ -167,19 +169,15 @@ Do not implement:
 - triage rule changes
 - queue-rendering changes
 - TSV export
-- a dashboard or web UI
-- database storage wiring for real AI calls
-- hidden network calls in tests
-
-The existing fake pipeline should remain stable. Do not wire real AI into `run_pipeline.py` in this task.
+- dashboard, notifications, proposal generation, or auto-apply
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- `src/upwork_triage/ai_client.py` provides a small provider abstraction plus an OpenAI-backed implementation
-- prompt/message construction documents the strict JSON contract expected by `parse_ai_output()`
-- the high-level evaluator reuses `parse_ai_output()` to return validated `AiEvaluation`
-- missing credentials and missing optional SDK cases fail clearly
-- `tests/test_ai_client.py` stays fully mocked and network-free
+- `src/upwork_triage/upwork_client.py` provides a small transport-based GraphQL boundary
+- `src/upwork_triage/config.py` and `.env.example` expose `UPWORK_GRAPHQL_URL`
+- response extraction returns raw job-like dicts without leaking HTTP transport details downstream
+- the client fails clearly on missing credentials, GraphQL errors, and malformed response shapes
+- `tests/test_upwork_client.py` and updated config tests stay fully mocked and network-free
 - `py -m pytest` passes

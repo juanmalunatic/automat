@@ -234,3 +234,19 @@ The project already has a strict AI contract layer in `ai_eval.py`. Keeping SDK 
 Tradeoff:
 
 There is one extra layer to maintain, but it keeps the OpenAI SDK isolated and avoids hardwiring the rest of the app to one vendor's response objects.
+
+## 2026-04-28 - Upwork GraphQL access goes through a local client and transport boundary
+
+Decision:
+
+Real Upwork fetching should go through a small local GraphQL client plus a fakeable JSON transport interface. That boundary returns plain raw job-like dict payloads and keeps normalization, DB insertion, and polling orchestration outside the client module.
+
+OAuth authorization-code flow, token refresh, and recurring polling remain deferred.
+
+Reason:
+
+The project already separates staged data boundaries carefully. A local client interface makes real ingestion testable without network access, prevents HTTP response shapes from leaking into the normalizer, and keeps future auth/polling work isolated from the rest of the app.
+
+Tradeoff:
+
+The initial query may be a best-effort placeholder that needs live adjustment later, but keeping it isolated minimizes the cost of those changes.

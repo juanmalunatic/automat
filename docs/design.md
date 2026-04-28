@@ -56,6 +56,8 @@ Pipeline stages:
 
 The key architectural rule is that each stage stores its output separately.
 
+The live-fetch boundary should return plain raw job-like dict payloads through a small local client interface. Normalization remains the next stage and should not depend directly on HTTP response objects or provider-specific SDK types.
+
 ## 4. Main data stages
 
 ### Stable job identity
@@ -77,6 +79,8 @@ The exact generation logic belongs in the normalizer/ingestion code, but downstr
 Raw API/scrape payloads are stored untouched in `raw_job_snapshots`.
 
 This preserves replayability. If normalizers, filters, or AI prompts change later, old raw snapshots can be reprocessed.
+
+The first live-ingestion step may use a best-effort GraphQL query that still needs adjustment against the real Upwork schema. Keep the query text isolated in one function so live fixes do not leak through the rest of the pipeline.
 
 ### Normalized data
 
@@ -517,6 +521,7 @@ Expected runtime config areas:
 - fake versus live run mode
 - placeholder OpenAI credentials/model selection
 - placeholder Upwork credentials/tokens
+- Upwork GraphQL endpoint URL
 - search terms and poll limits
 - optional runtime economics knobs such as target rate and Connect cost
 

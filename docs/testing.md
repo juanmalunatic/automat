@@ -206,6 +206,24 @@ Should verify:
 - `OpenAiProvider` can be constructed without a network call when a fake client is injected
 - if the optional OpenAI SDK is absent, the provider raises a clear client error instead of leaking a raw `ImportError`
 
+### `tests/test_upwork_client.py`
+
+Should verify:
+
+- missing `UPWORK_ACCESS_TOKEN` fails before any transport call
+- `fetch_upwork_jobs()` sends a bearer Authorization header to the transport
+- `fetch_upwork_jobs()` sends a GraphQL query string plus variables payload
+- query construction uses `search_terms` and `poll_limit`
+- `extract_job_payloads()` supports `data.jobs.edges[].node`
+- `extract_job_payloads()` supports `data.search.edges[].node`
+- `extract_job_payloads()` supports `data.jobs` as a list
+- `extract_job_payloads()` supports `data.search` as a list
+- null nodes/items inside recognized lists are ignored safely
+- GraphQL `errors` responses raise `UpworkGraphQlError`
+- unrecognized response shapes raise `UpworkGraphQlError`
+- transport/network exceptions are wrapped clearly in `UpworkClientError`
+- tests do not require real Upwork credentials or network access
+
 ### `tests/test_run_pipeline.py`
 
 Should verify:
@@ -245,6 +263,8 @@ Filter tests should use pure in-memory Python inputs and should not require a da
 Normalizer tests should use small local fake payloads and should not require a database connection or real Upwork credentials.
 
 Do not require real Upwork API credentials for unit tests.
+
+Upwork client tests should use fake transports only. They should not require real Upwork credentials, real network access, or a live GraphQL endpoint.
 
 Do not require real AI calls for unit tests.
 
