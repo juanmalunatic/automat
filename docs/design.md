@@ -320,10 +320,10 @@ AI must return strict JSON with these fields:
 - `ai_best_reason_to_apply`: short sentence
 - `ai_why_trap`: short sentence
 - `ai_proposal_angle`: short sentence
-- `fit_evidence_json`: list of visible evidence strings
-- `client_evidence_json`: list of visible evidence strings
-- `scope_evidence_json`: list of visible evidence strings
-- `risk_flags_json`: list of visible risk strings
+- `fit_evidence`: list of visible evidence strings
+- `client_evidence`: list of visible evidence strings
+- `scope_evidence`: list of visible evidence strings
+- `risk_flags`: list of visible risk strings
 
 AI should be blunt and commercially conservative.
 
@@ -334,6 +334,8 @@ The AI contract layer should validate this output strictly before it is treated 
 - boolean fields must be real booleans
 - evidence/risk fields must be lists of strings
 - text fields may be whitespace-trimmed but not semantically rewritten
+
+The raw AI contract uses plain list field names such as `fit_evidence`. When the validated result is stored in `ai_evaluations`, the serializer should convert those lists into the DB-oriented JSON text fields such as `fit_evidence_json`.
 
 Do not let the AI contract layer invent unavailable deterministic fields. If a normalized field such as Connect cost, client spend, proposal count, or payment verification is unavailable upstream, it should remain unavailable in the payload rather than being guessed.
 

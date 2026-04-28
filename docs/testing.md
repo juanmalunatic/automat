@@ -140,10 +140,11 @@ Should verify:
 - missing required fields fail validation
 - unknown enum values fail validation
 - boolean fields reject non-boolean strings
+- raw AI evidence/risk fields use `fit_evidence`, `client_evidence`, `scope_evidence`, and `risk_flags`
 - evidence/risk fields reject non-list values
 - evidence/risk fields reject lists containing non-strings
 - reason fields are whitespace-trimmed
-- serialization produces JSON strings for evidence/risk fields
+- serialization produces `*_json` DB strings for evidence/risk fields
 - payload builder includes job, client, activity, deterministic filter flags, and fit context
 - payload builder does not invent unavailable deterministic fields
 

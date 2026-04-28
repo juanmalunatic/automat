@@ -190,10 +190,10 @@ def parse_ai_output(raw_output: Mapping[str, object] | str) -> AiEvaluation:
     ai_why_trap = _require_string(payload, "ai_why_trap", issues)
     ai_proposal_angle = _require_string(payload, "ai_proposal_angle", issues)
 
-    fit_evidence = _require_string_list(payload, "fit_evidence_json", issues)
-    client_evidence = _require_string_list(payload, "client_evidence_json", issues)
-    scope_evidence = _require_string_list(payload, "scope_evidence_json", issues)
-    risk_flags = _require_string_list(payload, "risk_flags_json", issues)
+    fit_evidence = _require_string_list(payload, "fit_evidence", issues)
+    client_evidence = _require_string_list(payload, "client_evidence", issues)
+    scope_evidence = _require_string_list(payload, "scope_evidence", issues)
+    risk_flags = _require_string_list(payload, "risk_flags", issues)
 
     if issues:
         raise AiValidationError(issues)

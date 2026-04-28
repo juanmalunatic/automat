@@ -81,6 +81,13 @@ Validation rules:
 - reason fields must be strings
 - text from the model should be preserved except for safe whitespace trimming
 
+The raw model/output contract should use plain list field names without a `*_json` suffix:
+
+- `fit_evidence`
+- `client_evidence`
+- `scope_evidence`
+- `risk_flags`
+
 Payload builder rules:
 
 - include compact job, client, activity, deterministic filter, and fit-context sections
@@ -99,6 +106,11 @@ The serializer should produce DB-oriented field names, including:
   - `client_evidence_json`
   - `scope_evidence_json`
   - `risk_flags_json`
+
+This distinction is intentional:
+
+- raw AI output uses plain list fields such as `fit_evidence`
+- `ai_evaluations` DB storage uses JSON-text fields such as `fit_evidence_json`
 
 ## Test requirements
 

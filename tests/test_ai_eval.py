@@ -76,16 +76,16 @@ def test_boolean_fields_reject_non_boolean_strings() -> None:
 
 def test_evidence_fields_reject_non_list_values() -> None:
     with pytest.raises(AiValidationError) as exc:
-        parse_ai_output(make_valid_output(fit_evidence_json="not-a-list"))
+        parse_ai_output(make_valid_output(fit_evidence="not-a-list"))
 
-    assert exc.value.issues[0].field_name == "fit_evidence_json"
+    assert exc.value.issues[0].field_name == "fit_evidence"
 
 
 def test_evidence_fields_reject_lists_with_non_strings() -> None:
     with pytest.raises(AiValidationError) as exc:
-        parse_ai_output(make_valid_output(fit_evidence_json=["WooCommerce", 123]))
+        parse_ai_output(make_valid_output(fit_evidence=["WooCommerce", 123]))
 
-    assert exc.value.issues[0].field_name == "fit_evidence_json"
+    assert exc.value.issues[0].field_name == "fit_evidence"
 
 
 def test_reason_fields_are_trimmed() -> None:
@@ -177,10 +177,10 @@ def make_valid_output(**overrides: object) -> dict[str, object]:
         "ai_best_reason_to_apply": "Clear plugin/API overlap.",
         "ai_why_trap": "Client may widen the scope.",
         "ai_proposal_angle": "Lead with rescue and checkout work.",
-        "fit_evidence_json": ["WooCommerce checkout issue", "Custom plugin context"],
-        "client_evidence_json": ["Payment verified", "Established spend"],
-        "scope_evidence_json": ["Specific checkout bug", "Defined deliverable"],
-        "risk_flags_json": ["Potential stakeholder delays"],
+        "fit_evidence": ["WooCommerce checkout issue", "Custom plugin context"],
+        "client_evidence": ["Payment verified", "Established spend"],
+        "scope_evidence": ["Specific checkout bug", "Defined deliverable"],
+        "risk_flags": ["Potential stakeholder delays"],
     }
     values.update(overrides)
     return values

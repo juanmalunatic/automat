@@ -305,6 +305,7 @@ Notes:
 
 - `ai_semantic_reason_short` is the AI's qualitative explanation before deterministic economics.
 - The final user-facing apply reason belongs in `triage_results.ai_reason_apply_short` / `triage_results.final_reason`.
+- The raw model contract may use plain list fields such as `fit_evidence`, `client_evidence`, `scope_evidence`, and `risk_flags`. The AI contract serializer stores those into these DB columns as JSON text with the `_json` suffix.
 
 Indexes:
 
