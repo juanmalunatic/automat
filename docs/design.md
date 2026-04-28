@@ -299,7 +299,11 @@ Exact-fit exception examples:
 
 ## 10. AI contract
 
-AI receives a compact JSON payload with normalized job/client/activity fields and fit context.
+AI receives a compact JSON payload with:
+
+- normalized job/client/activity fields
+- deterministic filter summary and flags
+- fit context
 
 AI must return strict JSON with these fields:
 
@@ -322,6 +326,16 @@ AI must return strict JSON with these fields:
 - `risk_flags_json`: list of visible risk strings
 
 AI should be blunt and commercially conservative.
+
+The AI contract layer should validate this output strictly before it is treated as an `ai_evaluations` row:
+
+- required fields must be present
+- enum values must match the documented contract exactly
+- boolean fields must be real booleans
+- evidence/risk fields must be lists of strings
+- text fields may be whitespace-trimmed but not semantically rewritten
+
+Do not let the AI contract layer invent unavailable deterministic fields. If a normalized field such as Connect cost, client spend, proposal count, or payment verification is unavailable upstream, it should remain unavailable in the payload rather than being guessed.
 
 ## 11. Bucket meaning
 

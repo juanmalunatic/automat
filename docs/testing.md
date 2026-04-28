@@ -132,6 +132,21 @@ Should verify:
 - `ai_apply_promote` stays within the allowed promotion trace values
 - final reason is generated at triage stage, not copied blindly from AI semantic reason
 
+### `tests/test_ai_eval.py`
+
+Should verify:
+
+- valid AI output parses successfully
+- missing required fields fail validation
+- unknown enum values fail validation
+- boolean fields reject non-boolean strings
+- evidence/risk fields reject non-list values
+- evidence/risk fields reject lists containing non-strings
+- reason fields are whitespace-trimmed
+- serialization produces JSON strings for evidence/risk fields
+- payload builder includes job, client, activity, deterministic filter flags, and fit context
+- payload builder does not invent unavailable deterministic fields
+
 ## Test data
 
 Use small local fixtures.
@@ -147,6 +162,8 @@ Do not require real Upwork API credentials for unit tests.
 Do not require real AI calls for unit tests.
 
 AI tests should use fake model responses or stored fixture JSON.
+
+AI contract tests should stay pure and should not require a live model, network calls, or a database connection.
 
 For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
 

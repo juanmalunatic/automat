@@ -2,55 +2,44 @@
 
 ## Task name
 
-Implement final deterministic triage verdict logic for the staged MVP.
+Implement AI evaluation contract validation and prompt payload construction for the staged MVP.
 
 ## Goal
 
-Create a pure, testable triage module that combines:
+Create a pure, testable AI contract module that:
 
-1. deterministic filter output
-2. AI semantic evaluation output
-3. deterministic economics output
+1. builds the compact payload sent to AI from normalized job/client/activity data plus deterministic filter flags
+2. validates/parses raw AI JSON output into a typed structure
+3. serializes the typed AI output into fields suitable for `ai_evaluations` storage
 
-and returns the final apply verdict, queue routing, promotion trace, priority score, and concise user-facing reason.
-
-This task is triage-only. It should not require a database connection and it should not implement new filter or economics formulas.
+This task is AI-contract-only. It should not call a real model and it should not implement filter, economics, or triage logic.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/triage.py`
-- `tests/test_triage.py`
+- `src/upwork_triage/ai_eval.py`
+- `tests/test_ai_eval.py`
 - `docs/current_task.md`
 
 Allowed supporting edits:
 
 - `docs/testing.md` if test expectations need clarification
-- `docs/design.md` if triage wording needs clarification
+- `docs/design.md` if AI contract wording needs clarification
 - `docs/schema.md` only if a schema-level issue is discovered
 - `docs/decisions.md` only if a durable design decision is made
 - `pyproject.toml` only if needed for test/import configuration
 
 ## Required public API
 
-Implement a small pure-Python triage layer in `src/upwork_triage/triage.py`.
+Implement a small pure-Python AI contract layer in `src/upwork_triage/ai_eval.py`.
 
 Expose a clear typed API, using small dataclasses or equivalently explicit typed structures.
 
 The module should provide:
 
-- a settings structure containing:
-  - `low_cash_mode`
-  - `p_strong`
-- an input structure for filter result fields:
-  - `passed`
-  - `routing_bucket`
-  - `score`
-  - `reject_reasons`
-  - `positive_flags`
-  - `negative_flags`
-- an input structure for AI evaluation fields:
+- a typed input structure for the compact payload sent to AI, containing normalized job/client/activity fields and deterministic filter flags
+- a typed output structure for these AI semantic fields:
   - `ai_quality_client`
   - `ai_quality_fit`
   - `ai_quality_scope`
@@ -64,109 +53,87 @@ The module should provide:
   - `ai_best_reason_to_apply`
   - `ai_why_trap`
   - `ai_proposal_angle`
-- an input structure for economics result fields:
-  - `b_margin_usd`
-  - `b_required_apply_prob`
-  - `b_first_believ_value_usd`
-  - `b_apply_cost_usd`
-  - `b_margin_connects`
-  - `calc_status`
-  - `calc_error`
-- a result structure containing:
-  - `final_verdict`
-  - `queue_bucket`
-  - `priority_score`
-  - `ai_verdict_apply`
-  - `ai_apply_promote`
-  - `ai_reason_apply_short`
-  - `final_reason`
-- a pure calculation function that returns the structured result without requiring SQLite
+  - `fit_evidence`
+  - `client_evidence`
+  - `scope_evidence`
+  - `risk_flags`
+- a pure payload builder function
+- a pure validator/parser for raw AI JSON/dict output
+- a pure serializer for `ai_evaluations` storage fields
 
 ## Required behavior
 
-Required final verdict rules:
+Allowed values:
 
-- failed filter hard reject or filter routing bucket `DISCARD` -> `NO`
-- AI bucket `No` -> `NO`
-- AI bucket `Strong` and `b_margin_usd >= 0` -> `APPLY` unless severe hidden risk blocks apply
-- AI bucket `Ok` and `b_margin_usd >= 0` -> `MAYBE` by default
-- AI bucket `Weak` -> `NO` by default
-- negative margin -> `NO` by default
-- non-ok economics `calc_status` must not produce `APPLY`
+- `ai_quality_client`: `Strong | Ok | Weak`
+- `ai_quality_fit`: `Strong | Ok | Weak`
+- `ai_quality_scope`: `Strong | Ok | Weak`
+- `ai_price_scope_align`: `aligned | underposted | overpriced | unclear`
+- `ai_verdict_bucket`: `Strong | Ok | Weak | No`
+- `ai_likely_duration`: `defined_short_term | ongoing_or_vague`
 
-Good-looking Ok override:
+Validation rules:
 
-If all are true:
+- missing required AI fields must raise a structured validation error
+- unknown enum values must raise a structured validation error
+- boolean fields must be real booleans, not arbitrary strings
+- evidence/risk fields must be lists of strings
+- reason fields must be strings
+- text from the model should be preserved except for safe whitespace trimming
 
-- `ai_verdict_bucket == "Ok"`
-- `ai_quality_client`, `ai_quality_fit`, and `ai_quality_scope` are each `Ok` or `Strong`
-- no quality field is `Weak`
-- no hard disqualifier
-- no severe hidden risk
-- `b_required_apply_prob <= p_strong`
+Payload builder rules:
 
-then the final result should be promoted to at least `MAYBE`.
-
-Low-cash promotion:
-
-If low-cash mode is enabled, proposal can be written quickly, there is no obvious scope-explosion risk, and client quality is not `Weak`, `MAYBE` may be promoted to `APPLY`.
-
-Queue bucket mapping:
-
-- `APPLY -> HOT`
-- `MAYBE -> REVIEW`
-- `NO -> ARCHIVE`
-- if the filter routing bucket is `MANUAL_EXCEPTION` and the final verdict is not `NO`, the queue bucket should be `MANUAL_EXCEPTION`
+- include compact job, client, activity, deterministic filter, and fit-context sections
+- do not invent unavailable deterministic fields such as Connect cost, client spend, proposal count, or payment verification
+- if a normalized deterministic field is unavailable, keep it unavailable in the payload rather than substituting a guessed value
 
 ## Result requirements
 
-Return a structured result containing:
+The typed AI output should be suitable for downstream triage code and contain list-based evidence/risk fields.
 
-- `final_verdict: APPLY | MAYBE | NO`
-- `queue_bucket: HOT | REVIEW | MANUAL_EXCEPTION | ARCHIVE`
-- `priority_score`
-- `ai_verdict_apply: APPLY | MAYBE | NO`
-- `ai_apply_promote: none | ok_override_to_maybe | ok_override_to_apply | low_cash_maybe_to_apply`
-- `ai_reason_apply_short`
-- `final_reason`
+The serializer should produce DB-oriented field names, including:
 
-`ai_verdict_apply` should represent the base deterministic verdict before promotion trace is applied.
-
-Generate `ai_reason_apply_short` and `final_reason` at the triage stage. They should reflect both qualitative signal and deterministic economics where possible, and they should not blindly copy `ai_semantic_reason_short`.
+- scalar semantic fields unchanged
+- evidence/risk fields serialized to JSON strings:
+  - `fit_evidence_json`
+  - `client_evidence_json`
+  - `scope_evidence_json`
+  - `risk_flags_json`
 
 ## Test requirements
 
-Add tests in `tests/test_triage.py`.
+Add tests in `tests/test_ai_eval.py`.
 
 Tests should verify:
 
-1. filter hard reject or `DISCARD` produces `final_verdict = NO` and `queue_bucket = ARCHIVE`
-2. AI bucket `No` produces `NO / ARCHIVE`
-3. `Strong` bucket plus positive margin produces `APPLY / HOT`
-4. `Strong` bucket plus severe hidden risk does not produce `APPLY`
-5. `Ok` bucket plus positive margin produces `MAYBE / REVIEW` by default
-6. good-looking `Ok` override produces at least `MAYBE`
-7. low-cash promotion can promote `MAYBE` to `APPLY`
-8. `Weak` bucket produces `NO / ARCHIVE`
-9. negative margin produces `NO / ARCHIVE`
-10. non-ok economics `calc_status` produces `NO / ARCHIVE`
-11. `MANUAL_EXCEPTION` routing with a non-`NO` verdict produces queue bucket `MANUAL_EXCEPTION`
-12. `final_reason` is generated at triage stage and is not a blind copy of `ai_semantic_reason_short`
-13. `priority_score` is higher for `APPLY` than `MAYBE` than `NO`, all else equal
-14. returned promotion trace uses only the allowed values
+1. valid AI output parses successfully
+2. missing required field fails validation
+3. unknown quality enum fails validation
+4. unknown `ai_verdict_bucket` fails validation
+5. unknown `ai_price_scope_align` fails validation
+6. unknown `ai_likely_duration` fails validation
+7. boolean fields reject non-boolean strings like `"yes"`
+8. evidence fields reject non-list values
+9. evidence fields reject lists containing non-strings
+10. reason fields are trimmed
+11. serialization produces JSON strings for evidence/risk fields suitable for DB storage
+12. payload builder includes job, client, activity, filter flags, and fit context
+13. payload builder does not invent unavailable deterministic fields
 
-Use pure unit tests. The triage tests should not require a database connection.
+Use pure unit tests. The AI contract tests should not require a database connection or a live model.
 
 ## Out of scope
 
 Do not implement:
 
+- real AI calls
+- OpenAI API integration
 - Upwork API
 - OAuth
-- AI calls
 - normalizer logic
 - filter changes
 - economics formula changes
+- triage changes
 - queue rendering
 - TSV export
 - database schema changes unless a real blocking issue is discovered
@@ -175,9 +142,8 @@ Do not implement:
 
 The task is complete when:
 
-- the triage module is pure and testable without SQLite
-- the final verdict rules and promotion traces are implemented
-- queue bucket mapping and priority scoring are deterministic
-- final reasons are generated at triage stage instead of copied from AI
-- tests cover default verdicts, promotions, archive cases, and reason generation
+- the AI contract module is pure and testable without network calls
+- the payload builder includes the required sections and preserves unavailable deterministic fields
+- the validator rejects missing fields, bad enums, bad booleans, and malformed evidence structures
+- the serializer emits DB-oriented fields with JSON strings for evidence/risk lists
 - `py -m pytest` passes
