@@ -2,151 +2,118 @@
 
 ## Task name
 
-Implement a local fake end-to-end pipeline runner.
+Implement terminal shortlist rendering.
 
 ## Goal
 
-Create a small pipeline runner that connects the existing staged modules using only local fake payloads and fake AI output.
+Create a simple terminal-friendly queue renderer that reads shortlist rows from `v_decision_shortlist` and turns them into a compact human-readable manual review view.
 
-The runner should:
-
-1. initialize the SQLite database
-2. create an `ingestion_runs` row
-3. normalize one raw job-like payload
-4. persist each staged output into the existing tables
-5. use supplied fake AI output instead of calling a model
-6. return the job's row from `v_decision_shortlist` when the final queue bucket is shortlist-visible
-
-This task is pipeline-runner-only. It should not add real Upwork fetching, OAuth, live AI calls, queue UI work, or TSV export.
+This task is renderer-only. It should not change pipeline behavior, shortlist selection logic, normalization, filtering, AI validation, economics, or triage formulas.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/run_pipeline.py`
-- `tests/test_run_pipeline.py`
+- `src/upwork_triage/queue_view.py`
+- `tests/test_queue_view.py`
 - `docs/current_task.md`
 
 Allowed supporting edits:
 
-- `src/upwork_triage/db.py` only if a small helper is needed and still matches `docs/schema.md`
+- `src/upwork_triage/run_pipeline.py` only if a tiny helper is needed for tests, but avoid changing pipeline behavior
 - `docs/testing.md` if test expectations need clarification
-- `docs/design.md` if pipeline wording needs clarification
+- `docs/design.md` if queue display wording needs clarification
 - `docs/schema.md` only if a schema-level issue is discovered
 - `docs/decisions.md` only if a durable design decision is made
 - `pyproject.toml` only if needed for test/import configuration
 
 ## Required public API
 
-Expose a simple orchestrator function in `src/upwork_triage/run_pipeline.py`:
+Implement a small pure rendering module in `src/upwork_triage/queue_view.py` with:
 
-- `run_fake_pipeline(conn: sqlite3.Connection, raw_payload: Mapping[str, object], fake_ai_output: Mapping[str, object]) -> dict[str, object] | None`
+- `fetch_decision_shortlist(conn: sqlite3.Connection) -> list[dict[str, object]]`
+- `render_decision_shortlist(rows: list[Mapping[str, object]]) -> str`
 
-The runner should use the existing pure modules rather than duplicating their logic:
+`fetch_decision_shortlist()` should read from `v_decision_shortlist`.
 
-- `normalize_job_payload()`
-- `evaluate_filters()`
-- `build_ai_payload()`
-- `parse_ai_output()`
-- `serialize_ai_evaluation()`
-- `calculate_economics()`
-- `evaluate_triage()`
+`render_decision_shortlist()` should be safe for normal dicts, `sqlite3.Row`-derived dicts, and missing values.
 
 ## Required behavior
 
-For one fake/local raw job payload, the runner should:
+`fetch_decision_shortlist(conn)` should:
 
-1. call `initialize_db(conn)`
-2. create an `ingestion_runs` row
-3. normalize the payload and compute `job_key` / `raw_hash`
-4. upsert `jobs`
-5. insert or reuse `raw_job_snapshots`
-6. insert or reuse `job_snapshots_normalized`
-7. evaluate deterministic filters and insert or reuse `filter_results`
-8. for non-discarded jobs:
-   - build the AI payload
-   - validate the supplied fake AI output
-   - insert or reuse `ai_evaluations`
-   - load the default settings row
-   - calculate economics and insert or reuse `economics_results`
-   - evaluate final triage and insert or reuse `triage_results`
-9. for hard-rejected jobs:
-   - do not call or insert AI evaluation
-   - do not insert economics results
-   - still create a `triage_results` row with final `NO / ARCHIVE`
-10. return the row from `v_decision_shortlist` for the normalized `job_key`, or `None` if the final queue bucket is not shortlist-visible
+- query `v_decision_shortlist`
+- return plain dict rows
+- preserve the shortlist ordering from the view
 
-## Duplicate-handling choice for this task
+`render_decision_shortlist(rows)` should:
 
-The fake runner should be safe to rerun with the same raw fixture.
+- group rows by `queue_bucket` in this order:
+  1. `HOT`
+  2. `MANUAL_EXCEPTION`
+  3. `REVIEW`
+- render a compact terminal-friendly summary for each row
+- include the high-signal fields:
+  - `final_verdict`
+  - `queue_bucket`
+  - `j_title`
+  - `source_url`
+  - `ai_verdict_bucket`
+  - `ai_quality_fit`
+  - `ai_quality_client`
+  - `ai_quality_scope`
+  - `ai_price_scope_align`
+  - `ai_apply_promote`
+  - `b_margin_usd`
+  - `b_required_apply_prob`
+  - `b_first_believ_value_usd`
+  - `b_apply_cost_usd`
+  - `j_apply_cost_connects`
+  - `final_reason`
+  - `ai_why_trap`
+  - `ai_proposal_angle`
+  - key client/activity fields when available:
+    - `c_verified_payment`
+    - `c_country`
+    - `c_hist_total_spent`
+    - `c_hist_hire_rate`
+    - `c_hist_avg_hourly_rate`
+    - `a_proposals`
+    - `a_interviewing`
+    - `a_invites_sent`
+    - `j_mins_since_posted`
+- show missing values as `—`
+- avoid crashing on `None`
+- avoid dumping raw JSON blobs unless the renderer later has no better source for a useful field
+- return a clear empty-queue message if no shortlist rows exist
 
-Chosen behavior for identical reruns with the same fixed stage versions:
+## Formatting goals
 
-- create a fresh `ingestion_runs` row every time
-- reuse an existing `raw_job_snapshots` row when `(job_key, raw_hash)` already exists
-- reuse existing versioned downstream rows when the same upstream ids and versioned inputs already exist
-- avoid raising uniqueness errors for duplicate local reruns
+The output should be:
 
-This keeps the fake runner replay-friendly without inventing new schema rules.
+- readable in a terminal
+- compact enough to scan quickly
+- grouped by shortlist priority bucket
+- more summary-oriented than raw-database-oriented
 
-## Settings behavior
-
-The runner should read the default row from `triage_settings_versions` and convert it into:
-
-- `EconomicsSettings`
-- `TriageSettings`
-
-Do not hardcode a separate shadow settings object inside the pipeline runner.
-
-## AI behavior
-
-The runner must accept `fake_ai_output` as a function argument.
-
-It must not:
-
-- call a real model
-- call OpenAI APIs
-- require network access
-
-If `parse_ai_output()` fails validation, the runner should stop before inserting:
-
-- `ai_evaluations`
-- `economics_results`
-- `triage_results`
-
-Earlier stages through `filter_results` should remain stored.
+Use human-readable formatting for money/probability/client/activity fields where practical, but do not overcomplicate the renderer.
 
 ## Test requirements
 
-Add tests in `tests/test_run_pipeline.py`.
+Add tests in `tests/test_queue_view.py`.
 
 Tests should verify:
 
-1. a strong fake WooCommerce/plugin job flows through all staged tables and appears in `v_decision_shortlist`
-2. the returned shortlist row includes:
-   - `job_key`
-   - `final_verdict`
-   - `queue_bucket`
-   - `final_reason`
-   - `ai_verdict_bucket`
-   - `ai_quality_fit`
-   - `b_margin_usd`
-   - `j_title`
-   - `source_url`
-3. the happy-path DB has one row in each expected staged table:
-   - `ingestion_runs`
-   - `jobs`
-   - `raw_job_snapshots`
-   - `job_snapshots_normalized`
-   - `filter_results`
-   - `ai_evaluations`
-   - `economics_results`
-   - `triage_results`
-4. fake AI validation failure stops before inserting AI/economics/triage rows
-5. a hard-rejected raw job still stores raw and normalized snapshots plus `filter_results`, but does not insert `ai_evaluations` or `economics_results`
-6. a hard-rejected job still produces a `triage_results` row with `final_verdict = NO` and `queue_bucket = ARCHIVE`
-7. running the same payload twice does not violate `UNIQUE(job_key, raw_hash)` and reuses duplicate stage rows instead of duplicating them
-8. no real network, Upwork API, or live model call is required
+1. `fetch_decision_shortlist()` returns rows from `v_decision_shortlist`
+2. `render_decision_shortlist()` groups `HOT` before `MANUAL_EXCEPTION` before `REVIEW`
+3. rendered output includes title, URL, verdict, bucket, AI bucket, fit/client/scope, margin, final reason, trap, and proposal angle
+4. `None` / missing values render as `—` and do not crash
+5. empty rows render a clear empty-queue message
+6. rendering works using a row produced by `run_fake_pipeline()`
+
+Use local in-memory SQLite and fake pipeline fixtures where useful.
+
+Do not require real Upwork credentials, real network, or real AI calls.
 
 ## Out of scope
 
@@ -156,19 +123,20 @@ Do not implement:
 - OAuth
 - real AI calls
 - OpenAI integration
+- normalization changes
 - filter changes
-- economics formula changes
-- triage logic changes
-- queue rendering beyond minimal debug output if needed
+- economics changes
+- triage changes
 - TSV export
 - database schema changes unless a real blocking issue is discovered
+- a web dashboard
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- the fake runner wires the existing staged modules together without duplicating their logic
-- the staged tables are populated in order from one local payload and one fake AI output
-- hard rejects and AI-validation failures behave explicitly and are tested
-- duplicate reruns are replay-safe
+- shortlist rows can be fetched from `v_decision_shortlist`
+- the queue renderer produces a compact readable terminal summary
+- missing values are handled safely and shown as `—`
+- queue sections appear in `HOT`, `MANUAL_EXCEPTION`, `REVIEW` order
 - `py -m pytest` passes

@@ -172,6 +172,17 @@ Should verify:
   - duplicate `raw_job_snapshots` rows are reused/skipped instead of violating uniqueness
   - duplicate versioned downstream rows are reused instead of being blindly duplicated
 
+### `tests/test_queue_view.py`
+
+Should verify:
+
+- `fetch_decision_shortlist()` returns rows from `v_decision_shortlist`
+- rendered output groups `HOT` before `MANUAL_EXCEPTION` before `REVIEW`
+- rendered output includes title, URL, verdict, bucket, AI summary, economics summary, final reason, trap, and proposal angle
+- missing / `None` values render as `—` and do not crash
+- empty shortlist input renders a clear empty-queue message
+- rendering works with a shortlist row produced by `run_fake_pipeline()`
+
 ## Test data
 
 Use small local fixtures.
@@ -193,6 +204,8 @@ AI tests should use fake model responses or stored fixture JSON.
 AI contract tests should stay pure and should not require a live model, network calls, or a database connection.
 
 Pipeline-runner tests should use only local fake payloads and fake AI output. They should not require real Upwork credentials, network calls, or live model access.
+
+Queue-view tests should use in-memory SQLite or plain row dicts. They should not require real Upwork credentials, network calls, or live model access.
 
 For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
 
