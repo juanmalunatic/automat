@@ -74,7 +74,7 @@ Should verify:
 
 ### `tests/test_filters.py`
 
-Later should verify:
+Should verify:
 
 - payment unverified hard reject
 - fixed budget below 100 hard reject
@@ -84,7 +84,17 @@ Later should verify:
 - high proposal count alone is not a hard reject
 - low hire rate alone is not a hard reject
 - new/thin client alone is not a hard reject
+- missing total spend alone is not a hard reject
+- missing client avg hourly alone is not a hard reject
+- proposals `20 to 50` alone are not a hard reject
 - exact-fit weird jobs can route to `MANUAL_EXCEPTION`
+- strong lane keywords increase score
+- rescue/performance keywords increase score
+- wrong-platform/trash terms route to `DISCARD`
+- a clean strong WooCommerce/plugin/API job routes to `AI_EVAL`
+- a borderline but non-rejected job routes to `LOW_PRIORITY_REVIEW`
+- a low-score non-exact-fit job routes to `DISCARD`
+- result flags/reject reasons are returned as lists
 
 ### `tests/test_normalize.py`
 
@@ -119,6 +129,8 @@ Use small local fixtures.
 Fixture numeric percentages must use percent values such as `75.0`, not fractions such as `0.75`.
 
 Economics tests should use pure in-memory Python inputs and should not require a database connection.
+
+Filter tests should use pure in-memory Python inputs and should not require a database connection.
 
 Do not require real Upwork API credentials for unit tests.
 

@@ -281,7 +281,9 @@ Suggested rule:
 - score >= 4 -> `AI_EVAL`
 - score 1 to 3 -> `LOW_PRIORITY_REVIEW`
 - score <= 0 -> `DISCARD`
-- exact-fit but economically weird -> `MANUAL_EXCEPTION`
+- exact-fit but visibly/economically weird from pre-AI fields -> `MANUAL_EXCEPTION`
+
+For the deterministic filters module, "economically/weirdly weak" should be interpreted only from visible pre-AI fields such as low-but-not-hard-reject budget/rate, high Connect cost, very low client average hourly, or similar non-formula weakness signals. Do not use post-AI or post-economics calculations at this stage.
 
 Exact-fit exception examples:
 

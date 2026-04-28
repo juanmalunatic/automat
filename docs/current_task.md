@@ -2,143 +2,180 @@
 
 ## Task name
 
-Implement deterministic apply-stage economics for the staged MVP.
+Implement deterministic pre-AI filters for the staged MVP.
 
 ## Goal
 
-Create a pure, testable economics module that computes deterministic apply-stage economics from:
+Create a pure, testable filtering module that evaluates normalized pre-AI job data and returns:
 
-1. triage settings
-2. normalized job fields
-3. AI bucket and likely-duration fields
+1. hard reject decisions
+2. lightweight deterministic score
+3. routing bucket
+4. human-inspectable positive, negative, and reject flags
 
-This task is calculation-only. It should not require a database connection and it should not implement final triage verdict logic.
+This task is filtering-only. It should not require a database connection and it should not implement economics or final triage verdict logic.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/economics.py`
-- `tests/test_economics.py`
+- `src/upwork_triage/filters.py`
+- `tests/test_filters.py`
 - `docs/current_task.md`
 
 Allowed supporting edits:
 
 - `docs/testing.md` if test expectations need clarification
-- `docs/design.md` if formula wording or non-ok calculation behavior needs clarification
+- `docs/design.md` if filter wording needs clarification
 - `docs/schema.md` only if a schema-level issue is discovered
 - `docs/decisions.md` only if a durable design decision is made
 - `pyproject.toml` only if needed for test/import configuration
 
 ## Required public API
 
-Implement a small pure-Python economics layer in `src/upwork_triage/economics.py`.
+Implement a small pure-Python filtering layer in `src/upwork_triage/filters.py`.
 
 Expose a clear typed API, using small dataclasses or equivalently explicit typed structures.
 
 The module should provide:
 
-- a settings input structure containing:
-  - `target_rate_usd`
-  - `connect_cost_usd`
-  - `p_strong`
-  - `p_ok`
-  - `p_weak`
-  - `fbv_hours_defined_short_term`
-  - `fbv_hours_ongoing_or_vague`
-- a normalized job input structure containing:
+- an input structure containing the normalized pre-AI fields needed by the MVP filter rules:
+  - `c_verified_payment`
   - `j_contract_type`
   - `j_pay_fixed`
+  - `j_pay_hourly_high`
+  - `a_interviewing`
+  - `a_invites_sent`
+  - `a_proposals`
   - `j_apply_cost_connects`
+  - `j_mins_since_posted`
+  - `a_mins_since_cli_viewed`
   - `c_hist_avg_hourly_rate`
-- an AI input structure containing:
-  - `ai_verdict_bucket`
-  - `ai_likely_duration`
+  - `c_hist_hire_rate`
+  - `c_hist_total_spent`
+  - `j_title`
+  - `j_description`
+  - `j_skills`
+  - `j_qualifications`
 - a result structure containing:
-  - `j_apply_cost_connects`
-  - `b_apply_cost_usd`
-  - `b_apply_prob`
-  - `b_first_believ_value_usd`
-  - `b_required_apply_prob`
-  - `b_calc_max_rac_usd`
-  - `b_margin_usd`
-  - `b_calc_max_rac_connects`
-  - `b_margin_connects`
-  - `calc_status`
-  - `calc_error`
+  - `passed`
+  - `routing_bucket`
+  - `score`
+  - `reject_reasons`
+  - `positive_flags`
+  - `negative_flags`
 - a pure calculation function that returns the structured result without requiring SQLite
 
 ## Required behavior
 
-Implement these formulas and rules:
+Implement these hard rejects:
 
-1. Fixed-price first believable value:
-   - `b_first_believ_value_usd = j_pay_fixed`
-2. Hourly first believable value:
-   - if `ai_likely_duration = defined_short_term`, use `fbv_hours_defined_short_term`
-   - if `ai_likely_duration = ongoing_or_vague`, use `fbv_hours_ongoing_or_vague`
-   - hourly rate is `min(target_rate_usd, c_hist_avg_hourly_rate)` when client average hourly is visible and usable
-   - otherwise hourly rate falls back to `target_rate_usd`
-   - `b_first_believ_value_usd = hours * hourly_rate`
-3. Apply cost:
-   - `b_apply_cost_usd = connect_cost_usd * j_apply_cost_connects`
-4. Bucket probability mapping:
-   - `Strong -> p_strong`
-   - `Ok -> p_ok`
-   - `Weak -> p_weak`
-   - `No -> 0`
-5. Required apply probability:
-   - `b_required_apply_prob = b_apply_cost_usd / b_first_believ_value_usd`
-6. Max rational apply cost:
-   - `b_calc_max_rac_usd = b_apply_prob * b_first_believ_value_usd`
-7. Margin:
-   - `b_margin_usd = b_calc_max_rac_usd - b_apply_cost_usd`
-8. Connect equivalents:
-   - `b_calc_max_rac_connects = floor(b_calc_max_rac_usd / connect_cost_usd)`
-   - `b_margin_connects = b_calc_max_rac_connects - j_apply_cost_connects`
+- payment explicitly unverified
+- fixed budget visible and below 100
+- hourly high visible and below 25
+- interviewing count >= 3
+- invites sent >= 20
+- obvious wrong-platform or trash terms:
+  - data entry
+  - AI training
+  - graphic design only
+  - Shopify only
+  - Wix only
+  - Squarespace only
+  - SEO only
 
-## Missing and invalid prerequisites
+Do not hard-reject only because of:
 
-Handle missing or invalid prerequisites explicitly.
+- low hire rate
+- missing total spend
+- new client
+- country
+- proposals `20 to 50`
+- missing hourly range
+- missing client average hourly rate
 
-Do not silently treat missing values as zero.
+Implement routing buckets:
 
-Use the existing schema calc-status vocabulary:
+- `DISCARD`
+- `LOW_PRIORITY_REVIEW`
+- `MANUAL_EXCEPTION`
+- `AI_EVAL`
 
-- `ok`
-- `parse_failure`
-- `missing_prerequisite`
-- `not_applicable`
+Suggested routing logic:
 
-If required inputs are missing, unusable, or would lead to invalid arithmetic such as division by zero, return a structured non-ok result with `calc_status` and `calc_error` instead of pretending the math succeeded.
+- any hard reject -> `DISCARD`
+- score >= 4 -> `AI_EVAL`
+- score 1 to 3 -> `LOW_PRIORITY_REVIEW`
+- score <= 0 -> `DISCARD`
+- exact-fit but economically/weirdly weak -> `MANUAL_EXCEPTION`
+
+Implement lightweight deterministic score using the design guidance:
+
+Positive signals:
+
+- exact lane keywords: WooCommerce, plugin, API, webhook, Gravity Forms, LearnDash, ACF, WP-CLI, custom PHP
+- rescue/performance keywords: fix, bug, issue, broken, troubleshoot, slow, performance, migration
+- fresh post
+- low proposal count
+- acceptable budget/rate
+- decent visible client history
+
+Negative signals:
+
+- high Connect cost
+- proposals 50+
+- vague full-site build
+- very low client avg hourly
+- wrong-platform/trash terms
+
+Exact-fit manual exception examples:
+
+- Brevo/CRM/form integration
+- WooCommerce checkout/shipping/payment issue
+- custom plugin update
+- RSS/XML/feed/plugin work
+- production rescue with clear technical hook
+
+## Result requirements
+
+Return a structured result containing:
+
+- `passed: bool`
+- `routing_bucket`
+- `score`
+- `reject_reasons`
+- `positive_flags`
+- `negative_flags`
+
+Use list values for `reject_reasons`, `positive_flags`, and `negative_flags`.
 
 ## Test requirements
 
-Add tests in `tests/test_economics.py`.
+Add tests in `tests/test_filters.py`.
 
 Tests should verify:
 
-1. fixed-price first believable value uses `j_pay_fixed`
-2. hourly `defined_short_term` uses `fbv_hours_defined_short_term`
-3. hourly `ongoing_or_vague` uses `fbv_hours_ongoing_or_vague`
-4. hourly visible client average hourly below target uses the client average
-5. hourly visible client average hourly above target caps at `target_rate_usd`
-6. hourly missing client average hourly falls back to `target_rate_usd`
-7. bucket probability mapping for:
-   - `Strong`
-   - `Ok`
-   - `Weak`
-   - `No`
-8. apply cost uses `connect_cost_usd * j_apply_cost_connects`
-9. required probability, max rational apply cost, USD margin, max rational connects, and connect margin are computed correctly
-10. missing `j_apply_cost_connects` returns `calc_status = missing_prerequisite`
-11. missing fixed price on a fixed job returns `calc_status = missing_prerequisite`
-12. missing or invalid duration on an hourly job returns a non-ok status appropriate to the implementation
-13. unknown contract type returns `calc_status = parse_failure`
-14. zero or negative first believable value does not divide by zero and returns a non-ok status
-15. zero or negative `connect_cost_usd` does not divide by zero and returns a non-ok status
+1. payment explicitly unverified hard-rejects
+2. fixed budget below 100 hard-rejects
+3. hourly high below 25 hard-rejects
+4. interviewing >= 3 hard-rejects
+5. invites sent >= 20 hard-rejects
+6. high proposal count alone does not hard-reject
+7. low hire rate alone does not hard-reject
+8. new/thin client alone does not hard-reject
+9. missing total spend does not hard-reject
+10. missing client avg hourly does not hard-reject
+11. proposals `20 to 50` does not hard-reject by itself
+12. exact-fit weird jobs can route to `MANUAL_EXCEPTION`
+13. strong technical lane keywords increase score
+14. rescue/performance keywords increase score
+15. wrong-platform/trash terms lead to `DISCARD`
+16. a clean strong WooCommerce/plugin/API job routes to `AI_EVAL`
+17. a borderline but non-rejected job routes to `LOW_PRIORITY_REVIEW`
+18. a low-score non-exact-fit job routes to `DISCARD`
+19. returned result includes `reject_reasons`, `positive_flags`, and `negative_flags` as lists
 
-Use pure unit tests. The economics tests should not require a database connection.
+Use pure unit tests. The filtering tests should not require a database connection.
 
 ## Out of scope
 
@@ -148,8 +185,8 @@ Do not implement:
 - OAuth
 - AI calls
 - normalizer logic
-- deterministic filter implementation
-- full triage verdict logic
+- economics formulas
+- final triage verdict logic
 - queue rendering
 - TSV export
 - database schema changes unless a real blocking issue is discovered
@@ -158,10 +195,9 @@ Do not implement:
 
 The task is complete when:
 
-- the economics module is pure and testable without SQLite
-- the required formulas are implemented
-- missing or invalid prerequisites return explicit non-ok results
-- tests cover the main fixed-price and hourly branches
-- tests cover bucket probability mapping and downstream economics
-- tests cover zero/missing prerequisite safety
+- the filters module is pure and testable without SQLite
+- the required hard rejects are implemented
+- lightweight deterministic scoring is implemented
+- manual exception routing is covered
+- tests cover hard rejects, routing, and list-shaped result fields
 - `py -m pytest` passes
