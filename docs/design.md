@@ -10,10 +10,12 @@ The system should:
 
 - ingest Upwork job data from GraphQL or a compatible source
 - store raw responses before transforming them
+- maintain a stable job identity layer for dedupe, user actions, and latest-snapshot lookup
 - normalize the full decision surface used in the old apply-triage sheet
 - reject obvious bad jobs deterministically before spending AI calls
 - ask AI only for semantic judgment: fit, client quality, scope quality, price/scope realism, duration, risk, and proposal angle
 - compute apply-stage economics deterministically
+- compute the final apply verdict and final one-line reason in code
 - present a final shortlist for manual application decisions
 - track user actions for future backtesting
 
@@ -40,20 +42,35 @@ The MVP should be runnable locally from the terminal.
 Pipeline stages:
 
 1. Fetch jobs from Upwork GraphQL or test fixture source.
-2. Store raw job snapshots.
-3. Normalize each raw job into the apply-triage schema.
-4. Apply deterministic pre-AI filters and lightweight scoring.
-5. Route jobs into `DISCARD`, `LOW_PRIORITY_REVIEW`, `MANUAL_EXCEPTION`, or `AI_EVAL`.
-6. Send routed jobs to AI when appropriate.
-7. Store AI semantic evaluations.
-8. Compute deterministic apply-stage economics.
-9. Compute final triage result.
-10. Show terminal queue via `v_decision_shortlist`.
-11. Record user actions.
+2. Create/update stable job identity rows.
+3. Store raw job snapshots.
+4. Normalize each raw job into the apply-triage schema.
+5. Apply deterministic pre-AI filters and lightweight scoring.
+6. Route jobs into `DISCARD`, `LOW_PRIORITY_REVIEW`, `MANUAL_EXCEPTION`, or `AI_EVAL`.
+7. Send routed jobs to AI when appropriate.
+8. Store AI semantic evaluations.
+9. Compute deterministic apply-stage economics.
+10. Compute final triage result, including final verdict, promotion trace, and final reason.
+11. Show terminal queue via `v_decision_shortlist`.
+12. Record user actions.
 
 The key architectural rule is that each stage stores its output separately.
 
 ## 4. Main data stages
+
+### Stable job identity
+
+`jobs` is the durable entity table for dedupe, latest snapshot lookup, and user action tracking.
+
+A job may have a visible Upwork job id, a URL, or only a source-derived fallback. The system should still assign a stable `job_key`.
+
+Suggested job key strategy:
+
+- if a stable Upwork job id is visible: `upwork:<id>`
+- else if a stable URL is visible: `url:<normalized-url-hash>`
+- else: `raw:<raw-hash>`
+
+The exact generation logic belongs in the normalizer/ingestion code, but downstream tables should reference `job_key`.
 
 ### Raw data
 
@@ -106,9 +123,11 @@ AI should evaluate:
 - scope explosion risk
 - severe hidden risk
 - evidence arrays
-- reason, trap, and proposal angle
+- semantic reason, trap, and proposal angle
 
 AI should not compute deterministic economics.
+
+AI should not produce the final user-facing apply reason. It may produce an `ai_semantic_reason_short`, but the final reason shown to the user belongs to the triage stage because it depends on economics and promotion logic.
 
 ### Economics
 
@@ -119,6 +138,18 @@ These calculations use settings from `triage_settings_versions`, normalized job 
 ### Final triage
 
 `triage_results` combines filter result, AI evaluation, and economics into the final queue verdict.
+
+This stage owns:
+
+- `ai_verdict_apply`
+- `ai_apply_promote`
+- `ai_reason_apply_short`
+- `final_verdict`
+- `final_reason`
+- `queue_bucket`
+- `priority_score`
+
+`ai_reason_apply_short` is kept here for compatibility with the old manual TSV schema.
 
 ### User actions
 
@@ -142,11 +173,13 @@ The original manual workflow had these field groups:
 
 In Automat:
 
+- stable job identity lives in `jobs`
 - meta/client/job/activity/market fields live in `job_snapshots_normalized`
 - settings live in `triage_settings_versions`
 - AI qualitative fields live in `ai_evaluations`
 - economic fields live in `economics_results`
 - final apply fields live in `triage_results`
+- actual user outcomes live in `user_actions`
 
 The old TSV row can be reconstructed by joining those tables.
 
@@ -168,6 +201,8 @@ Default settings:
 These settings should be stored in `triage_settings_versions`.
 
 Do not hardcode them only inside formulas.
+
+Only one row should have `is_default = 1`.
 
 ## 7. Fit context
 
@@ -267,7 +302,7 @@ AI must return strict JSON with these fields:
 - `proposal_can_be_written_quickly`: boolean
 - `scope_explosion_risk`: boolean
 - `severe_hidden_risk`: boolean
-- `ai_reason_apply_short`: one sentence, preferably under 140 characters
+- `ai_semantic_reason_short`: one sentence, preferably under 140 characters
 - `ai_best_reason_to_apply`: short sentence
 - `ai_why_trap`: short sentence
 - `ai_proposal_angle`: short sentence
@@ -358,6 +393,8 @@ Then minimum verdict becomes `MAYBE`.
 
 If low cash mode is on, proposal can be written quickly, no obvious scope-explosion risk, and client quality is not weak, `MAYBE` may become `APPLY`.
 
+The final triage stage should write a concise `ai_reason_apply_short` / `final_reason` that reflects both qualitative judgment and deterministic economics.
+
 ## 15. Decision shortlist view
 
 The main user-facing database view is `v_decision_shortlist`.
@@ -365,6 +402,7 @@ The main user-facing database view is `v_decision_shortlist`.
 It must show:
 
 - final verdict
+- final reason
 - queue bucket
 - priority score
 - AI bucket
@@ -374,7 +412,7 @@ It must show:
 - promotion trace
 - economics
 - key upstream job/client/activity fields
-- AI reason
+- semantic AI reason
 - evidence arrays
 - risk/trap
 - proposal angle
@@ -392,7 +430,19 @@ MVP may support a fixture/source mode before real Upwork API access is complete.
 
 The first coding task should implement database initialization, schema, default settings, view, and tests.
 
-## 17. Deferred future features
+## 17. Data integrity requirements
+
+SQLite connections created by project code must enable:
+
+`PRAGMA foreign_keys = ON`
+
+The DB schema should use `CHECK` constraints for enum-like fields where practical.
+
+Only one settings row should be default.
+
+The decision shortlist should select the latest triage result per `job_key`, not per nullable `upwork_job_id`.
+
+## 18. Deferred future features
 
 Future extensions:
 

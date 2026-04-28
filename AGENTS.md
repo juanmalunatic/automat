@@ -63,6 +63,36 @@ The initial module layout is:
 
 Use typed functions where practical.
 
+## Schema discipline
+
+Do not rename, remove, or repurpose schema fields without updating:
+
+1. `docs/schema.md`
+2. `docs/design.md` if behavior changes
+3. tests that cover the affected tables/views
+4. TSV/export mapping if the field maps to the old manual schema
+
+Preserve the staged data boundaries:
+
+1. raw API/scrape data
+2. stable job identity
+3. normalized visible job data
+4. deterministic filter result
+5. AI semantic judgment
+6. deterministic economics
+7. final triage result
+8. user action
+
+## SQLite rules
+
+Every SQLite connection created by project code must enable foreign keys:
+
+```sql
+PRAGMA foreign_keys = ON;
+```
+
+The schema should use database constraints for enum-like fields where practical. Do not rely only on application-side validation for critical values such as final verdict, queue bucket, routing bucket, AI bucket, duration class, or calculation status.
+
 ## Testing expectations
 
 For every implemented module, add or update tests under `tests/`.
@@ -73,19 +103,11 @@ If a test cannot be run because dependencies are missing or external credentials
 
 ## Data-boundary rules
 
-Keep these stages separate:
-
-1. raw API/scrape data
-2. normalized visible job data
-3. deterministic filter result
-4. AI semantic judgment
-5. deterministic economics
-6. final triage result
-7. user action
-
 Do not let AI infer deterministic fields such as Connect cost, client spend, payment verification, proposal counts, or market bid rates. Those must come from normalized visible data or be marked unavailable.
 
 Do not let AI compute final economics. AI may classify fit/client/scope/risk. Code computes economics.
+
+The final user-facing one-line apply reason belongs to the triage stage, not to the raw AI evaluation stage, because it depends on deterministic economics and promotion logic.
 
 ## Secrets and credentials
 

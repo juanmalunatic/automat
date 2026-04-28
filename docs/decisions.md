@@ -6,7 +6,7 @@ This file records durable architectural decisions so we do not re-litigate them 
 
 Decision:
 
-Automat will separate raw ingestion, normalization, deterministic filtering, AI semantic evaluation, deterministic economics, final triage, and user actions.
+Automat will separate raw ingestion, stable job identity, normalization, deterministic filtering, AI semantic evaluation, deterministic economics, final triage, and user actions.
 
 Reason:
 
@@ -76,7 +76,7 @@ Requires a clean interface between `ai_evaluations` and `economics_results`.
 
 Decision:
 
-Create a SQLite view called `v_decision_shortlist` that joins final verdict, AI signal fields, economics, upstream job/client/activity fields, and evidence.
+Create a SQLite view called `v_decision_shortlist` that joins final verdict, final reason, AI signal fields, economics, upstream job/client/activity fields, and evidence.
 
 Reason:
 
@@ -85,3 +85,45 @@ The user needs to decide quickly from a final shortlist. The view should expose 
 Tradeoff:
 
 The view must be maintained as schema evolves.
+
+## 2026-04-28 — Final one-line apply reason belongs to triage, not AI
+
+Decision:
+
+The AI evaluation stage may produce `ai_semantic_reason_short`, but the final user-facing apply reason belongs in `triage_results`.
+
+Reason:
+
+The final reason depends on deterministic economics, margin, promotion trace, hard rejects, and final verdict logic. AI semantic judgment alone does not have authority over the final apply reason.
+
+Tradeoff:
+
+The triage stage must construct or select a concise final reason after combining AI and economics.
+
+## 2026-04-28 — Use stable `job_key` / `jobs` table for dedupe and user action tracking
+
+Decision:
+
+Add a stable `jobs` table keyed by `job_key`. Snapshots, triage results, and user actions should be traceable back to this stable job identity.
+
+Reason:
+
+`upwork_job_id` may be missing during parsing or unavailable for fixture/scrape sources. A stable `job_key` lets the system dedupe, track first/last seen, connect user actions, and select latest triage results reliably.
+
+Tradeoff:
+
+One more table and one more identity concept, but it makes polling and backtesting cleaner.
+
+## 2026-04-28 — Enable SQLite foreign keys and use CHECK constraints for enum-like fields
+
+Decision:
+
+Project-created SQLite connections must enable `PRAGMA foreign_keys = ON`, and schema should use `CHECK` constraints for key enum-like fields.
+
+Reason:
+
+SQLite does not enforce foreign keys unless enabled. Constraints catch bad values early and make the MVP more reliable and portfolio-grade.
+
+Tradeoff:
+
+Tests and fixture inserts must use valid enum values.

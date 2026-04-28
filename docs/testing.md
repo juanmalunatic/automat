@@ -6,12 +6,14 @@ Tests should make the pipeline safe to extend.
 
 The first priority is not broad coverage. The first priority is protecting the data boundaries:
 
-1. raw data is stored
-2. normalized fields are typed and status-aware
-3. deterministic filters are reproducible
-4. AI outputs are schema-validated
-5. economics are deterministic
-6. final triage can be inspected through `v_decision_shortlist`
+1. stable job identity is available
+2. raw data is stored
+3. normalized fields are typed and status-aware
+4. deterministic filters are reproducible
+5. AI outputs are schema-validated
+6. economics are deterministic
+7. final triage can be inspected through `v_decision_shortlist`
+8. user actions can be tied to stable jobs
 
 ## Test command
 
@@ -34,11 +36,15 @@ py -m pytest
 Should verify:
 
 - SQLite initialization works in memory
+- project DB connections enable foreign keys
 - all tables exist
 - `v_decision_shortlist` exists
 - default settings row is inserted
 - initialization is idempotent
+- only one settings row can have `is_default = 1`
+- invalid enum-like values are rejected by constraints
 - a minimal coherent fixture appears in `v_decision_shortlist`
+- the decision shortlist includes `job_key`, `final_verdict`, `final_reason`, core AI signal fields, economics fields, and upstream job fields
 
 ### `tests/test_economics.py`
 
@@ -72,6 +78,7 @@ Later should verify:
 
 Later should verify:
 
+- job key generation
 - placeholder/status handling
 - money normalization
 - percent normalization
@@ -91,6 +98,7 @@ Later should verify:
 - hard disqualifier -> NO
 - severe hidden risk blocks APPLY
 - negative margin -> NO by default
+- final reason is generated at triage stage, not copied blindly from AI semantic reason
 
 ## Test data
 
