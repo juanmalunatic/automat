@@ -457,11 +457,13 @@ The view must select the latest triage result per `job_key` using a deterministi
 
 ## 16. MVP command behavior
 
-First full pipeline command target:
+Stable local demo command target:
 
-`python -m upwork_triage.run_pipeline`
+`py -m upwork_triage fake-demo`
 
-MVP may support a fixture/source mode before real Upwork API access is complete.
+This command should stay fake/local only for the MVP. It should load config, use SQLite, run one local WooCommerce/plugin/API fixture through the existing staged pipeline, and print the rendered shortlist.
+
+The lower-level `run_pipeline` module may still exist as an internal orchestration helper, but the user-facing local demo entry point should be the package CLI.
 
 The first coding task should implement database initialization, schema, default settings, view, and tests.
 

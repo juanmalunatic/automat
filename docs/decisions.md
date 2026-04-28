@@ -206,3 +206,17 @@ This keeps setup simple, makes tests easy to isolate with fake env mappings, and
 Tradeoff:
 
 There are now two places where settings-shaped values may exist, but only one of them is authoritative today. Later work that wants env-driven overrides will need an explicit synchronization policy instead of silently mixing sources.
+
+## 2026-04-28 - `py -m upwork_triage fake-demo` is the stable local demo entry point
+
+Decision:
+
+The package CLI command `py -m upwork_triage fake-demo` is the stable local demo entry point for the MVP.
+
+Reason:
+
+The staged fake pipeline, SQLite store, and shortlist renderer already exist. A package-level CLI makes the MVP runnable end-to-end without exposing internal helper modules as the user-facing interface.
+
+Tradeoff:
+
+The CLI intentionally stays thin and fake-mode only for now. Later real ingestion or live modes can add more commands, but they should extend this entry point rather than bypassing it.

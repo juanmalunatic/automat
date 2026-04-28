@@ -45,6 +45,26 @@ Current development defaults are intentionally local-first:
 
 See `docs/current_task.md` for the active bounded task and `docs/design.md` for the broader architecture.
 
+## Local fake demo
+
+You can run the local fake staged MVP without real Upwork or OpenAI credentials.
+
+1. Copy `.env.example` to `.env` if you want a local env file.
+2. Optionally set `AUTOMAT_DB_PATH` to choose where the SQLite demo DB should live.
+3. Run:
+
+```powershell
+py -m upwork_triage fake-demo
+```
+
+4. Run tests with:
+
+```powershell
+py -m pytest
+```
+
+This demo uses a local fake WooCommerce/plugin/API fixture plus a fake validated AI response. It does not perform real Upwork fetching or real AI calls yet.
+
 ## Development
 
 Preferred test command:

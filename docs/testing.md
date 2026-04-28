@@ -70,6 +70,19 @@ Should verify:
 - the returned config object is immutable
 - `.env.example` lists the supported variables and does not contain obvious real secrets
 
+### `tests/test_cli.py`
+
+Should verify:
+
+- `main(["fake-demo"])` returns `0`
+- the command writes rendered shortlist output to stdout
+- the output includes the fake job title plus `APPLY`, `HOT`, `Strong`, `Reason:`, `Trap:`, and `Angle:`
+- the CLI uses the configured DB path rather than the real default DB
+- the CLI creates the parent DB directory when missing
+- running the command twice against the same temp DB succeeds and only increases `ingestion_runs` while replay-safe stage tables remain reused
+- `main([])` or an unknown command returns a non-zero exit code and prints usage or a helpful error
+- `src/upwork_triage/__main__.py` delegates to the CLI module without requiring a subprocess
+
 ### `tests/test_economics.py`
 
 Should verify:
@@ -227,6 +240,8 @@ Pipeline-runner tests should use only local fake payloads and fake AI output. Th
 Queue-view tests should use in-memory SQLite or plain row dicts. They should not require real Upwork credentials, network calls, or live model access.
 
 Config tests should prefer passing fake env dicts into `load_config()` rather than mutating the real process environment. They should not require real secrets, network calls, or a live `.env` file.
+
+CLI tests should use temp DB paths through env overrides or other isolated config strategies. They should not write to the real default `data/automat.sqlite3`, require a live `.env` file, or require real network/model credentials.
 
 For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
 
