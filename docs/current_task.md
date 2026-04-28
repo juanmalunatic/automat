@@ -2,171 +2,184 @@
 
 ## Task name
 
-Implement a CLI entry point for the local fake demo.
+Implement a real AI client wrapper behind the existing AI evaluation contract.
 
 ## Goal
 
-Make the existing local fake MVP runnable from the terminal by wiring the current config, DB, fake pipeline runner, and shortlist renderer behind a small command-line interface.
+Add the integration boundary for real AI evaluation while preserving the existing pure contract validator in `src/upwork_triage/ai_eval.py`.
 
-This task is CLI-only. It should not add real Upwork fetching, real OAuth, real AI calls, or new business logic.
+This task should introduce a provider abstraction, an OpenAI-backed implementation, prompt/message construction, and a high-level evaluator helper. It must keep unit tests fully mocked and network-free.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/cli.py`
-- `src/upwork_triage/__main__.py`
-- `tests/test_cli.py`
+- `src/upwork_triage/ai_client.py`
+- `tests/test_ai_client.py`
 - `docs/current_task.md`
-- `README.md`
 
 Allowed supporting edits:
 
+- `src/upwork_triage/config.py` only if a small config field/helper is missing
+- `src/upwork_triage/cli.py` only if a clearly bounded AI-check/demo command is useful, but do not change `fake-demo` behavior
 - `docs/testing.md` if test expectations need clarification
-- `docs/design.md` if CLI/demo wording needs clarification
-- `docs/decisions.md` only if a durable CLI decision is made
-- `pyproject.toml` only if needed to add a console script or fix test/import configuration
+- `docs/design.md` if AI integration wording needs clarification
+- `docs/decisions.md` if a durable provider-interface decision is made
+- `README.md` if setup/run instructions need a small update
 - `.env.example` only if a needed config variable is missing
+- `pyproject.toml` only if adding an optional dependency or test/import configuration is necessary
 
 ## Required public API
 
-Implement:
+Implement a focused AI client module with clear typed boundaries. Suggested public API:
 
-- `src/upwork_triage/cli.py`
-  - `main(argv: list[str] | None = None) -> int`
-  - if needed for testability:
-    - `main(argv: list[str] | None = None, *, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int`
-- `src/upwork_triage/__main__.py`
-  - delegate to the CLI module
-  - `raise SystemExit(main())` is acceptable here
+- `AiProvider`
+- `OpenAiProvider`
+- `AiClientError`
+- `MissingAiCredentialsError`
+- `build_ai_messages(payload: Mapping[str, object] | AiPayloadInput) -> list[dict[str, str]]`
+- `evaluate_with_ai_provider(provider: AiProvider, payload: Mapping[str, object] | AiPayloadInput, *, model: str) -> AiEvaluation`
+- `evaluate_with_openai(config: AppConfig, payload: Mapping[str, object] | AiPayloadInput) -> AiEvaluation`
 
-Use `argparse` or similarly simple standard-library parsing.
+Equivalent clear naming is acceptable if the module stays small, typed, and documented.
 
-Return integer exit codes from CLI functions rather than calling `sys.exit()` deep inside business logic.
+## Provider-interface design
 
-## Required command behavior
+Do not hardwire downstream code directly to OpenAI SDK calls.
 
-The CLI must support:
+Use a small local provider interface or protocol, for example:
 
-- `py -m upwork_triage fake-demo`
+- `complete_json(messages: list[dict[str, str]], *, model: str) -> str`
 
-`fake-demo` must:
+The OpenAI-backed implementation may be the first real provider, but the rest of the app should depend only on the local interface.
 
-1. load config with `load_config()`
-2. open SQLite with `connect_db(config.db_path)`
-3. ensure the parent directory for the DB path exists
-4. run one local fake WooCommerce/plugin/API fixture through `run_fake_pipeline()`
-5. use a local fake AI output dict
-6. fetch rows with `fetch_decision_shortlist(conn)`
-7. render rows with `render_decision_shortlist(rows)`
-8. print the rendered shortlist to stdout
-9. close the database connection
-10. return exit code `0` on success
+## Prompt/message contract
 
-The fake fixture should stay private to the CLI module, for example:
+`build_ai_messages()` should create a compact instruction that:
 
-- `_fake_raw_payload() -> dict[str, object]`
-- `_fake_ai_output() -> dict[str, object]`
+- tells the model to return strict JSON only
+- tells the model not to add markdown or code fences
+- uses the exact field names expected by `parse_ai_output()`
+- documents allowed enum values:
+  - `ai_quality_client`: `Strong | Ok | Weak`
+  - `ai_quality_fit`: `Strong | Ok | Weak`
+  - `ai_quality_scope`: `Strong | Ok | Weak`
+  - `ai_price_scope_align`: `aligned | underposted | overpriced | unclear`
+  - `ai_verdict_bucket`: `Strong | Ok | Weak | No`
+  - `ai_likely_duration`: `defined_short_term | ongoing_or_vague`
+- requires real booleans for:
+  - `proposal_can_be_written_quickly`
+  - `scope_explosion_risk`
+  - `severe_hidden_risk`
+- requires plain list fields of strings:
+  - `fit_evidence`
+  - `client_evidence`
+  - `scope_evidence`
+  - `risk_flags`
+- reminds the model not to infer deterministic fields such as Connect cost, client spend, proposal count, or payment verification
+- includes the compact payload from `build_ai_payload()`, including fit context
 
-Do not import test fixtures from `tests/`.
+The expected JSON object shape is:
 
-The fake payload should be realistic enough to produce a `HOT` / `APPLY` shortlist row:
+```json
+{
+  "ai_quality_client": "Strong|Ok|Weak",
+  "ai_quality_fit": "Strong|Ok|Weak",
+  "ai_quality_scope": "Strong|Ok|Weak",
+  "ai_price_scope_align": "aligned|underposted|overpriced|unclear",
+  "ai_verdict_bucket": "Strong|Ok|Weak|No",
+  "ai_likely_duration": "defined_short_term|ongoing_or_vague",
+  "proposal_can_be_written_quickly": true,
+  "scope_explosion_risk": false,
+  "severe_hidden_risk": false,
+  "ai_semantic_reason_short": "short semantic reason",
+  "ai_best_reason_to_apply": "best reason to apply",
+  "ai_why_trap": "main trap or risk",
+  "ai_proposal_angle": "short proposal angle",
+  "fit_evidence": ["..."],
+  "client_evidence": ["..."],
+  "scope_evidence": ["..."],
+  "risk_flags": ["..."]
+}
+```
 
-- WooCommerce/plugin/API debugging work
-- fixed budget around 500
-- payment verified
-- visible client spend / hire rate / avg hourly
-- low proposal band
-- recent post
-- visible Connect cost
+## OpenAI provider constraints
 
-The fake AI output must be valid for `parse_ai_output()` and should represent a strong positive case:
+The OpenAI provider must:
 
-- `ai_quality_client = Strong` or `Ok`
-- `ai_quality_fit = Strong`
-- `ai_quality_scope = Ok` or `Strong`
-- `ai_price_scope_align = aligned`
-- `ai_verdict_bucket = Strong`
-- `ai_likely_duration = defined_short_term`
-- `proposal_can_be_written_quickly = true`
-- `severe_hidden_risk = false`
-- evidence fields are plain lists, not `*_json`
+- use `config.openai_api_key` and `config.openai_model`
+- raise `MissingAiCredentialsError` or a clear `AiClientError` before any network call if the API key is missing
+- keep SDK-specific calls isolated to the provider implementation
+- avoid import-time SDK initialization or network calls
+- raise a clear `AiClientError` if the optional OpenAI SDK is not installed
+- avoid printing or logging secrets
 
-## Config behavior
+The rest of the app should stay independent from SDK-specific response objects.
 
-The CLI should:
+## Integration behavior
 
-- use `load_config()` normally
-- use `config.db_path` as the database location
-- create the parent DB directory when it does not exist
-- not require OpenAI or Upwork secrets in fake mode
-- not print secrets or environment variables
+The high-level evaluator should:
 
-## Output behavior
+1. accept an `AiPayloadInput` or a prebuilt payload mapping
+2. build prompt/messages
+3. call the provider
+4. parse the returned JSON through `parse_ai_output()`
+5. return a validated `AiEvaluation`
 
-The command should print the rendered shortlist produced by the existing renderer.
+Reuse the existing validator in `src/upwork_triage/ai_eval.py`. Do not replace it.
 
-The output should include the fake job title plus the existing rendered summary fields such as:
-
-- final verdict
-- queue bucket
-- AI bucket
-- margin
-- final reason
-- trap
-- proposal angle
-
-It is acceptable if running `fake-demo` repeatedly reuses existing staged rows and prints the same shortlist row, because `run_fake_pipeline()` is already replay-safe.
+It is acceptable for `AiValidationError` to propagate as-is if that keeps the boundary clean. If wrapped, preserve the underlying message clearly.
 
 ## Test requirements
 
-Add tests in `tests/test_cli.py`.
+Add tests in `tests/test_ai_client.py`.
 
 Tests should verify:
 
-1. `main(["fake-demo"])` returns exit code `0`
-2. the command writes rendered shortlist output to stdout
-3. the output includes:
-   - the fake job title
-   - `APPLY`
-   - `HOT`
-   - `Strong`
-   - `Reason:`
-   - `Trap:`
-   - `Angle:`
-4. the CLI uses the configured DB path
-5. the CLI creates the parent DB directory when missing
-6. running the command twice against the same temp DB succeeds and only increases `ingestion_runs` while replay-safe stage tables remain reused
-7. `main([])` or an unknown command returns a non-zero exit code and prints usage or a helpful error
-8. `src/upwork_triage/__main__.py` delegates to the CLI module if practical to test without a subprocess
-9. tests do not require real Upwork credentials, real OpenAI credentials, network access, or a live `.env` file
+1. `build_ai_messages()` returns a non-empty list of message dicts
+2. `build_ai_messages()` includes strict JSON-only instructions
+3. `build_ai_messages()` includes the required output field names
+4. `build_ai_messages()` includes the allowed enum values
+5. `build_ai_messages()` includes the supplied payload content
+6. `evaluate_with_ai_provider()` calls the provider with the requested model
+7. `evaluate_with_ai_provider()` parses valid fake-provider JSON into `AiEvaluation`
+8. `evaluate_with_ai_provider()` rejects invalid JSON or propagates a clear validation/client error
+9. `evaluate_with_ai_provider()` rejects invalid enum fields through the existing validator
+10. `evaluate_with_openai()` raises `MissingAiCredentialsError` or a clear `AiClientError` when the API key is missing
+11. `OpenAiProvider` can be constructed without making a network call
+12. unit tests do not require a real `OPENAI_API_KEY`
+13. unit tests do not require network access
+14. if the OpenAI SDK is absent, provider behavior fails with a clear `AiClientError` rather than a raw `ImportError`
+15. the prompt/output contract uses `fit_evidence`, `client_evidence`, `scope_evidence`, and `risk_flags`, not `*_json` fields
 
-Prefer `monkeypatch` or explicit temp env values in tests so they never write to the real default `data/automat.sqlite3`.
+Use fake provider objects that return JSON strings. Do not make unit tests call the network.
 
 ## Out of scope
 
 Do not implement:
 
 - real Upwork API calls
-- OAuth
-- real AI calls
-- OpenAI integration
+- Upwork OAuth
 - DB schema changes
 - normalization changes
-- filter changes
-- AI validation changes
+- deterministic filter changes
 - economics formula changes
 - triage rule changes
-- queue-rendering changes except tiny compatibility fixes if absolutely necessary
+- queue-rendering changes
 - TSV export
 - a dashboard or web UI
+- database storage wiring for real AI calls
+- hidden network calls in tests
+
+The existing fake pipeline should remain stable. Do not wire real AI into `run_pipeline.py` in this task.
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- `py -m upwork_triage fake-demo` works through `src/upwork_triage/__main__.py`
-- the CLI stays thin and reuses the existing fake pipeline and renderer
-- temp-path CLI tests verify stdout rendering, DB-path usage, directory creation, replay-safe reruns, and non-zero error exits
-- `README.md` documents the local fake demo command
+- `src/upwork_triage/ai_client.py` provides a small provider abstraction plus an OpenAI-backed implementation
+- prompt/message construction documents the strict JSON contract expected by `parse_ai_output()`
+- the high-level evaluator reuses `parse_ai_output()` to return validated `AiEvaluation`
+- missing credentials and missing optional SDK cases fail clearly
+- `tests/test_ai_client.py` stays fully mocked and network-free
 - `py -m pytest` passes

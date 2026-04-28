@@ -220,3 +220,17 @@ The staged fake pipeline, SQLite store, and shortlist renderer already exist. A 
 Tradeoff:
 
 The CLI intentionally stays thin and fake-mode only for now. Later real ingestion or live modes can add more commands, but they should extend this entry point rather than bypassing it.
+
+## 2026-04-28 - Use a local AI provider abstraction with OpenAI as the first concrete implementation
+
+Decision:
+
+Real AI evaluation should go through a small local provider interface. The first concrete provider may call OpenAI, but downstream code should depend on a local `AiProvider` boundary plus the validated `AiEvaluation` contract.
+
+Reason:
+
+The project already has a strict AI contract layer in `ai_eval.py`. Keeping SDK calls behind a thin provider implementation preserves that contract, keeps tests network-free, and leaves room for later provider changes if cost or availability shifts.
+
+Tradeoff:
+
+There is one extra layer to maintain, but it keeps the OpenAI SDK isolated and avoids hardwiring the rest of the app to one vendor's response objects.

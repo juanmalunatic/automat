@@ -189,6 +189,23 @@ Should verify:
 - payload builder includes job, client, activity, deterministic filter flags, and fit context
 - payload builder does not invent unavailable deterministic fields
 
+### `tests/test_ai_client.py`
+
+Should verify:
+
+- `build_ai_messages()` returns a non-empty list of message dicts
+- the prompt instructs the model to return strict JSON only, with no markdown or code fences
+- the prompt includes the exact AI contract field names expected by `parse_ai_output()`
+- the prompt documents the allowed enum values
+- the prompt includes the supplied compact payload content and fit context
+- the prompt uses plain list fields `fit_evidence`, `client_evidence`, `scope_evidence`, and `risk_flags`, not `*_json`
+- `evaluate_with_ai_provider()` passes the requested model through to the provider
+- `evaluate_with_ai_provider()` parses valid fake-provider JSON into `AiEvaluation`
+- invalid JSON or invalid contract fields fail clearly through the existing AI contract validator
+- missing OpenAI credentials fail clearly before any real provider call
+- `OpenAiProvider` can be constructed without a network call when a fake client is injected
+- if the optional OpenAI SDK is absent, the provider raises a clear client error instead of leaking a raw `ImportError`
+
 ### `tests/test_run_pipeline.py`
 
 Should verify:
@@ -234,6 +251,8 @@ Do not require real AI calls for unit tests.
 AI tests should use fake model responses or stored fixture JSON.
 
 AI contract tests should stay pure and should not require a live model, network calls, or a database connection.
+
+AI client-wrapper tests should use fake providers or injected fake clients only. They should not require real `OPENAI_API_KEY` values, network access, or a live `.env` file.
 
 Pipeline-runner tests should use only local fake payloads and fake AI output. They should not require real Upwork credentials, network calls, or live model access.
 

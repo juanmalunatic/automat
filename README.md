@@ -42,6 +42,7 @@ Current development defaults are intentionally local-first:
 - `AUTOMAT_RUN_MODE=fake`
 - no real OpenAI or Upwork secrets are required for the fake/local test workflow
 - SQLite defaults to `data/automat.sqlite3`
+- `OPENAI_API_KEY` is only needed for future live AI calls, not for tests or `fake-demo`
 
 See `docs/current_task.md` for the active bounded task and `docs/design.md` for the broader architecture.
 
@@ -64,6 +65,8 @@ py -m pytest
 ```
 
 This demo uses a local fake WooCommerce/plugin/API fixture plus a fake validated AI response. It does not perform real Upwork fetching or real AI calls yet.
+
+The repository now also includes a real AI client wrapper boundary for future live evaluation work, but the local demo remains fake-mode only.
 
 ## Development
 

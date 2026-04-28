@@ -345,6 +345,8 @@ The raw AI contract uses plain list field names such as `fit_evidence`. When the
 
 Do not let the AI contract layer invent unavailable deterministic fields. If a normalized field such as Connect cost, client spend, proposal count, or payment verification is unavailable upstream, it should remain unavailable in the payload rather than being guessed.
 
+Real model access should sit behind a small local provider interface. The rest of the app should build messages and depend on validated `AiEvaluation` results, not on OpenAI SDK response objects. OpenAI may be the first concrete provider, but the integration boundary should preserve future provider flexibility.
+
 ## 11. Bucket meaning
 
 - `Strong`: strong real-lane fit plus acceptable/good client plus understandable scope
@@ -462,6 +464,8 @@ Stable local demo command target:
 `py -m upwork_triage fake-demo`
 
 This command should stay fake/local only for the MVP. It should load config, use SQLite, run one local WooCommerce/plugin/API fixture through the existing staged pipeline, and print the rendered shortlist.
+
+Even after a real AI client wrapper exists, `fake-demo` should remain fake-mode only and continue using local fake AI output instead of calling a live provider.
 
 The lower-level `run_pipeline` module may still exist as an internal orchestration helper, but the user-facing local demo entry point should be the package CLI.
 
