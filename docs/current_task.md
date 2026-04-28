@@ -2,149 +2,133 @@
 
 ## Task name
 
-Implement AI evaluation contract validation and prompt payload construction for the staged MVP.
+Implement normalized job payload conversion using local fixtures.
 
 ## Goal
 
-Create a pure, testable AI contract module that:
+Create a pure, testable normalization module that:
 
-1. builds the compact payload sent to AI from normalized job/client/activity data plus deterministic filter flags
-2. validates/parses raw AI JSON output into a typed structure
-3. serializes the typed AI output into fields suitable for `ai_evaluations` storage
+1. accepts a fake/local raw job-like payload dict
+2. generates a stable `job_key`
+3. extracts normalized visible fields needed by the staged MVP
+4. preserves unavailable/unknown values as `None` plus `field_status_json`
+5. projects the normalized result into downstream module inputs without requiring SQLite
 
-This task is AI-contract-only. It should not call a real model and it should not implement filter, economics, or triage logic.
+This task is normalizer-only. It should not make real Upwork API calls and it should not change filter, AI, economics, or triage logic.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/ai_eval.py`
-- `tests/test_ai_eval.py`
+- `src/upwork_triage/normalize.py`
+- `tests/test_normalize.py`
 - `docs/current_task.md`
 
 Allowed supporting edits:
 
 - `docs/testing.md` if test expectations need clarification
-- `docs/design.md` if AI contract wording needs clarification
+- `docs/design.md` if normalization wording needs clarification
 - `docs/schema.md` only if a schema-level issue is discovered
 - `docs/decisions.md` only if a durable design decision is made
 - `pyproject.toml` only if needed for test/import configuration
 
 ## Required public API
 
-Implement a small pure-Python AI contract layer in `src/upwork_triage/ai_eval.py`.
+Implement a small pure-Python normalization layer in `src/upwork_triage/normalize.py`.
 
 Expose a clear typed API, using small dataclasses or equivalently explicit typed structures.
 
 The module should provide:
 
-- a typed input structure for the compact payload sent to AI, containing normalized job/client/activity fields and deterministic filter flags
-- a typed output structure for these AI semantic fields:
-  - `ai_quality_client`
-  - `ai_quality_fit`
-  - `ai_quality_scope`
-  - `ai_price_scope_align`
-  - `ai_verdict_bucket`
-  - `ai_likely_duration`
-  - `proposal_can_be_written_quickly`
-  - `scope_explosion_risk`
-  - `severe_hidden_risk`
-  - `ai_semantic_reason_short`
-  - `ai_best_reason_to_apply`
-  - `ai_why_trap`
-  - `ai_proposal_angle`
-  - `fit_evidence`
-  - `client_evidence`
-  - `scope_evidence`
-  - `risk_flags`
-- a pure payload builder function
-- a pure validator/parser for raw AI JSON/dict output
-- a pure serializer for `ai_evaluations` storage fields
+- a typed normalization result for one raw job-like payload
+- a stable hash helper using deterministic JSON serialization
+- a stable job-key builder
+- typed projections suitable for:
+  - jobs-table upsert inputs
+  - raw-snapshot metadata
+  - `job_snapshots_normalized` insert inputs
+  - `FilterInput`
+  - `AiPayloadInput`
+  - `EconomicsJobInput`
 
 ## Required behavior
 
-Allowed values:
+The normalizer should:
 
-- `ai_quality_client`: `Strong | Ok | Weak`
-- `ai_quality_fit`: `Strong | Ok | Weak`
-- `ai_quality_scope`: `Strong | Ok | Weak`
-- `ai_price_scope_align`: `aligned | underposted | overpriced | unclear`
-- `ai_verdict_bucket`: `Strong | Ok | Weak | No`
-- `ai_likely_duration`: `defined_short_term | ongoing_or_vague`
+- accept a raw job-like dict payload
+- generate `job_key` with this strategy:
+  - visible Upwork job id -> `upwork:<id>`
+  - else stable source URL -> `url:<stable-hash-of-normalized-url>`
+  - else -> `raw:<stable-hash-of-raw-payload>`
+- never convert missing values to zero
+- preserve unavailable values as `None` plus a field-status entry
+- distinguish:
+  - `NOT_VISIBLE`
+  - `NOT_APPLICABLE`
+  - `PARSE_FAILURE`
+  - `MANUAL`
 
-Validation rules:
+Numeric normalization rules:
 
-- missing required AI fields must raise a structured validation error
-- unknown enum values must raise a structured validation error
-- boolean fields must be real booleans, not arbitrary strings
-- evidence/risk fields must be lists of strings
-- reason fields must be strings
-- text from the model should be preserved except for safe whitespace trimming
+- money -> `float`
+- percentages -> numeric percent values such as `75.0`, not fractions such as `0.75`
+- minutes -> integer minutes
+- booleans -> `0/1`-compatible values or bools, while keeping DB compatibility in mind
+- proposal bands -> preserved as text such as `5 to 10`, `20 to 50`, or `50+`
 
-The raw model/output contract should use plain list field names without a `*_json` suffix:
+Contract-type handling:
 
-- `fit_evidence`
-- `client_evidence`
-- `scope_evidence`
-- `risk_flags`
-
-Payload builder rules:
-
-- include compact job, client, activity, deterministic filter, and fit-context sections
-- do not invent unavailable deterministic fields such as Connect cost, client spend, proposal count, or payment verification
-- if a normalized deterministic field is unavailable, keep it unavailable in the payload rather than substituting a guessed value
+- fixed jobs should populate `j_pay_fixed` and mark hourly fields `NOT_APPLICABLE`
+- hourly jobs should populate `j_pay_hourly_low` / `j_pay_hourly_high` and mark `j_pay_fixed` `NOT_APPLICABLE`
 
 ## Result requirements
 
-The typed AI output should be suitable for downstream triage code and contain list-based evidence/risk fields.
+The typed normalized result should be suitable for downstream modules and should include enough information to build:
 
-The serializer should produce DB-oriented field names, including:
+- jobs-table identity inputs
+- raw snapshot metadata including `raw_hash`
+- normalized insert inputs with `field_status_json`
+- `FilterInput`
+- `AiPayloadInput`
+- `EconomicsJobInput`
 
-- scalar semantic fields unchanged
-- evidence/risk fields serialized to JSON strings:
-  - `fit_evidence_json`
-  - `client_evidence_json`
-  - `scope_evidence_json`
-  - `risk_flags_json`
-
-This distinction is intentional:
-
-- raw AI output uses plain list fields such as `fit_evidence`
-- `ai_evaluations` DB storage uses JSON-text fields such as `fit_evidence_json`
+Use small local fake payloads in tests. The normalizer does not need to support real Upwork payload shapes yet.
 
 ## Test requirements
 
-Add tests in `tests/test_ai_eval.py`.
+Add tests in `tests/test_normalize.py`.
 
 Tests should verify:
 
-1. valid AI output parses successfully
-2. missing required field fails validation
-3. unknown quality enum fails validation
-4. unknown `ai_verdict_bucket` fails validation
-5. unknown `ai_price_scope_align` fails validation
-6. unknown `ai_likely_duration` fails validation
-7. boolean fields reject non-boolean strings like `"yes"`
-8. evidence fields reject non-list values
-9. evidence fields reject lists containing non-strings
-10. reason fields are trimmed
-11. serialization produces JSON strings for evidence/risk fields suitable for DB storage
-12. payload builder includes job, client, activity, filter flags, and fit context
-13. payload builder does not invent unavailable deterministic fields
+1. Upwork id generates `job_key = "upwork:<id>"`
+2. missing id but stable `source_url` generates `url:<hash>`
+3. missing id and URL generates `raw:<hash>`
+4. the same raw payload produces the same raw hash / job key
+5. money strings like `$500`, `$1.5K`, and `$25/hr` normalize correctly where supported
+6. percent strings like `75%` normalize to `75.0`, not `0.75`
+7. missing values remain `None` and get `field_status_json` entries
+8. explicit unavailable values map to `None` plus `NOT_VISIBLE`
+9. fixed jobs use `j_pay_fixed` and mark hourly fields `NOT_APPLICABLE`
+10. hourly jobs use `j_pay_hourly_low/high` and mark fixed field `NOT_APPLICABLE`
+11. proposal bands are preserved as text
+12. payment verified normalizes to true/1-compatible value
+13. missing client avg hourly does not become `0`
+14. malformed numeric values become `None` plus `PARSE_FAILURE`
+15. normalized output can build a `FilterInput`
+16. normalized output can build an `AiPayloadInput`
+17. normalized output can build an `EconomicsJobInput`
 
-Use pure unit tests. The AI contract tests should not require a database connection or a live model.
+Use pure unit tests. The normalizer tests should not require a database connection, real Upwork credentials, or network access.
 
 ## Out of scope
 
 Do not implement:
 
-- real AI calls
-- OpenAI API integration
-- Upwork API
+- real Upwork API calls
 - OAuth
-- normalizer logic
+- AI calls
 - filter changes
-- economics formula changes
+- economics changes
 - triage changes
 - queue rendering
 - TSV export
@@ -154,8 +138,8 @@ Do not implement:
 
 The task is complete when:
 
-- the AI contract module is pure and testable without network calls
-- the payload builder includes the required sections and preserves unavailable deterministic fields
-- the validator rejects missing fields, bad enums, bad booleans, and malformed evidence structures
-- the serializer emits DB-oriented fields with JSON strings for evidence/risk lists
+- the normalizer module is pure and testable without SQLite or network calls
+- stable job-key generation and deterministic raw hashing are implemented
+- normalized numeric/text/status handling matches the staged schema expectations
+- downstream projection helpers can build filter, AI-payload, and economics inputs
 - `py -m pytest` passes

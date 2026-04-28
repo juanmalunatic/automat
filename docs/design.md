@@ -91,6 +91,8 @@ This table contains all original decision variables from the manual schema that 
 - source URL
 - field visibility/status metadata
 
+Before real Upwork integration is wired, the normalizer may operate on local fake job-like payload fixtures as long as it emits the same normalized fields, stable `job_key`, and field-status semantics.
+
 Missing/unavailable fields should not be silently treated as zero.
 
 Use nullable typed columns plus `field_status_json` to preserve these statuses:

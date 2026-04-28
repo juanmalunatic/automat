@@ -102,16 +102,25 @@ Should verify:
 
 ### `tests/test_normalize.py`
 
-Later should verify:
+Should verify:
 
-- job key generation
-- placeholder/status handling
-- money normalization
-- percent normalization
-- minutes normalization
-- proposal band preservation
-- fixed vs hourly pay fields
-- missing values do not become zero
+- Upwork id generates `job_key = upwork:<id>`
+- missing id but stable source URL generates `url:<hash>`
+- missing id and URL generates `raw:<hash>`
+- the same raw payload produces the same deterministic raw hash / raw-based job key
+- money strings normalize correctly where supported
+- percent strings normalize to numeric percent values, not fractions
+- missing values remain `None` and get field-status entries
+- explicit unavailable values map to `None` plus `NOT_VISIBLE`
+- fixed jobs use `j_pay_fixed` and mark hourly fields `NOT_APPLICABLE`
+- hourly jobs use `j_pay_hourly_low/high` and mark `j_pay_fixed` `NOT_APPLICABLE`
+- proposal bands are preserved as text
+- payment verified normalizes to a DB-compatible boolean flag
+- missing client avg hourly does not become `0`
+- malformed numeric values become `None` plus `PARSE_FAILURE`
+- normalized output can build `FilterInput`
+- normalized output can build `AiPayloadInput`
+- normalized output can build `EconomicsJobInput`
 
 ### `tests/test_triage.py`
 
@@ -157,6 +166,8 @@ Fixture numeric percentages must use percent values such as `75.0`, not fraction
 Economics tests should use pure in-memory Python inputs and should not require a database connection.
 
 Filter tests should use pure in-memory Python inputs and should not require a database connection.
+
+Normalizer tests should use small local fake payloads and should not require a database connection or real Upwork credentials.
 
 Do not require real Upwork API credentials for unit tests.
 
