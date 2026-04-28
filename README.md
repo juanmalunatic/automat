@@ -4,20 +4,20 @@ Automat is a local-first Upwork apply-triage system.
 
 It ingests job data, preserves raw and normalized snapshots, filters obvious bad leads, asks AI only for semantic fit/scope/client judgment, computes apply-stage economics deterministically, and presents a shortlist for manual application decisions.
 
-Current status: scaffold and design/specification phase.
+Current status: scaffold and design/specification phase. The first implementation task is database initialization.
 
 ## Architecture
 
 Pipeline:
 
-1. Fetch jobs from Upwork GraphQL or fixture source.
+1. Fetch jobs from Upwork GraphQL or a fixture source.
 2. Create/update stable job identity.
 3. Store raw job snapshots.
 4. Normalize visible job/client/activity/market fields.
 5. Apply deterministic filters.
 6. Ask AI for semantic evaluation on routed jobs.
 7. Compute economics in code.
-8. Compute final triage verdict.
+8. Compute final triage verdict and final reason.
 9. Display `v_decision_shortlist`.
 10. Record user actions.
 
@@ -32,6 +32,18 @@ The MVP is data-complete but behavior-simple:
 - no dashboard
 - no auto-apply
 - no proposal generation
+
+## First implementation task
+
+Implement database initialization only:
+
+- required tables
+- required indexes and constraints
+- default settings row
+- `v_decision_shortlist`
+- DB tests
+
+See `docs/current_task.md`.
 
 ## Development
 

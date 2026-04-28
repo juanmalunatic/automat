@@ -127,3 +127,50 @@ SQLite does not enforce foreign keys unless enabled. Constraints catch bad value
 Tradeoff:
 
 Tests and fixture inserts must use valid enum values.
+
+## 2026-04-28 — Database initialization leaves the DB ready for use
+
+Decision:
+
+`initialize_db(conn)` creates tables, indexes, views, and calls `insert_default_settings(conn)` internally.
+
+Reason:
+
+A freshly initialized database should be immediately usable by the pipeline and tests. Splitting schema creation from default settings insertion would create avoidable ambiguity.
+
+Tradeoff:
+
+`initialize_db` does a small amount of seed-data work, not only DDL.
+
+## 2026-04-28 — Latest shortlist row is selected by `MAX(triage_results.id)`
+
+Decision:
+
+`v_decision_shortlist` selects the latest triage result per `job_key` using `MAX(triage_results.id)` in the MVP.
+
+Reason:
+
+Timestamps may not be unique. The autoincrement triage result id gives a deterministic tie-breaker for the local SQLite MVP.
+
+Tradeoff:
+
+This assumes insertion order matches intended recency. That is fine for the MVP; a later production version can use stronger run/version ordering if needed.
+
+## 2026-04-28 — Core uniqueness constraints are mandatory in the DB task
+
+Decision:
+
+The first DB implementation must enforce these uniqueness rules:
+
+- `raw_job_snapshots(job_key, raw_hash)`
+- `job_snapshots_normalized(raw_snapshot_id, normalizer_version)`
+- `filter_results(job_snapshot_id, filter_version)`
+- only one settings row where `is_default = 1`
+
+Reason:
+
+These protect the main replay/dedupe/versioning paths without overcomplicating the MVP.
+
+Tradeoff:
+
+Some later modules may need explicit upsert behavior rather than blind insert.

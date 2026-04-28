@@ -39,12 +39,15 @@ Should verify:
 - project DB connections enable foreign keys
 - all tables exist
 - `v_decision_shortlist` exists
-- default settings row is inserted
+- default settings row is inserted by `initialize_db`
 - initialization is idempotent
 - only one settings row can have `is_default = 1`
 - invalid enum-like values are rejected by constraints
+- mandatory uniqueness constraints are enforced
 - a minimal coherent fixture appears in `v_decision_shortlist`
 - the decision shortlist includes `job_key`, `final_verdict`, `final_reason`, core AI signal fields, economics fields, and upstream job fields
+- if multiple triage rows exist for the same `job_key`, the view selects the row with highest `triage_results.id`
+- rows with `queue_bucket = 'ARCHIVE'` do not appear in `v_decision_shortlist`
 
 ### `tests/test_economics.py`
 
@@ -109,6 +112,10 @@ Do not require real Upwork API credentials for unit tests.
 Do not require real AI calls for unit tests.
 
 AI tests should use fake model responses or stored fixture JSON.
+
+For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
+
+Use `queue_bucket = 'ARCHIVE'` only when testing that archive rows are hidden from the shortlist.
 
 ## External integration tests
 

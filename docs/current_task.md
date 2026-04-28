@@ -57,7 +57,9 @@ Expose these functions exactly:
 PRAGMA foreign_keys = ON;
 ```
 
-`initialize_db` should create all tables, indexes, and views idempotently.
+`initialize_db` must create all tables, indexes, and views idempotently.
+
+`initialize_db` must call `insert_default_settings(conn)` internally so that after initialization the default settings row exists.
 
 `insert_default_settings` should insert the default settings row if missing and return its `id`.
 
@@ -101,11 +103,21 @@ The view should include the fields needed for the final terminal decision table,
 - AI evidence/risk fields
 - `job_key`
 
-The view should select latest triage result per `job_key`.
+The view must select the latest triage result per `job_key`.
+
+Use `MAX(triage_results.id)` as the deterministic latest-row tie-breaker in the MVP.
+
+The view should filter to:
+
+- `HOT`
+- `REVIEW`
+- `MANUAL_EXCEPTION`
+
+Fixture tests must therefore insert a triage row with one of those queue buckets.
 
 ## Default settings row
 
-After initialization, insert a default row into `triage_settings_versions` if it does not already exist:
+After initialization, a default row must exist in `triage_settings_versions`:
 
 - `name = 'default_low_cash_v1'`
 - `target_rate_usd = 25`
@@ -130,9 +142,18 @@ Implement database-level integrity where practical:
 - use `CHECK` constraints for enum-like fields described in `docs/schema.md`
 - add a partial unique index so only one settings row can be default
 - add useful indexes listed in `docs/schema.md`
-- add suggested uniqueness constraints where practical
+- add the mandatory uniqueness constraints listed in `docs/schema.md`
+
+Mandatory uniqueness constraints for this task:
+
+- `UNIQUE(job_key, raw_hash)` on `raw_job_snapshots`
+- `UNIQUE(raw_snapshot_id, normalizer_version)` on `job_snapshots_normalized`
+- `UNIQUE(job_snapshot_id, filter_version)` on `filter_results`
+- partial unique index allowing only one `triage_settings_versions` row with `is_default = 1`
 
 Do not silently ignore impossible enum values.
+
+Economics-result uniqueness is intentionally deferred until the economics module is implemented.
 
 ## Test requirements
 
@@ -144,14 +165,18 @@ Tests should verify:
 2. Foreign keys are enabled on connections returned by `connect_db`.
 3. All required tables exist.
 4. `v_decision_shortlist` exists.
-5. The default settings row exists after initialization.
+5. The default settings row exists immediately after `initialize_db(conn)`.
 6. Calling initialization twice does not duplicate default settings.
 7. Only one settings row can have `is_default = 1`.
 8. Enum/check constraints reject invalid values for at least:
    - `filter_results.routing_bucket`
    - `triage_results.final_verdict`
    - `triage_results.queue_bucket`
-9. At least one minimal coherent fixture can flow through:
+9. Mandatory uniqueness constraints reject duplicates for at least:
+   - `raw_job_snapshots(job_key, raw_hash)`
+   - `job_snapshots_normalized(raw_snapshot_id, normalizer_version)`
+   - `filter_results(job_snapshot_id, filter_version)`
+10. At least one minimal coherent fixture can flow through:
    - `jobs`
    - `raw_job_snapshots`
    - `job_snapshots_normalized`
@@ -160,7 +185,7 @@ Tests should verify:
    - `economics_results`
    - `triage_results`
    and appear in `v_decision_shortlist`.
-10. The fixture row visible in `v_decision_shortlist` includes:
+11. The fixture row visible in `v_decision_shortlist` includes:
    - `job_key`
    - `final_verdict`
    - `final_reason`
@@ -169,6 +194,8 @@ Tests should verify:
    - `b_margin_usd`
    - `j_title`
    - `source_url`
+12. If multiple triage rows exist for the same `job_key`, the view selects the row with the highest `triage_results.id`.
+13. A fixture row with `queue_bucket = 'ARCHIVE'` does not appear in `v_decision_shortlist`.
 
 Use SQLite in-memory database for tests.
 
@@ -195,7 +222,9 @@ The task is complete when:
 - tests pass
 - the schema has the required tables and view
 - foreign keys are enabled by the DB connection helper
-- default settings are inserted idempotently
+- default settings are inserted idempotently by `initialize_db`
 - database constraints catch invalid enum-like values
+- mandatory uniqueness constraints are enforced
 - a minimal fixture can flow through the schema into `v_decision_shortlist`
+- latest-row behavior in `v_decision_shortlist` is deterministic
 - the view exposes the final decision fields needed for the manual shortlist

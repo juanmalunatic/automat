@@ -204,6 +204,8 @@ Do not hardcode them only inside formulas.
 
 Only one row should have `is_default = 1`.
 
+`initialize_db(conn)` should create the default settings row by calling `insert_default_settings(conn)` internally, so a freshly initialized database is ready for use.
+
 ## 7. Fit context
 
 The user's strongest lane:
@@ -420,6 +422,8 @@ It must show:
 
 The terminal queue should mirror this view.
 
+The view must select the latest triage result per `job_key` using a deterministic tie-breaker. In the MVP, use `MAX(triage_results.id)` per `job_key`.
+
 ## 16. MVP command behavior
 
 First full pipeline command target:
@@ -441,6 +445,15 @@ The DB schema should use `CHECK` constraints for enum-like fields where practica
 Only one settings row should be default.
 
 The decision shortlist should select the latest triage result per `job_key`, not per nullable `upwork_job_id`.
+
+The following uniqueness constraints are mandatory for the first DB task:
+
+- `UNIQUE(job_key, raw_hash)` on `raw_job_snapshots`
+- `UNIQUE(raw_snapshot_id, normalizer_version)` on `job_snapshots_normalized`
+- `UNIQUE(job_snapshot_id, filter_version)` on `filter_results`
+- partial unique index allowing only one `triage_settings_versions` row with `is_default = 1`
+
+Economics uniqueness can be revisited later because NULL handling around `ai_evaluation_id` can be subtle in SQLite.
 
 ## 18. Deferred future features
 

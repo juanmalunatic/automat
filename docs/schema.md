@@ -14,6 +14,19 @@ Project code must enable SQLite foreign keys on every connection:
 PRAGMA foreign_keys = ON;
 ```
 
+## Mandatory implementation clarifications
+
+For the first DB task:
+
+- `initialize_db(conn)` must create tables, indexes, views, and call `insert_default_settings(conn)` internally.
+- `v_decision_shortlist` must select the latest triage result per `job_key` using a deterministic tie-breaker. Use `MAX(triage_results.id)` in the MVP.
+- The following uniqueness constraints are mandatory:
+  - `UNIQUE(job_key, raw_hash)` on `raw_job_snapshots`
+  - `UNIQUE(raw_snapshot_id, normalizer_version)` on `job_snapshots_normalized`
+  - `UNIQUE(job_snapshot_id, filter_version)` on `filter_results`
+  - partial unique index allowing only one default settings row
+- Economics-result uniqueness is intentionally deferred until the economics module is implemented, because nullable `ai_evaluation_id` behavior in SQLite needs deliberate handling.
+
 ## 1. `ingestion_runs`
 
 One row per polling/import run.
@@ -87,7 +100,7 @@ Indexes:
 - `idx_raw_job_snapshots_run_id`
 - `idx_raw_job_snapshots_hash`
 
-Suggested uniqueness:
+Mandatory uniqueness:
 
 - `UNIQUE(job_key, raw_hash)`
 
@@ -176,7 +189,7 @@ Indexes:
 - `idx_job_snapshots_normalized_job_id`
 - `idx_job_snapshots_normalized_created_at`
 
-Suggested uniqueness:
+Mandatory uniqueness:
 
 - `UNIQUE(raw_snapshot_id, normalizer_version)`
 
@@ -241,7 +254,7 @@ Indexes:
 
 - `idx_filter_results_job_snapshot_id`
 
-Suggested uniqueness:
+Mandatory uniqueness:
 
 - `UNIQUE(job_snapshot_id, filter_version)`
 
@@ -329,9 +342,9 @@ Indexes:
 
 - `idx_economics_results_job_snapshot_id`
 
-Suggested uniqueness:
+Deferred uniqueness:
 
-- `UNIQUE(job_snapshot_id, settings_version_id, ai_evaluation_id, economics_version)`
+- Economics-result uniqueness should be revisited once the economics module is implemented.
 
 ## 9. `triage_results`
 
@@ -393,6 +406,11 @@ Indexes:
 Main user-facing view.
 
 The view should select the latest triage result for each `job_key`, not each nullable `upwork_job_id`.
+
+In the MVP, "latest" must be determined with a deterministic tie-breaker:
+
+- group by `job_key`
+- choose `MAX(triage_results.id)` for that `job_key`
 
 It joins:
 
@@ -460,6 +478,8 @@ Filter the view to queue buckets useful to the user by default:
 - `HOT`
 - `REVIEW`
 - `MANUAL_EXCEPTION`
+
+Fixture tests must use one of those queue buckets, otherwise the fixture row will correctly be absent from this view.
 
 Later, a separate archive view can expose `ARCHIVE`.
 

@@ -2,7 +2,7 @@
 
 ## Role of this repository
 
-This repository implements an Upwork apply-triage system.
+This repository implements Automat, a local-first Upwork apply-triage system.
 
 The system ingests Upwork job data, stores raw and normalized job snapshots, applies deterministic filters, asks an AI model for semantic fit/scope/client judgment, computes apply-stage economics deterministically, and presents a shortlist for manual application decisions.
 
@@ -92,6 +92,8 @@ PRAGMA foreign_keys = ON;
 ```
 
 The schema should use database constraints for enum-like fields where practical. Do not rely only on application-side validation for critical values such as final verdict, queue bucket, routing bucket, AI bucket, duration class, or calculation status.
+
+`initialize_db(conn)` should leave a new database ready for use by creating tables, indexes, views, and the default settings row.
 
 ## Testing expectations
 
