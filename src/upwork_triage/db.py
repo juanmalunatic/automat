@@ -5,21 +5,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_SETTINGS_NAME = "default_low_cash_v1"
-DEFAULT_SETTINGS_CREATED_AT_FALLBACK = "2026-04-28T00:00:00Z"
-
-DEFAULT_SETTINGS_COLUMNS = (
-    "created_at",
-    "name",
-    "target_rate_usd",
-    "low_cash_mode",
-    "connect_cost_usd",
-    "p_strong",
-    "p_ok",
-    "p_weak",
-    "fbv_hours_defined_short_term",
-    "fbv_hours_ongoing_or_vague",
-    "is_default",
-)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS ingestion_runs (
@@ -420,6 +405,8 @@ def insert_default_settings(conn: sqlite3.Connection) -> int:
     if existing is not None:
         return int(existing[0])
 
+    # The partial unique index protects against multiple is_default=1 rows.
+    # Richer default-switching behavior belongs to later settings management work, not DB initialization.
     cursor = conn.execute(
         """
         INSERT INTO triage_settings_versions (
@@ -459,5 +446,4 @@ def _enable_foreign_keys(conn: sqlite3.Connection) -> None:
 
 def _utc_now_iso() -> str:
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    rendered = now.isoformat().replace("+00:00", "Z")
-    return rendered or DEFAULT_SETTINGS_CREATED_AT_FALLBACK
+    return now.isoformat().replace("+00:00", "Z")

@@ -141,6 +141,8 @@ Client history:
 - `c_hist_hours_hired REAL`
 - `c_hist_member_since TEXT`
 
+`c_hist_hire_rate` stores a numeric percentage value such as `75.0`, not a fraction such as `0.75`.
+
 Job core:
 
 - `j_title TEXT`

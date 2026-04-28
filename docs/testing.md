@@ -37,6 +37,8 @@ Should verify:
 
 - SQLite initialization works in memory
 - project DB connections enable foreign keys
+- `initialize_db(conn)` enables foreign keys even when `conn` came from raw `sqlite3.connect(...)`
+- DB tests verify actual foreign-key enforcement, not only `PRAGMA foreign_keys`
 - all tables exist
 - `v_decision_shortlist` exists
 - default settings row is inserted by `initialize_db`
@@ -106,6 +108,8 @@ Later should verify:
 ## Test data
 
 Use small local fixtures.
+
+Fixture numeric percentages must use percent values such as `75.0`, not fractions such as `0.75`.
 
 Do not require real Upwork API credentials for unit tests.
 

@@ -163,20 +163,22 @@ Tests should verify:
 
 1. An in-memory SQLite DB can be initialized.
 2. Foreign keys are enabled on connections returned by `connect_db`.
-3. All required tables exist.
-4. `v_decision_shortlist` exists.
-5. The default settings row exists immediately after `initialize_db(conn)`.
-6. Calling initialization twice does not duplicate default settings.
-7. Only one settings row can have `is_default = 1`.
-8. Enum/check constraints reject invalid values for at least:
+3. `initialize_db(conn)` enables foreign keys even when given a raw `sqlite3.connect(":memory:")` connection.
+4. All required tables exist.
+5. `v_decision_shortlist` exists.
+6. The default settings row exists immediately after `initialize_db(conn)`.
+7. Calling initialization twice does not duplicate default settings.
+8. Only one settings row can have `is_default = 1`.
+9. Enum/check constraints reject invalid values for at least:
    - `filter_results.routing_bucket`
    - `triage_results.final_verdict`
    - `triage_results.queue_bucket`
-9. Mandatory uniqueness constraints reject duplicates for at least:
+10. Mandatory uniqueness constraints reject duplicates for at least:
    - `raw_job_snapshots(job_key, raw_hash)`
    - `job_snapshots_normalized(raw_snapshot_id, normalizer_version)`
    - `filter_results(job_snapshot_id, filter_version)`
-10. At least one minimal coherent fixture can flow through:
+11. Foreign-key enforcement actually works, for example by rejecting a `raw_job_snapshots.job_key` value that has no parent row in `jobs`.
+12. At least one minimal coherent fixture can flow through:
    - `jobs`
    - `raw_job_snapshots`
    - `job_snapshots_normalized`
@@ -185,7 +187,7 @@ Tests should verify:
    - `economics_results`
    - `triage_results`
    and appear in `v_decision_shortlist`.
-11. The fixture row visible in `v_decision_shortlist` includes:
+13. The fixture row visible in `v_decision_shortlist` includes:
    - `job_key`
    - `final_verdict`
    - `final_reason`
@@ -194,10 +196,12 @@ Tests should verify:
    - `b_margin_usd`
    - `j_title`
    - `source_url`
-12. If multiple triage rows exist for the same `job_key`, the view selects the row with the highest `triage_results.id`.
-13. A fixture row with `queue_bucket = 'ARCHIVE'` does not appear in `v_decision_shortlist`.
+14. If multiple triage rows exist for the same `job_key`, the view selects the row with the highest `triage_results.id`.
+15. A fixture row with `queue_bucket = 'ARCHIVE'` does not appear in `v_decision_shortlist`.
 
 Use SQLite in-memory database for tests.
+
+Fixture numeric percentages should use project percent values such as `75.0`, not fractions such as `0.75`.
 
 ## Out of scope
 
@@ -222,7 +226,9 @@ The task is complete when:
 - tests pass
 - the schema has the required tables and view
 - foreign keys are enabled by the DB connection helper
+- foreign keys are also enabled by `initialize_db(conn)` for raw SQLite connections
 - default settings are inserted idempotently by `initialize_db`
+- foreign-key constraints are actually enforced in tests
 - database constraints catch invalid enum-like values
 - mandatory uniqueness constraints are enforced
 - a minimal fixture can flow through the schema into `v_decision_shortlist`

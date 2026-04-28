@@ -44,6 +44,16 @@ def test_connect_db_enables_foreign_keys() -> None:
         connection.close()
 
 
+def test_initialize_db_enables_foreign_keys_on_raw_sqlite_connection() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 0
+        initialize_db(connection)
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
 def test_initialize_db_creates_all_required_tables(conn: sqlite3.Connection) -> None:
     required_tables = {
         "ingestion_runs",
@@ -340,6 +350,30 @@ def test_mandatory_uniqueness_constraints_reject_duplicates(conn: sqlite3.Connec
         )
 
 
+def test_foreign_keys_are_actually_enforced(conn: sqlite3.Connection) -> None:
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            """
+            INSERT INTO raw_job_snapshots (
+                job_key,
+                upwork_job_id,
+                fetched_at,
+                source_query,
+                raw_json,
+                raw_hash
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "upwork:missing-parent",
+                "missing-parent",
+                "2026-04-28T13:06:00Z",
+                "fixture",
+                '{"id": "missing-parent"}',
+                "raw-hash-missing-parent",
+            ),
+        )
+
+
 def test_minimal_pipeline_fixture_appears_in_decision_shortlist(
     conn: sqlite3.Connection,
 ) -> None:
@@ -628,7 +662,7 @@ def _insert_pipeline_snapshot(
             1,
             "US",
             20000.0,
-            0.75,
+            75.0,
             45.0,
             j_title,
             45,
