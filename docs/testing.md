@@ -115,15 +115,21 @@ Later should verify:
 
 ### `tests/test_triage.py`
 
-Later should verify:
+Should verify:
 
-- Strong + positive margin -> APPLY
-- Ok + positive margin -> MAYBE by default
-- good-looking Ok override -> MAYBE
-- low-cash promotion can promote to APPLY
-- hard disqualifier -> NO
-- severe hidden risk blocks APPLY
-- negative margin -> NO by default
+- filter hard reject / `DISCARD` -> `NO / ARCHIVE`
+- AI bucket `No` -> `NO / ARCHIVE`
+- Strong + positive margin -> `APPLY / HOT`
+- severe hidden risk blocks Strong jobs from becoming `APPLY`
+- Ok + positive margin -> `MAYBE / REVIEW` by default
+- good-looking Ok override can rescue a non-apply base verdict to at least `MAYBE`
+- low-cash mode can promote `MAYBE` to `APPLY`
+- Weak bucket -> `NO / ARCHIVE`
+- negative margin -> `NO / ARCHIVE`
+- non-ok economics `calc_status` -> `NO / ARCHIVE`
+- `MANUAL_EXCEPTION` filter routing stays `MANUAL_EXCEPTION` when the final verdict is not `NO`
+- `priority_score` orders `APPLY` above `MAYBE` above `NO`
+- `ai_apply_promote` stays within the allowed promotion trace values
 - final reason is generated at triage stage, not copied blindly from AI semantic reason
 
 ## Test data

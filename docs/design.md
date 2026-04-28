@@ -153,6 +153,8 @@ This stage owns:
 
 `ai_reason_apply_short` is kept here for compatibility with the old manual TSV schema.
 
+`ai_verdict_apply` should represent the base deterministic verdict before any promotion trace is applied. `ai_apply_promote` records whether the base verdict was promoted by the good-looking `Ok` override or low-cash mode.
+
 ### User actions
 
 `user_actions` tracks what the user actually did: seen, applied, skipped, saved, good/bad recommendation, client replied, interview, hired.
@@ -379,12 +381,13 @@ Allowed promotion traces:
 
 Default rules:
 
-- hard disqualifier -> `NO`
+- failed filter / routing bucket `DISCARD` -> `NO`
 - bucket `No` -> `NO`
 - bucket `Strong` and `b_margin_usd >= 0` -> `APPLY` unless severe hidden risk
 - bucket `Ok` and `b_margin_usd >= 0` -> `MAYBE` by default
 - bucket `Weak` -> `NO` by default
 - negative margin -> `NO` by default
+- non-ok economics `calc_status` -> `NO`
 
 Good-looking Ok override:
 
