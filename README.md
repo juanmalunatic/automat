@@ -4,7 +4,7 @@ Automat is a local-first Upwork apply-triage system.
 
 It ingests job data, preserves raw and normalized snapshots, filters obvious bad leads, asks AI only for semantic fit/scope/client judgment, computes apply-stage economics deterministically, and presents a shortlist for manual application decisions.
 
-Current status: scaffold and design/specification phase. The first implementation task is database initialization.
+Current status: local staged MVP modules are being implemented incrementally. The active bounded task always lives in `docs/current_task.md`.
 
 ## Architecture
 
@@ -33,17 +33,17 @@ The MVP is data-complete but behavior-simple:
 - no auto-apply
 - no proposal generation
 
-## First implementation task
+## Configuration
 
-Implement database initialization only:
+Copy `.env.example` to `.env` if you want a local env file.
 
-- required tables
-- required indexes and constraints
-- default settings row
-- `v_decision_shortlist`
-- DB tests
+Current development defaults are intentionally local-first:
 
-See `docs/current_task.md`.
+- `AUTOMAT_RUN_MODE=fake`
+- no real OpenAI or Upwork secrets are required for the fake/local test workflow
+- SQLite defaults to `data/automat.sqlite3`
+
+See `docs/current_task.md` for the active bounded task and `docs/design.md` for the broader architecture.
 
 ## Development
 

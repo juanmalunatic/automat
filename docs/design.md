@@ -498,3 +498,20 @@ Future extensions:
 - historical backtesting of filter/prompt versions
 - portfolio demo mode with fake data
 - Postgres migration
+
+## 19. Runtime configuration
+
+Runtime configuration should be loaded centrally from environment variables through `src/upwork_triage/config.py`.
+
+The config layer may support a lightweight local `.env` file for developer convenience, but the implementation should stay dependency-light and testable with explicit fake env mappings.
+
+Expected runtime config areas:
+
+- app environment and DB path
+- fake versus live run mode
+- placeholder OpenAI credentials/model selection
+- placeholder Upwork credentials/tokens
+- search terms and poll limits
+- optional runtime economics knobs such as target rate and Connect cost
+
+These env-provided economics knobs should not become a second source of truth for the seeded defaults in `triage_settings_versions`. The DB settings row remains the authoritative default settings source until later work explicitly adds settings synchronization or override behavior.

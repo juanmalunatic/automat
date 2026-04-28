@@ -190,3 +190,19 @@ The staged schema already has uniqueness rules for raw snapshots, normalized sna
 Tradeoff:
 
 The fake runner behaves idempotently for identical local reruns rather than creating a brand-new downstream history row on every replay. If later work needs deliberate re-evaluation with changed prompts or formulas, that should happen through explicit version changes.
+
+## 2026-04-28 - Runtime config is centralized in env-based app settings
+
+Decision:
+
+Project runtime configuration should be loaded through one central `load_config()` entry point backed by environment variables, with optional lightweight local `.env` support for developer convenience.
+
+The seeded DB settings row in `triage_settings_versions` remains the authoritative default source for economics/triage settings. Env floats such as target rate or Connect cost are optional runtime values only until later work explicitly defines override behavior.
+
+Reason:
+
+This keeps setup simple, makes tests easy to isolate with fake env mappings, and avoids spreading config parsing across modules. It also prevents accidental drift between env defaults and the seeded DB settings row.
+
+Tradeoff:
+
+There are now two places where settings-shaped values may exist, but only one of them is authoritative today. Later work that wants env-driven overrides will need an explicit synchronization policy instead of silently mixing sources.

@@ -51,6 +51,25 @@ Should verify:
 - if multiple triage rows exist for the same `job_key`, the view selects the row with highest `triage_results.id`
 - rows with `queue_bucket = 'ARCHIVE'` do not appear in `v_decision_shortlist`
 
+### `tests/test_config.py`
+
+Should verify:
+
+- `load_config({})` returns defaults without touching the real environment
+- empty secret-like environment variables become `None`
+- explicit DB path is respected
+- `run_mode` accepts `fake` and `live`
+- invalid `run_mode` raises `ConfigError`
+- search terms parse from comma-separated input and trim whitespace
+- empty search-term entries are ignored
+- `poll_limit` parses as a positive integer
+- invalid or non-positive `poll_limit` raises `ConfigError`
+- `target_rate_usd` and `connect_cost_usd` parse as positive floats when present
+- invalid numeric config raises `ConfigError`
+- fake mode does not require OpenAI or Upwork secrets
+- the returned config object is immutable
+- `.env.example` lists the supported variables and does not contain obvious real secrets
+
 ### `tests/test_economics.py`
 
 Should verify:
@@ -206,6 +225,8 @@ AI contract tests should stay pure and should not require a live model, network 
 Pipeline-runner tests should use only local fake payloads and fake AI output. They should not require real Upwork credentials, network calls, or live model access.
 
 Queue-view tests should use in-memory SQLite or plain row dicts. They should not require real Upwork credentials, network calls, or live model access.
+
+Config tests should prefer passing fake env dicts into `load_config()` rather than mutating the real process environment. They should not require real secrets, network calls, or a live `.env` file.
 
 For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
 

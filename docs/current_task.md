@@ -2,141 +2,159 @@
 
 ## Task name
 
-Implement terminal shortlist rendering.
+Implement centralized configuration and environment handling.
 
 ## Goal
 
-Create a simple terminal-friendly queue renderer that reads shortlist rows from `v_decision_shortlist` and turns them into a compact human-readable manual review view.
+Create a small centralized config layer that loads project settings from environment variables, with lightweight optional `.env` support, and exposes a typed immutable settings object for the rest of the application.
 
-This task is renderer-only. It should not change pipeline behavior, shortlist selection logic, normalization, filtering, AI validation, economics, or triage formulas.
+This task is config-only. It should not implement real Upwork/API/OAuth behavior, real AI calls, or change pipeline/filter/economics/triage/queue logic.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/queue_view.py`
-- `tests/test_queue_view.py`
+- `src/upwork_triage/config.py`
+- `tests/test_config.py`
 - `docs/current_task.md`
+- `.env.example`
 
 Allowed supporting edits:
 
-- `src/upwork_triage/run_pipeline.py` only if a tiny helper is needed for tests, but avoid changing pipeline behavior
 - `docs/testing.md` if test expectations need clarification
-- `docs/design.md` if queue display wording needs clarification
-- `docs/schema.md` only if a schema-level issue is discovered
-- `docs/decisions.md` only if a durable design decision is made
+- `docs/design.md` if configuration wording needs clarification
+- `docs/decisions.md` only if a durable configuration decision is made
+- `README.md` if setup instructions need a small update
 - `pyproject.toml` only if needed for test/import configuration
 
 ## Required public API
 
-Implement a small pure rendering module in `src/upwork_triage/queue_view.py` with:
+Implement a centralized config module in `src/upwork_triage/config.py` with:
 
-- `fetch_decision_shortlist(conn: sqlite3.Connection) -> list[dict[str, object]]`
-- `render_decision_shortlist(rows: list[Mapping[str, object]]) -> str`
+- `AppConfig`
+- `ConfigError`
+- `load_config(env: Mapping[str, str] | None = None) -> AppConfig`
 
-`fetch_decision_shortlist()` should read from `v_decision_shortlist`.
+`AppConfig` should be a small typed immutable settings object, preferably a frozen dataclass.
 
-`render_decision_shortlist()` should be safe for normal dicts, `sqlite3.Row`-derived dicts, and missing values.
+`load_config()` should accept an optional explicit environment mapping for tests. If `env` is `None`, it should load from `os.environ`, with lightweight optional `.env` support if that can be done without adding unnecessary dependencies.
 
 ## Required behavior
 
-`fetch_decision_shortlist(conn)` should:
+Config fields should include:
 
-- query `v_decision_shortlist`
-- return plain dict rows
-- preserve the shortlist ordering from the view
+- core:
+  - `app_env: str`
+  - `db_path: str`
+  - `run_mode: str`
+- AI placeholders:
+  - `openai_api_key: str | None`
+  - `openai_model: str`
+- Upwork placeholders:
+  - `upwork_client_id: str | None`
+  - `upwork_client_secret: str | None`
+  - `upwork_access_token: str | None`
+  - `upwork_refresh_token: str | None`
+- search and ingestion:
+  - `search_terms: tuple[str, ...]`
+  - `poll_limit: int`
+- optional runtime knobs:
+  - `target_rate_usd: float | None`
+  - `connect_cost_usd: float | None`
 
-`render_decision_shortlist(rows)` should:
+Defaults:
 
-- group rows by `queue_bucket` in this order:
-  1. `HOT`
-  2. `MANUAL_EXCEPTION`
-  3. `REVIEW`
-- render a compact terminal-friendly summary for each row
-- include the high-signal fields:
-  - `final_verdict`
-  - `queue_bucket`
-  - `j_title`
-  - `source_url`
-  - `ai_verdict_bucket`
-  - `ai_quality_fit`
-  - `ai_quality_client`
-  - `ai_quality_scope`
-  - `ai_price_scope_align`
-  - `ai_apply_promote`
-  - `b_margin_usd`
-  - `b_required_apply_prob`
-  - `b_first_believ_value_usd`
-  - `b_apply_cost_usd`
-  - `j_apply_cost_connects`
-  - `final_reason`
-  - `ai_why_trap`
-  - `ai_proposal_angle`
-  - key client/activity fields when available:
-    - `c_verified_payment`
-    - `c_country`
-    - `c_hist_total_spent`
-    - `c_hist_hire_rate`
-    - `c_hist_avg_hourly_rate`
-    - `a_proposals`
-    - `a_interviewing`
-    - `a_invites_sent`
-    - `j_mins_since_posted`
-- show missing values as `—`
-- avoid crashing on `None`
-- avoid dumping raw JSON blobs unless the renderer later has no better source for a useful field
-- return a clear empty-queue message if no shortlist rows exist
+- `app_env = "local"`
+- `db_path = "data/automat.sqlite3"`
+- `run_mode = "fake"`
+- `openai_model = "gpt-4.1-mini"` or another placeholder default
+- `search_terms` should default to:
+  - `WordPress`
+  - `WooCommerce`
+  - `PHP`
+  - `custom plugin`
+  - `Gravity Forms`
+  - `LearnDash`
+  - `ACF`
+  - `WP-CLI`
+  - `API`
+  - `webhook`
+  - `checkout`
+  - `performance`
+- `poll_limit = 50`
+- `target_rate_usd = None` unless explicitly set
+- `connect_cost_usd = None` unless explicitly set
 
-## Formatting goals
+Do not create a second source of truth for the seeded DB default settings. The config floats are optional runtime values only unless later work explicitly wires them into settings management.
 
-The output should be:
+Parsing and validation rules:
 
-- readable in a terminal
-- compact enough to scan quickly
-- grouped by shortlist priority bucket
-- more summary-oriented than raw-database-oriented
-
-Use human-readable formatting for money/probability/client/activity fields where practical, but do not overcomplicate the renderer.
+- missing optional secret-like values become `None`
+- empty strings become `None` for secret-like fields
+- `search_terms` parses from a comma-separated env var into trimmed non-empty strings
+- empty search-term entries are ignored
+- `poll_limit` must parse as a positive integer
+- `target_rate_usd` and `connect_cost_usd` must parse as positive floats if present
+- `run_mode` must be one of:
+  - `fake`
+  - `live`
+- invalid values must raise `ConfigError`
+- fake mode must not require real secrets
+- live mode should still avoid requiring a full credential set in this task, because real Upwork/OAuth/OpenAI execution is still out of scope
+- do not print or log secret values
 
 ## Test requirements
 
-Add tests in `tests/test_queue_view.py`.
+Add tests in `tests/test_config.py`.
 
 Tests should verify:
 
-1. `fetch_decision_shortlist()` returns rows from `v_decision_shortlist`
-2. `render_decision_shortlist()` groups `HOT` before `MANUAL_EXCEPTION` before `REVIEW`
-3. rendered output includes title, URL, verdict, bucket, AI bucket, fit/client/scope, margin, final reason, trap, and proposal angle
-4. `None` / missing values render as `—` and do not crash
-5. empty rows render a clear empty-queue message
-6. rendering works using a row produced by `run_fake_pipeline()`
+1. `load_config({})` returns defaults
+2. empty secret-like env vars become `None`
+3. explicit DB path is respected
+4. `run_mode` accepts `fake` and `live`
+5. invalid `run_mode` raises `ConfigError`
+6. search terms parse from a comma-separated env var and trim whitespace
+7. empty search-term entries are ignored
+8. `poll_limit` parses as an integer
+9. invalid `poll_limit` raises `ConfigError`
+10. non-positive `poll_limit` raises `ConfigError`
+11. `target_rate_usd` parses as float when present
+12. `connect_cost_usd` parses as float when present
+13. invalid float config raises `ConfigError`
+14. fake mode does not require OpenAI or Upwork secrets
+15. returned `AppConfig` is immutable if implemented as a frozen dataclass
+16. `.env.example` contains the supported variable names and no obvious real secrets
 
-Use local in-memory SQLite and fake pipeline fixtures where useful.
+Tests should prefer passing fake env dicts into `load_config()` rather than mutating the real process environment.
 
-Do not require real Upwork credentials, real network, or real AI calls.
+Do not require real secrets, real network, or real AI calls.
 
 ## Out of scope
 
 Do not implement:
 
 - real Upwork API calls
-- OAuth
+- OAuth flow
 - real AI calls
-- OpenAI integration
+- OpenAI API integration beyond storing config values
+- database schema changes
 - normalization changes
 - filter changes
+- AI contract changes
 - economics changes
 - triage changes
+- queue-rendering changes
 - TSV export
-- database schema changes unless a real blocking issue is discovered
 - a web dashboard
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- shortlist rows can be fetched from `v_decision_shortlist`
-- the queue renderer produces a compact readable terminal summary
-- missing values are handled safely and shown as `—`
-- queue sections appear in `HOT`, `MANUAL_EXCEPTION`, `REVIEW` order
+- `load_config()` returns a typed immutable config object
+- config defaults and parsing rules are covered by tests
+- invalid env values fail with clear `ConfigError` exceptions
+- `.env.example` documents the supported variables with safe placeholders
+- current setup docs no longer describe the completed queue-rendering task as the active work
 - `py -m pytest` passes
