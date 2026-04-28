@@ -53,17 +53,24 @@ Should verify:
 
 ### `tests/test_economics.py`
 
-Later should verify:
+Should verify:
 
-- fixed-price first believable value
-- hourly first believable value with visible client avg hourly
-- hourly first believable value with missing client avg hourly
+- fixed-price first believable value uses `j_pay_fixed`
+- hourly `defined_short_term` uses `fbv_hours_defined_short_term`
+- hourly `ongoing_or_vague` uses `fbv_hours_ongoing_or_vague`
+- hourly visible client avg hourly below target uses the client avg hourly rate
+- hourly visible client avg hourly above target caps at `target_rate_usd`
+- hourly missing client avg hourly falls back to `target_rate_usd`
 - apply cost
 - required probability
 - max rational apply cost
 - margin in USD
+- max rational cost in Connects
 - margin in Connects
 - bucket probability mapping
+- missing prerequisites return explicit non-ok `calc_status` values
+- invalid contract type or duration values return explicit non-ok `calc_status` values
+- zero or negative first believable value / connect cost does not divide by zero and returns a non-ok `calc_status`
 
 ### `tests/test_filters.py`
 
@@ -110,6 +117,8 @@ Later should verify:
 Use small local fixtures.
 
 Fixture numeric percentages must use percent values such as `75.0`, not fractions such as `0.75`.
+
+Economics tests should use pure in-memory Python inputs and should not require a database connection.
 
 Do not require real Upwork API credentials for unit tests.
 

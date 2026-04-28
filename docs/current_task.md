@@ -2,235 +2,166 @@
 
 ## Task name
 
-Implement database initialization for the data-complete staged MVP.
+Implement deterministic apply-stage economics for the staged MVP.
 
 ## Goal
 
-Create the SQLite database schema that supports the full staged pipeline:
+Create a pure, testable economics module that computes deterministic apply-stage economics from:
 
-1. ingestion runs
-2. stable job identity
-3. raw job snapshots
-4. normalized job snapshots
-5. versioned triage settings
-6. deterministic filter results
-7. AI evaluations
-8. deterministic economics results
-9. final triage results
-10. user actions
-11. user-facing decision shortlist view
+1. triage settings
+2. normalized job fields
+3. AI bucket and likely-duration fields
 
-This task is schema-only. It creates the spine of the project.
+This task is calculation-only. It should not require a database connection and it should not implement final triage verdict logic.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/db.py`
-- `tests/test_db.py`
+- `src/upwork_triage/economics.py`
+- `tests/test_economics.py`
+- `docs/current_task.md`
 
 Allowed supporting edits:
 
-- `pyproject.toml` if needed for test configuration
-- `src/upwork_triage/__init__.py` if needed
-- `docs/schema.md` only if implementation finds a needed schema correction
-
-Do not implement Upwork API calls yet.
-
-Do not implement AI calls yet.
-
-Do not implement full filter/economics logic yet, except default settings insertion if needed for schema tests.
+- `docs/testing.md` if test expectations need clarification
+- `docs/design.md` if formula wording or non-ok calculation behavior needs clarification
+- `docs/schema.md` only if a schema-level issue is discovered
+- `docs/decisions.md` only if a durable design decision is made
+- `pyproject.toml` only if needed for test/import configuration
 
 ## Required public API
 
-Implement a small DB layer in `src/upwork_triage/db.py`.
+Implement a small pure-Python economics layer in `src/upwork_triage/economics.py`.
 
-Expose these functions exactly:
+Expose a clear typed API, using small dataclasses or equivalently explicit typed structures.
 
-- `connect_db(path: str | Path) -> sqlite3.Connection`
-- `initialize_db(conn: sqlite3.Connection) -> None`
-- `insert_default_settings(conn: sqlite3.Connection) -> int`
+The module should provide:
 
-`connect_db` must enable:
+- a settings input structure containing:
+  - `target_rate_usd`
+  - `connect_cost_usd`
+  - `p_strong`
+  - `p_ok`
+  - `p_weak`
+  - `fbv_hours_defined_short_term`
+  - `fbv_hours_ongoing_or_vague`
+- a normalized job input structure containing:
+  - `j_contract_type`
+  - `j_pay_fixed`
+  - `j_apply_cost_connects`
+  - `c_hist_avg_hourly_rate`
+- an AI input structure containing:
+  - `ai_verdict_bucket`
+  - `ai_likely_duration`
+- a result structure containing:
+  - `j_apply_cost_connects`
+  - `b_apply_cost_usd`
+  - `b_apply_prob`
+  - `b_first_believ_value_usd`
+  - `b_required_apply_prob`
+  - `b_calc_max_rac_usd`
+  - `b_margin_usd`
+  - `b_calc_max_rac_connects`
+  - `b_margin_connects`
+  - `calc_status`
+  - `calc_error`
+- a pure calculation function that returns the structured result without requiring SQLite
 
-```sql
-PRAGMA foreign_keys = ON;
-```
+## Required behavior
 
-`initialize_db` must create all tables, indexes, and views idempotently.
+Implement these formulas and rules:
 
-`initialize_db` must call `insert_default_settings(conn)` internally so that after initialization the default settings row exists.
+1. Fixed-price first believable value:
+   - `b_first_believ_value_usd = j_pay_fixed`
+2. Hourly first believable value:
+   - if `ai_likely_duration = defined_short_term`, use `fbv_hours_defined_short_term`
+   - if `ai_likely_duration = ongoing_or_vague`, use `fbv_hours_ongoing_or_vague`
+   - hourly rate is `min(target_rate_usd, c_hist_avg_hourly_rate)` when client average hourly is visible and usable
+   - otherwise hourly rate falls back to `target_rate_usd`
+   - `b_first_believ_value_usd = hours * hourly_rate`
+3. Apply cost:
+   - `b_apply_cost_usd = connect_cost_usd * j_apply_cost_connects`
+4. Bucket probability mapping:
+   - `Strong -> p_strong`
+   - `Ok -> p_ok`
+   - `Weak -> p_weak`
+   - `No -> 0`
+5. Required apply probability:
+   - `b_required_apply_prob = b_apply_cost_usd / b_first_believ_value_usd`
+6. Max rational apply cost:
+   - `b_calc_max_rac_usd = b_apply_prob * b_first_believ_value_usd`
+7. Margin:
+   - `b_margin_usd = b_calc_max_rac_usd - b_apply_cost_usd`
+8. Connect equivalents:
+   - `b_calc_max_rac_connects = floor(b_calc_max_rac_usd / connect_cost_usd)`
+   - `b_margin_connects = b_calc_max_rac_connects - j_apply_cost_connects`
 
-`insert_default_settings` should insert the default settings row if missing and return its `id`.
+## Missing and invalid prerequisites
 
-Calling initialization more than once should not duplicate the default settings row.
+Handle missing or invalid prerequisites explicitly.
 
-## Required tables
+Do not silently treat missing values as zero.
 
-Create these tables:
+Use the existing schema calc-status vocabulary:
 
-- `ingestion_runs`
-- `jobs`
-- `raw_job_snapshots`
-- `job_snapshots_normalized`
-- `triage_settings_versions`
-- `filter_results`
-- `ai_evaluations`
-- `economics_results`
-- `triage_results`
-- `user_actions`
+- `ok`
+- `parse_failure`
+- `missing_prerequisite`
+- `not_applicable`
 
-The schema should follow `docs/schema.md`.
-
-## Required view
-
-Create:
-
-- `v_decision_shortlist`
-
-The view should join latest triage results to stable job identity, normalized job data, filter results, AI evaluations, and economics results.
-
-The view should include the fields needed for the final terminal decision table, including:
-
-- `final_verdict`
-- `final_reason`
-- `queue_bucket`
-- `priority_score`
-- AI bucket and quality fields
-- promotion trace
-- economics fields
-- upstream job/client/activity fields
-- AI evidence/risk fields
-- `job_key`
-
-The view must select the latest triage result per `job_key`.
-
-Use `MAX(triage_results.id)` as the deterministic latest-row tie-breaker in the MVP.
-
-The view should filter to:
-
-- `HOT`
-- `REVIEW`
-- `MANUAL_EXCEPTION`
-
-Fixture tests must therefore insert a triage row with one of those queue buckets.
-
-## Default settings row
-
-After initialization, a default row must exist in `triage_settings_versions`:
-
-- `name = 'default_low_cash_v1'`
-- `target_rate_usd = 25`
-- `low_cash_mode = 1`
-- `connect_cost_usd = 0.15`
-- `p_strong = 0.01400`
-- `p_ok = 0.00189`
-- `p_weak = 0.00020`
-- `fbv_hours_defined_short_term = 10`
-- `fbv_hours_ongoing_or_vague = 8`
-- `is_default = 1`
-
-The insertion should be idempotent.
-
-Only one row may have `is_default = 1`.
-
-## Data integrity requirements
-
-Implement database-level integrity where practical:
-
-- enable SQLite foreign keys
-- use `CHECK` constraints for enum-like fields described in `docs/schema.md`
-- add a partial unique index so only one settings row can be default
-- add useful indexes listed in `docs/schema.md`
-- add the mandatory uniqueness constraints listed in `docs/schema.md`
-
-Mandatory uniqueness constraints for this task:
-
-- `UNIQUE(job_key, raw_hash)` on `raw_job_snapshots`
-- `UNIQUE(raw_snapshot_id, normalizer_version)` on `job_snapshots_normalized`
-- `UNIQUE(job_snapshot_id, filter_version)` on `filter_results`
-- partial unique index allowing only one `triage_settings_versions` row with `is_default = 1`
-
-Do not silently ignore impossible enum values.
-
-Economics-result uniqueness is intentionally deferred until the economics module is implemented.
+If required inputs are missing, unusable, or would lead to invalid arithmetic such as division by zero, return a structured non-ok result with `calc_status` and `calc_error` instead of pretending the math succeeded.
 
 ## Test requirements
 
-Add tests in `tests/test_db.py`.
+Add tests in `tests/test_economics.py`.
 
 Tests should verify:
 
-1. An in-memory SQLite DB can be initialized.
-2. Foreign keys are enabled on connections returned by `connect_db`.
-3. `initialize_db(conn)` enables foreign keys even when given a raw `sqlite3.connect(":memory:")` connection.
-4. All required tables exist.
-5. `v_decision_shortlist` exists.
-6. The default settings row exists immediately after `initialize_db(conn)`.
-7. Calling initialization twice does not duplicate default settings.
-8. Only one settings row can have `is_default = 1`.
-9. Enum/check constraints reject invalid values for at least:
-   - `filter_results.routing_bucket`
-   - `triage_results.final_verdict`
-   - `triage_results.queue_bucket`
-10. Mandatory uniqueness constraints reject duplicates for at least:
-   - `raw_job_snapshots(job_key, raw_hash)`
-   - `job_snapshots_normalized(raw_snapshot_id, normalizer_version)`
-   - `filter_results(job_snapshot_id, filter_version)`
-11. Foreign-key enforcement actually works, for example by rejecting a `raw_job_snapshots.job_key` value that has no parent row in `jobs`.
-12. At least one minimal coherent fixture can flow through:
-   - `jobs`
-   - `raw_job_snapshots`
-   - `job_snapshots_normalized`
-   - `filter_results`
-   - `ai_evaluations`
-   - `economics_results`
-   - `triage_results`
-   and appear in `v_decision_shortlist`.
-13. The fixture row visible in `v_decision_shortlist` includes:
-   - `job_key`
-   - `final_verdict`
-   - `final_reason`
-   - `ai_verdict_bucket`
-   - `ai_quality_fit`
-   - `b_margin_usd`
-   - `j_title`
-   - `source_url`
-14. If multiple triage rows exist for the same `job_key`, the view selects the row with the highest `triage_results.id`.
-15. A fixture row with `queue_bucket = 'ARCHIVE'` does not appear in `v_decision_shortlist`.
+1. fixed-price first believable value uses `j_pay_fixed`
+2. hourly `defined_short_term` uses `fbv_hours_defined_short_term`
+3. hourly `ongoing_or_vague` uses `fbv_hours_ongoing_or_vague`
+4. hourly visible client average hourly below target uses the client average
+5. hourly visible client average hourly above target caps at `target_rate_usd`
+6. hourly missing client average hourly falls back to `target_rate_usd`
+7. bucket probability mapping for:
+   - `Strong`
+   - `Ok`
+   - `Weak`
+   - `No`
+8. apply cost uses `connect_cost_usd * j_apply_cost_connects`
+9. required probability, max rational apply cost, USD margin, max rational connects, and connect margin are computed correctly
+10. missing `j_apply_cost_connects` returns `calc_status = missing_prerequisite`
+11. missing fixed price on a fixed job returns `calc_status = missing_prerequisite`
+12. missing or invalid duration on an hourly job returns a non-ok status appropriate to the implementation
+13. unknown contract type returns `calc_status = parse_failure`
+14. zero or negative first believable value does not divide by zero and returns a non-ok status
+15. zero or negative `connect_cost_usd` does not divide by zero and returns a non-ok status
 
-Use SQLite in-memory database for tests.
-
-Fixture numeric percentages should use project percent values such as `75.0`, not fractions such as `0.75`.
+Use pure unit tests. The economics tests should not require a database connection.
 
 ## Out of scope
 
 Do not implement:
 
-- real Upwork GraphQL client
+- Upwork API
 - OAuth
-- AI model calls
-- terminal queue rendering
-- normalizer implementation
+- AI calls
+- normalizer logic
 - deterministic filter implementation
-- economics formulas
+- full triage verdict logic
+- queue rendering
 - TSV export
-- dashboard
-- notifications
+- database schema changes unless a real blocking issue is discovered
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- the DB initializes without errors
-- tests pass
-- the schema has the required tables and view
-- foreign keys are enabled by the DB connection helper
-- foreign keys are also enabled by `initialize_db(conn)` for raw SQLite connections
-- default settings are inserted idempotently by `initialize_db`
-- foreign-key constraints are actually enforced in tests
-- database constraints catch invalid enum-like values
-- mandatory uniqueness constraints are enforced
-- a minimal fixture can flow through the schema into `v_decision_shortlist`
-- latest-row behavior in `v_decision_shortlist` is deterministic
-- the view exposes the final decision fields needed for the manual shortlist
+- the economics module is pure and testable without SQLite
+- the required formulas are implemented
+- missing or invalid prerequisites return explicit non-ok results
+- tests cover the main fixed-price and hourly branches
+- tests cover bucket probability mapping and downstream economics
+- tests cover zero/missing prerequisite safety
+- `py -m pytest` passes

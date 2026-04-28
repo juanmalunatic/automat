@@ -135,6 +135,8 @@ AI should not produce the final user-facing apply reason. It may produce an `ai_
 
 These calculations use settings from `triage_settings_versions`, normalized job fields, and the AI bucket/duration fields.
 
+Economics must stay deterministic and code-driven. If required inputs are missing, malformed, or would lead to invalid arithmetic such as division by zero, the economics stage should write a non-ok `calc_status` and `calc_error` instead of coercing values to zero.
+
 ### Final triage
 
 `triage_results` combines filter result, AI evaluation, and economics into the final queue verdict.
