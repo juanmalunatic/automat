@@ -80,6 +80,11 @@ Should verify:
 - the CLI uses the configured DB path rather than the real default DB
 - the CLI creates the parent DB directory when missing
 - running the command twice against the same temp DB succeeds and only increases `ingestion_runs` while replay-safe stage tables remain reused
+- `main(["ingest-once"])` returns `0` when fetch and AI boundaries are monkeypatched with local fakes
+- `ingest-once` writes rendered shortlist output to stdout
+- `ingest-once` uses the configured DB path and creates parent directories when needed
+- running `ingest-once` twice against the same temp DB keeps versioned stage rows replay-safe while still creating a fresh `ingestion_runs` row
+- missing live credentials or client/provider failures make `ingest-once` return a non-zero exit code with a helpful error
 - `main([])` or an unknown command returns a non-zero exit code and prints usage or a helpful error
 - `src/upwork_triage/__main__.py` delegates to the CLI module without requiring a subprocess
 
@@ -239,6 +244,27 @@ Should verify:
   - duplicate `raw_job_snapshots` rows are reused/skipped instead of violating uniqueness
   - duplicate versioned downstream rows are reused instead of being blindly duplicated
 
+### `tests/test_pipeline.py`
+
+Should verify:
+
+- multiple raw payloads can be processed inside one ingestion run
+- a mixed batch with one strong AI-routed job and one hard reject creates the expected staged-row counts
+- the strong job appears in `v_decision_shortlist`
+- the hard-rejected job is archived and does not appear in the shortlist
+- the AI evaluator is not called for hard rejects
+- rerunning the same batch is replay-safe:
+  - `ingestion_runs` increases by one per run
+  - identical versioned stage rows are reused/skipped consistently
+- if the AI evaluator raises on an AI-routed job:
+  - pre-AI staged rows for that job remain stored
+  - no `ai_evaluations`, `economics_results`, or `triage_results` row is inserted for that failed AI job
+  - the ingestion run status becomes `failed`
+  - the exception is re-raised
+- the live-compatible wrapper uses the Upwork fetch boundary to obtain raw payload dicts
+- the live-compatible wrapper uses the AI provider/evaluator boundary for routed jobs
+- missing Upwork or OpenAI live credentials fail clearly when the live wrapper path is requested
+
 ### `tests/test_queue_view.py`
 
 Should verify:
@@ -276,11 +302,15 @@ AI client-wrapper tests should use fake providers or injected fake clients only.
 
 Pipeline-runner tests should use only local fake payloads and fake AI output. They should not require real Upwork credentials, network calls, or live model access.
 
+Batch-pipeline tests should use only local fake payloads plus fake evaluator/provider or fake fetch transport boundaries. They should not require real Upwork credentials, real OpenAI credentials, or network access.
+
 Queue-view tests should use in-memory SQLite or plain row dicts. They should not require real Upwork credentials, network calls, or live model access.
 
 Config tests should prefer passing fake env dicts into `load_config()` rather than mutating the real process environment. They should not require real secrets, network calls, or a live `.env` file.
 
 CLI tests should use temp DB paths through env overrides or other isolated config strategies. They should not write to the real default `data/automat.sqlite3`, require a live `.env` file, or require real network/model credentials.
+
+`ingest-once` CLI tests should monkeypatch the live fetch and/or AI boundaries rather than calling real Upwork or OpenAI services.
 
 For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
 

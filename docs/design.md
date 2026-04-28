@@ -58,6 +58,8 @@ The key architectural rule is that each stage stores its output separately.
 
 The live-fetch boundary should return plain raw job-like dict payloads through a small local client interface. Normalization remains the next stage and should not depend directly on HTTP response objects or provider-specific SDK types.
 
+The first live-compatible batch runner should keep that staged boundary intact instead of collapsing fetch, normalization, AI, economics, and triage into one opaque helper. It may orchestrate the stages in one command, but it should still persist each stage separately and fail fast on unexpected per-job errors after marking the ingestion run as failed.
+
 ## 4. Main data stages
 
 ### Stable job identity
@@ -472,6 +474,16 @@ This command should stay fake/local only for the MVP. It should load config, use
 Even after a real AI client wrapper exists, `fake-demo` should remain fake-mode only and continue using local fake AI output instead of calling a live provider.
 
 The lower-level `run_pipeline` module may still exist as an internal orchestration helper, but the user-facing local demo entry point should be the package CLI.
+
+First live-compatible one-shot command target:
+
+`py -m upwork_triage ingest-once`
+
+This command is the first live-compatible batch path. It should load config, open SQLite, fetch raw job payload dicts through the Upwork client boundary, evaluate routed jobs through the AI client boundary, persist the staged outputs, and print the rendered shortlist.
+
+`ingest-once` should not silently fall back to fake data. If the Upwork or OpenAI live boundaries are not configured, it should fail clearly.
+
+Even in this live-compatible path, OAuth authorization-code flow, token refresh, and recurring polling remain deferred. The command is a one-shot ingest/evaluate run, not a background daemon.
 
 The first coding task should implement database initialization, schema, default settings, view, and tests.
 

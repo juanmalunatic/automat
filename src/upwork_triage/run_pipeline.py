@@ -2,27 +2,31 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any
 
+from upwork_triage.ai_client import AiProvider, evaluate_with_ai_provider, evaluate_with_openai
 from upwork_triage.ai_eval import (
+    AiEvaluation,
+    AiPayloadInput,
     build_ai_payload,
     parse_ai_output,
     serialize_ai_evaluation,
 )
+from upwork_triage.config import AppConfig
 from upwork_triage.db import initialize_db
 from upwork_triage.economics import (
     EconomicsAiInput,
-    EconomicsJobInput,
     EconomicsResult,
     EconomicsSettings,
     calculate_economics,
 )
-from upwork_triage.filters import FilterInput, FilterResult, evaluate_filters
+from upwork_triage.filters import FilterResult, evaluate_filters
 from upwork_triage.normalize import (
     JobSnapshotNormalizedInput,
     JobsUpsertInput,
-    NormalizationResult,
     RawSnapshotMetadata,
     normalize_job_payload,
 )
@@ -34,148 +38,228 @@ from upwork_triage.triage import (
     TriageSettings,
     evaluate_triage,
 )
+from upwork_triage.upwork_client import HttpJsonTransport, fetch_upwork_jobs
 
 SOURCE_NAME = "local_fixture"
 SOURCE_QUERY = "local_fixture"
+LIVE_SOURCE_NAME = "upwork_graphql"
 MODEL_NAME = "fake-local-model"
+DEFAULT_BATCH_MODEL_NAME = "injected-ai-model"
 NORMALIZER_VERSION = "local_fixture_normalizer_v1"
 FILTER_VERSION = "local_fixture_filter_v1"
 PROMPT_VERSION = "local_fixture_prompt_v1"
 ECONOMICS_VERSION = "local_fixture_economics_v1"
 TRIAGE_VERSION = "local_fixture_triage_v1"
 
-__all__ = ["run_fake_pipeline"]
+AiEvaluator = Callable[[AiPayloadInput], AiEvaluation]
 
 
-def run_fake_pipeline(
+@dataclass(frozen=True, slots=True)
+class PipelineRunSummary:
+    ingestion_run_id: int
+    jobs_seen_count: int
+    jobs_new_count: int
+    jobs_updated_count: int
+    raw_snapshots_created_count: int
+    normalized_snapshots_created_count: int
+    filter_results_created_count: int
+    ai_evaluations_created_count: int
+    economics_results_created_count: int
+    triage_results_created_count: int
+    shortlist_rows_count: int
+    status: str
+    error_message: str | None
+
+
+__all__ = [
+    "AiEvaluator",
+    "PipelineRunSummary",
+    "run_fake_pipeline",
+    "run_live_ingest_once",
+    "run_pipeline_for_raw_jobs",
+]
+
+
+def run_pipeline_for_raw_jobs(
     conn: sqlite3.Connection,
-    raw_payload: Mapping[str, object],
-    fake_ai_output: Mapping[str, object],
-) -> dict[str, object] | None:
+    raw_payloads: Sequence[Mapping[str, object]],
+    ai_evaluator: AiEvaluator,
+    *,
+    source_name: str = "live_or_injected",
+    source_query: str | None = None,
+    model_name: str = DEFAULT_BATCH_MODEL_NAME,
+) -> PipelineRunSummary:
     initialize_db(conn)
 
-    normalization = normalize_job_payload(raw_payload)
-    settings_row = _fetch_default_settings_row(conn)
-    settings_version_id = int(settings_row["id"])
-
-    ingestion_run_id: int | None = None
+    payload_list = list(raw_payloads)
+    jobs_seen_count = len(payload_list)
     jobs_new_count = 0
     jobs_updated_count = 0
+    raw_snapshots_created_count = 0
+    normalized_snapshots_created_count = 0
+    filter_results_created_count = 0
+    ai_evaluations_created_count = 0
+    economics_results_created_count = 0
+    triage_results_created_count = 0
+    processed_job_keys: list[str] = []
+
+    settings_row = _fetch_default_settings_row(conn)
+    settings_version_id = int(settings_row["id"])
+    economics_settings = _row_to_economics_settings(settings_row)
+    triage_settings = _row_to_triage_settings(settings_row)
+
+    ingestion_run_id: int | None = None
+    query_config_json = _build_query_config_json(source_query)
 
     try:
         with conn:
-            ingestion_run_id = _create_ingestion_run(conn)
-
-            job_was_created = _upsert_job(conn, normalization.to_jobs_upsert_input())
-            jobs_new_count = int(job_was_created)
-            jobs_updated_count = int(not job_was_created)
-
-            raw_snapshot_id = _get_or_create_raw_snapshot(
+            ingestion_run_id = _create_ingestion_run(
                 conn,
-                ingestion_run_id=ingestion_run_id,
-                metadata=normalization.to_raw_snapshot_metadata(),
-                raw_payload=raw_payload,
-            )
-            job_snapshot_id = _get_or_create_normalized_snapshot(
-                conn,
-                raw_snapshot_id=raw_snapshot_id,
-                normalized=normalization.to_job_snapshot_insert_input(),
-            )
-            _update_job_snapshot_pointers(
-                conn,
-                job_key=normalization.job_key,
-                raw_snapshot_id=raw_snapshot_id,
-                job_snapshot_id=job_snapshot_id,
+                source_name=source_name,
+                query_config_json=query_config_json,
             )
 
-            filter_result = evaluate_filters(normalization.to_filter_input())
-            filter_result_id = _get_or_create_filter_result(
-                conn,
-                job_snapshot_id=job_snapshot_id,
-                filter_result=filter_result,
-            )
+        for raw_payload in payload_list:
+            normalization = normalize_job_payload(raw_payload)
+            processed_job_keys.append(normalization.job_key)
 
-        if _should_skip_ai(filter_result):
-            triage_result = evaluate_triage(
-                _row_to_triage_settings(settings_row),
-                _to_triage_filter_input(filter_result),
-                _empty_triage_ai_input(),
-                _skipped_triage_economics_input(),
-            )
             with conn:
-                _get_or_create_triage_result(
+                job_was_created = _upsert_job(conn, normalization.to_jobs_upsert_input())
+                jobs_new_count += int(job_was_created)
+                jobs_updated_count += int(not job_was_created)
+
+                raw_snapshot_id, raw_snapshot_created = _get_or_create_raw_snapshot(
+                    conn,
+                    ingestion_run_id=ingestion_run_id,
+                    metadata=normalization.to_raw_snapshot_metadata(),
+                    raw_payload=raw_payload,
+                    source_query=source_query,
+                )
+                raw_snapshots_created_count += int(raw_snapshot_created)
+
+                job_snapshot_id, normalized_snapshot_created = _get_or_create_normalized_snapshot(
+                    conn,
+                    raw_snapshot_id=raw_snapshot_id,
+                    normalized=normalization.to_job_snapshot_insert_input(),
+                )
+                normalized_snapshots_created_count += int(normalized_snapshot_created)
+
+                _update_job_snapshot_pointers(
+                    conn,
+                    job_key=normalization.job_key,
+                    raw_snapshot_id=raw_snapshot_id,
+                    job_snapshot_id=job_snapshot_id,
+                )
+
+                filter_result = evaluate_filters(normalization.to_filter_input())
+                filter_result_id, filter_result_created = _get_or_create_filter_result(
+                    conn,
+                    job_snapshot_id=job_snapshot_id,
+                    filter_result=filter_result,
+                )
+                filter_results_created_count += int(filter_result_created)
+
+            if _should_skip_ai(filter_result):
+                triage_result = evaluate_triage(
+                    triage_settings,
+                    _to_triage_filter_input(filter_result),
+                    _empty_triage_ai_input(),
+                    _skipped_triage_economics_input(),
+                )
+                with conn:
+                    _, triage_result_created = _get_or_create_triage_result(
+                        conn,
+                        job_snapshot_id=job_snapshot_id,
+                        settings_version_id=settings_version_id,
+                        filter_result_id=filter_result_id,
+                        ai_evaluation_id=None,
+                        economics_result_id=None,
+                        triage_result=triage_result,
+                    )
+                    triage_results_created_count += int(triage_result_created)
+                continue
+
+            ai_payload_input = normalization.to_ai_payload_input(filter_result)
+            ai_output = ai_evaluator(ai_payload_input)
+            ai_payload = build_ai_payload(ai_payload_input)
+            serialized_ai = serialize_ai_evaluation(ai_output)
+            output_json = _json_dumps(_ai_output_mapping(ai_output))
+
+            economics_result = calculate_economics(
+                economics_settings,
+                normalization.to_economics_job_input(),
+                EconomicsAiInput(
+                    ai_verdict_bucket=ai_output.ai_verdict_bucket,
+                    ai_likely_duration=ai_output.ai_likely_duration,
+                ),
+            )
+            triage_result = evaluate_triage(
+                triage_settings,
+                _to_triage_filter_input(filter_result),
+                _to_triage_ai_input(ai_output),
+                _to_triage_economics_input(economics_result),
+            )
+
+            with conn:
+                ai_evaluation_id, ai_evaluation_created = _get_or_create_ai_evaluation(
+                    conn,
+                    job_snapshot_id=job_snapshot_id,
+                    settings_version_id=settings_version_id,
+                    model_name=model_name,
+                    input_json=_json_dumps(ai_payload),
+                    output_json=output_json,
+                    serialized_ai=serialized_ai,
+                )
+                ai_evaluations_created_count += int(ai_evaluation_created)
+
+                economics_result_id, economics_result_created = _get_or_create_economics_result(
+                    conn,
+                    job_snapshot_id=job_snapshot_id,
+                    settings_version_id=settings_version_id,
+                    ai_evaluation_id=ai_evaluation_id,
+                    economics_result=economics_result,
+                )
+                economics_results_created_count += int(economics_result_created)
+
+                _, triage_result_created = _get_or_create_triage_result(
                     conn,
                     job_snapshot_id=job_snapshot_id,
                     settings_version_id=settings_version_id,
                     filter_result_id=filter_result_id,
-                    ai_evaluation_id=None,
-                    economics_result_id=None,
+                    ai_evaluation_id=ai_evaluation_id,
+                    economics_result_id=economics_result_id,
                     triage_result=triage_result,
                 )
-                _finish_ingestion_run(
-                    conn,
-                    ingestion_run_id=ingestion_run_id,
-                    status="success",
-                    error_message=None,
-                    jobs_new_count=jobs_new_count,
-                    jobs_updated_count=jobs_updated_count,
-                )
-            return _fetch_shortlist_row(conn, normalization.job_key)
+                triage_results_created_count += int(triage_result_created)
 
-        ai_payload = build_ai_payload(normalization.to_ai_payload_input(filter_result))
-        ai_output = parse_ai_output(fake_ai_output)
-        serialized_ai = serialize_ai_evaluation(ai_output)
-
-        economics_result = calculate_economics(
-            _row_to_economics_settings(settings_row),
-            normalization.to_economics_job_input(),
-            EconomicsAiInput(
-                ai_verdict_bucket=ai_output.ai_verdict_bucket,
-                ai_likely_duration=ai_output.ai_likely_duration,
-            ),
-        )
-        triage_result = evaluate_triage(
-            _row_to_triage_settings(settings_row),
-            _to_triage_filter_input(filter_result),
-            _to_triage_ai_input(ai_output),
-            _to_triage_economics_input(economics_result),
-        )
+        shortlist_rows_count = _count_shortlist_rows_for_job_keys(conn, processed_job_keys)
 
         with conn:
-            ai_evaluation_id = _get_or_create_ai_evaluation(
-                conn,
-                job_snapshot_id=job_snapshot_id,
-                settings_version_id=settings_version_id,
-                input_json=_json_dumps(ai_payload),
-                output_json=_json_dumps(fake_ai_output),
-                serialized_ai=serialized_ai,
-            )
-            economics_result_id = _get_or_create_economics_result(
-                conn,
-                job_snapshot_id=job_snapshot_id,
-                settings_version_id=settings_version_id,
-                ai_evaluation_id=ai_evaluation_id,
-                economics_result=economics_result,
-            )
-            _get_or_create_triage_result(
-                conn,
-                job_snapshot_id=job_snapshot_id,
-                settings_version_id=settings_version_id,
-                filter_result_id=filter_result_id,
-                ai_evaluation_id=ai_evaluation_id,
-                economics_result_id=economics_result_id,
-                triage_result=triage_result,
-            )
             _finish_ingestion_run(
                 conn,
                 ingestion_run_id=ingestion_run_id,
                 status="success",
                 error_message=None,
+                jobs_fetched_count=jobs_seen_count,
                 jobs_new_count=jobs_new_count,
                 jobs_updated_count=jobs_updated_count,
             )
 
-        return _fetch_shortlist_row(conn, normalization.job_key)
+        return PipelineRunSummary(
+            ingestion_run_id=ingestion_run_id,
+            jobs_seen_count=jobs_seen_count,
+            jobs_new_count=jobs_new_count,
+            jobs_updated_count=jobs_updated_count,
+            raw_snapshots_created_count=raw_snapshots_created_count,
+            normalized_snapshots_created_count=normalized_snapshots_created_count,
+            filter_results_created_count=filter_results_created_count,
+            ai_evaluations_created_count=ai_evaluations_created_count,
+            economics_results_created_count=economics_results_created_count,
+            triage_results_created_count=triage_results_created_count,
+            shortlist_rows_count=shortlist_rows_count,
+            status="success",
+            error_message=None,
+        )
     except Exception as exc:
         if ingestion_run_id is not None:
             with conn:
@@ -184,13 +268,70 @@ def run_fake_pipeline(
                     ingestion_run_id=ingestion_run_id,
                     status="failed",
                     error_message=str(exc),
+                    jobs_fetched_count=jobs_seen_count,
                     jobs_new_count=jobs_new_count,
                     jobs_updated_count=jobs_updated_count,
                 )
         raise
 
 
-def _create_ingestion_run(conn: sqlite3.Connection) -> int:
+def run_live_ingest_once(
+    conn: sqlite3.Connection,
+    config: AppConfig,
+    *,
+    transport: HttpJsonTransport | None = None,
+    ai_provider: AiProvider | None = None,
+) -> PipelineRunSummary:
+    raw_payloads = fetch_upwork_jobs(config, transport=transport)
+
+    if ai_provider is None:
+        def ai_evaluator(ai_payload_input: AiPayloadInput) -> AiEvaluation:
+            return evaluate_with_openai(config, ai_payload_input)
+    else:
+        def ai_evaluator(ai_payload_input: AiPayloadInput) -> AiEvaluation:
+            return evaluate_with_ai_provider(
+                ai_provider,
+                ai_payload_input,
+                model=config.openai_model,
+            )
+
+    return run_pipeline_for_raw_jobs(
+        conn,
+        raw_payloads,
+        ai_evaluator,
+        source_name=LIVE_SOURCE_NAME,
+        source_query=", ".join(config.search_terms),
+        model_name=config.openai_model,
+    )
+
+
+def run_fake_pipeline(
+    conn: sqlite3.Connection,
+    raw_payload: Mapping[str, object],
+    fake_ai_output: Mapping[str, object],
+) -> dict[str, object] | None:
+    normalization = normalize_job_payload(raw_payload)
+
+    def fake_ai_evaluator(_: AiPayloadInput) -> AiEvaluation:
+        return parse_ai_output(fake_ai_output)
+
+    run_pipeline_for_raw_jobs(
+        conn,
+        [raw_payload],
+        fake_ai_evaluator,
+        source_name=SOURCE_NAME,
+        source_query=SOURCE_QUERY,
+        model_name=MODEL_NAME,
+    )
+    return _fetch_shortlist_row(conn, normalization.job_key)
+
+
+def _create_ingestion_run(
+    conn: sqlite3.Connection,
+    *,
+    source_name: str,
+    query_config_json: str | None,
+) -> int:
     cursor = conn.execute(
         """
         INSERT INTO ingestion_runs (
@@ -203,7 +344,7 @@ def _create_ingestion_run(conn: sqlite3.Connection) -> int:
             jobs_updated_count
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (_utc_now_iso(), SOURCE_NAME, None, "running", 0, 0, 0),
+        (_utc_now_iso(), source_name, query_config_json, "running", 0, 0, 0),
     )
     return int(cursor.lastrowid)
 
@@ -214,6 +355,7 @@ def _finish_ingestion_run(
     ingestion_run_id: int,
     status: str,
     error_message: str | None,
+    jobs_fetched_count: int,
     jobs_new_count: int,
     jobs_updated_count: int,
 ) -> None:
@@ -233,7 +375,7 @@ def _finish_ingestion_run(
             _utc_now_iso(),
             status,
             error_message,
-            1,
+            jobs_fetched_count,
             jobs_new_count,
             jobs_updated_count,
             ingestion_run_id,
@@ -299,7 +441,8 @@ def _get_or_create_raw_snapshot(
     ingestion_run_id: int,
     metadata: RawSnapshotMetadata,
     raw_payload: Mapping[str, object],
-) -> int:
+    source_query: str | None,
+) -> tuple[int, bool]:
     existing = conn.execute(
         """
         SELECT id
@@ -309,7 +452,7 @@ def _get_or_create_raw_snapshot(
         (metadata.job_key, metadata.raw_hash),
     ).fetchone()
     if existing is not None:
-        return int(existing[0])
+        return int(existing[0]), False
 
     cursor = conn.execute(
         """
@@ -328,12 +471,12 @@ def _get_or_create_raw_snapshot(
             metadata.job_key,
             metadata.upwork_job_id,
             _utc_now_iso(),
-            SOURCE_QUERY,
+            source_query,
             _json_dumps(raw_payload),
             metadata.raw_hash,
         ),
     )
-    return int(cursor.lastrowid)
+    return int(cursor.lastrowid), True
 
 
 def _get_or_create_normalized_snapshot(
@@ -341,7 +484,7 @@ def _get_or_create_normalized_snapshot(
     *,
     raw_snapshot_id: int,
     normalized: JobSnapshotNormalizedInput,
-) -> int:
+) -> tuple[int, bool]:
     existing = conn.execute(
         """
         SELECT id
@@ -351,7 +494,7 @@ def _get_or_create_normalized_snapshot(
         (raw_snapshot_id, NORMALIZER_VERSION),
     ).fetchone()
     if existing is not None:
-        return int(existing[0])
+        return int(existing[0]), False
 
     cursor = conn.execute(
         """
@@ -452,7 +595,7 @@ def _get_or_create_normalized_snapshot(
             _utc_now_iso(),
         ),
     )
-    return int(cursor.lastrowid)
+    return int(cursor.lastrowid), True
 
 
 def _update_job_snapshot_pointers(
@@ -480,7 +623,7 @@ def _get_or_create_filter_result(
     *,
     job_snapshot_id: int,
     filter_result: FilterResult,
-) -> int:
+) -> tuple[int, bool]:
     existing = conn.execute(
         """
         SELECT id
@@ -490,7 +633,7 @@ def _get_or_create_filter_result(
         (job_snapshot_id, FILTER_VERSION),
     ).fetchone()
     if existing is not None:
-        return int(existing[0])
+        return int(existing[0]), False
 
     cursor = conn.execute(
         """
@@ -518,7 +661,7 @@ def _get_or_create_filter_result(
             _json_dumps(filter_result.negative_flags),
         ),
     )
-    return int(cursor.lastrowid)
+    return int(cursor.lastrowid), True
 
 
 def _get_or_create_ai_evaluation(
@@ -526,10 +669,11 @@ def _get_or_create_ai_evaluation(
     *,
     job_snapshot_id: int,
     settings_version_id: int,
+    model_name: str,
     input_json: str,
     output_json: str,
     serialized_ai: Mapping[str, object],
-) -> int:
+) -> tuple[int, bool]:
     existing = conn.execute(
         """
         SELECT id
@@ -544,7 +688,7 @@ def _get_or_create_ai_evaluation(
         (job_snapshot_id, settings_version_id, PROMPT_VERSION, input_json, output_json),
     ).fetchone()
     if existing is not None:
-        return int(existing[0])
+        return int(existing[0]), False
 
     cursor = conn.execute(
         """
@@ -578,7 +722,7 @@ def _get_or_create_ai_evaluation(
         (
             job_snapshot_id,
             settings_version_id,
-            MODEL_NAME,
+            model_name,
             PROMPT_VERSION,
             _utc_now_iso(),
             input_json,
@@ -602,7 +746,7 @@ def _get_or_create_ai_evaluation(
             serialized_ai["risk_flags_json"],
         ),
     )
-    return int(cursor.lastrowid)
+    return int(cursor.lastrowid), True
 
 
 def _get_or_create_economics_result(
@@ -612,7 +756,7 @@ def _get_or_create_economics_result(
     settings_version_id: int,
     ai_evaluation_id: int,
     economics_result: EconomicsResult,
-) -> int:
+) -> tuple[int, bool]:
     existing = conn.execute(
         """
         SELECT id
@@ -626,7 +770,7 @@ def _get_or_create_economics_result(
         (job_snapshot_id, settings_version_id, ai_evaluation_id, ECONOMICS_VERSION),
     ).fetchone()
     if existing is not None:
-        return int(existing[0])
+        return int(existing[0]), False
 
     cursor = conn.execute(
         """
@@ -668,7 +812,7 @@ def _get_or_create_economics_result(
             economics_result.calc_error,
         ),
     )
-    return int(cursor.lastrowid)
+    return int(cursor.lastrowid), True
 
 
 def _get_or_create_triage_result(
@@ -680,7 +824,7 @@ def _get_or_create_triage_result(
     ai_evaluation_id: int | None,
     economics_result_id: int | None,
     triage_result: TriageResult,
-) -> int:
+) -> tuple[int, bool]:
     existing = _find_existing_triage_result(
         conn,
         job_snapshot_id=job_snapshot_id,
@@ -690,7 +834,7 @@ def _get_or_create_triage_result(
         economics_result_id=economics_result_id,
     )
     if existing is not None:
-        return existing
+        return existing, False
 
     cursor = conn.execute(
         """
@@ -728,7 +872,7 @@ def _get_or_create_triage_result(
             triage_result.final_reason,
         ),
     )
-    return int(cursor.lastrowid)
+    return int(cursor.lastrowid), True
 
 
 def _find_existing_triage_result(
@@ -866,6 +1010,54 @@ def _fetch_shortlist_row(conn: sqlite3.Connection, job_key: str) -> dict[str, ob
     if row is None:
         return None
     return _row_to_dict(row, cursor.description)
+
+
+def _count_shortlist_rows_for_job_keys(
+    conn: sqlite3.Connection,
+    job_keys: Sequence[str],
+) -> int:
+    unique_job_keys = list(dict.fromkeys(job_keys))
+    if not unique_job_keys:
+        return 0
+
+    placeholders = ", ".join("?" for _ in unique_job_keys)
+    query = f"""
+        SELECT COUNT(*) AS count
+        FROM v_decision_shortlist
+        WHERE job_key IN ({placeholders})
+    """
+    row = conn.execute(query, unique_job_keys).fetchone()
+    if row is None:
+        return 0
+    return int(row[0])
+
+
+def _build_query_config_json(source_query: str | None) -> str | None:
+    if source_query is None:
+        return None
+    return _json_dumps({"source_query": source_query})
+
+
+def _ai_output_mapping(ai_output: AiEvaluation) -> dict[str, object]:
+    return {
+        "ai_quality_client": ai_output.ai_quality_client,
+        "ai_quality_fit": ai_output.ai_quality_fit,
+        "ai_quality_scope": ai_output.ai_quality_scope,
+        "ai_price_scope_align": ai_output.ai_price_scope_align,
+        "ai_verdict_bucket": ai_output.ai_verdict_bucket,
+        "ai_likely_duration": ai_output.ai_likely_duration,
+        "proposal_can_be_written_quickly": ai_output.proposal_can_be_written_quickly,
+        "scope_explosion_risk": ai_output.scope_explosion_risk,
+        "severe_hidden_risk": ai_output.severe_hidden_risk,
+        "ai_semantic_reason_short": ai_output.ai_semantic_reason_short,
+        "ai_best_reason_to_apply": ai_output.ai_best_reason_to_apply,
+        "ai_why_trap": ai_output.ai_why_trap,
+        "ai_proposal_angle": ai_output.ai_proposal_angle,
+        "fit_evidence": list(ai_output.fit_evidence),
+        "client_evidence": list(ai_output.client_evidence),
+        "scope_evidence": list(ai_output.scope_evidence),
+        "risk_flags": list(ai_output.risk_flags),
+    }
 
 
 def _row_to_dict(

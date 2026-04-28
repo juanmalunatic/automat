@@ -250,3 +250,21 @@ The project already separates staged data boundaries carefully. A local client i
 Tradeoff:
 
 The initial query may be a best-effort placeholder that needs live adjustment later, but keeping it isolated minimizes the cost of those changes.
+
+## 2026-04-28 - Add a separate one-shot `ingest-once` command with injected fetch and AI boundaries
+
+Decision:
+
+The first live-compatible pipeline path is a separate CLI command, `py -m upwork_triage ingest-once`, rather than an extension of `fake-demo`.
+
+The batch pipeline should accept injected fetch/AI boundaries and fail fast on unexpected per-job errors after marking the ingestion run as failed.
+
+Reason:
+
+`fake-demo` is valuable as a stable local portfolio/demo path that never needs real credentials. A separate live-compatible command lets the app bridge the real Upwork and AI boundaries without weakening that fake workflow or forcing network-aware behavior into the local demo path.
+
+Dependency injection keeps the live path unit-testable without real Upwork/OpenAI access, and fail-fast behavior avoids inventing a half-designed partial-recovery system before OAuth refresh and polling orchestration exist.
+
+Tradeoff:
+
+There are now two CLI paths to maintain. The live-compatible path is intentionally one-shot and conservative for now, so future recurring polling or retry behavior will need explicit design rather than being implied by this first batch runner.

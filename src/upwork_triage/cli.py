@@ -10,7 +10,7 @@ from typing import TextIO
 from upwork_triage.config import ConfigError, load_config
 from upwork_triage.db import connect_db
 from upwork_triage.queue_view import fetch_decision_shortlist, render_decision_shortlist
-from upwork_triage.run_pipeline import run_fake_pipeline
+from upwork_triage.run_pipeline import run_fake_pipeline, run_live_ingest_once
 
 __all__ = ["main"]
 
@@ -66,6 +66,8 @@ def main(
     try:
         if args.command == "fake-demo":
             return _run_fake_demo(stdout=out)
+        if args.command == "ingest-once":
+            return _run_ingest_once(stdout=out)
     except ConfigError as exc:
         err.write(f"Config error: {exc}\n")
         return 1
@@ -94,6 +96,10 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "fake-demo",
         help="Run the local fake pipeline demo and print the shortlist.",
     )
+    subparsers.add_parser(
+        "ingest-once",
+        help="Run one live-compatible ingest/evaluate batch and print the shortlist.",
+    )
     return parser
 
 
@@ -106,6 +112,23 @@ def _run_fake_demo(*, stdout: TextIO) -> int:
     try:
         _configure_demo_connection(conn)
         run_fake_pipeline(conn, _fake_raw_payload(), _fake_ai_output())
+        rows = fetch_decision_shortlist(conn)
+        print(render_decision_shortlist(rows), file=stdout)
+    finally:
+        conn.close()
+
+    return 0
+
+
+def _run_ingest_once(*, stdout: TextIO) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+
+    conn = connect_db(db_path)
+    try:
+        _configure_demo_connection(conn)
+        run_live_ingest_once(conn, config)
         rows = fetch_decision_shortlist(conn)
         print(render_decision_shortlist(rows), file=stdout)
     finally:

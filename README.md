@@ -42,8 +42,8 @@ Current development defaults are intentionally local-first:
 - `AUTOMAT_RUN_MODE=fake`
 - no real OpenAI or Upwork secrets are required for the fake/local test workflow
 - SQLite defaults to `data/automat.sqlite3`
-- `OPENAI_API_KEY` is only needed for future live AI calls, not for tests or `fake-demo`
-- `UPWORK_GRAPHQL_URL` defaults to a safe placeholder and should be set explicitly before future live fetching
+- `OPENAI_API_KEY` is only needed for live AI-backed paths such as `ingest-once`, not for tests or `fake-demo`
+- `UPWORK_GRAPHQL_URL` defaults to a safe placeholder and should be set explicitly before live fetching
 
 See `docs/current_task.md` for the active bounded task and `docs/design.md` for the broader architecture.
 
@@ -69,6 +69,32 @@ This demo uses a local fake WooCommerce/plugin/API fixture plus a fake validated
 
 The repository now also includes a real AI client wrapper boundary for future live evaluation work, but the local demo remains fake-mode only.
 The repository also includes an Upwork GraphQL client boundary for future live ingestion work, but OAuth, token refresh, and recurring polling are not implemented yet.
+
+## Live-compatible ingest once
+
+The repository now also includes a first live-compatible one-shot command:
+
+```powershell
+py -m upwork_triage ingest-once
+```
+
+This path is intended to bridge the real boundaries:
+
+- fetch raw job payloads through the Upwork GraphQL client
+- normalize/filter them through the existing staged pipeline
+- evaluate routed jobs through the AI client wrapper
+- persist staged rows in SQLite
+- print the rendered shortlist
+
+For actual live use, this path needs:
+
+- `UPWORK_ACCESS_TOKEN`
+- `UPWORK_GRAPHQL_URL`
+- `OPENAI_API_KEY`
+
+Unit tests do not use those live services. They monkeypatch fake fetch/AI boundaries instead, and `fake-demo` remains the no-credentials local path.
+
+OAuth authorization-code flow, token refresh, and recurring polling are still not implemented.
 
 ## Development
 
