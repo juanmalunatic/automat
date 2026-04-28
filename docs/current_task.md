@@ -139,6 +139,8 @@ Replay behavior should remain safe:
 - each rerun may create a fresh `ingestion_runs` row
 - identical versioned downstream rows may be reused/skipped instead of duplicated
 
+The batch path should use generic stage-version labels such as `normalizer_v1`, `filter_v1`, `prompt_v1`, `economics_v1`, and `triage_v1` rather than fixture-specific names.
+
 If the implementation makes a durable replay or fail-fast decision, record it in `docs/decisions.md`.
 
 ## Live-compatible wrapper behavior
@@ -182,6 +184,8 @@ This command should:
 `fake-demo` must remain fake/local only and should not silently fall back to live behavior.
 
 `ingest-once` must not silently fall back to fake data when credentials or client/provider setup are missing.
+
+`ingest-once` should use the normal SQLite connection behavior from `connect_db()` rather than demo-only durability tweaks such as forcing `PRAGMA journal_mode = MEMORY`.
 
 ## Test requirements
 

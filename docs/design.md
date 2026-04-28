@@ -60,6 +60,8 @@ The live-fetch boundary should return plain raw job-like dict payloads through a
 
 The first live-compatible batch runner should keep that staged boundary intact instead of collapsing fetch, normalization, AI, economics, and triage into one opaque helper. It may orchestrate the stages in one command, but it should still persist each stage separately and fail fast on unexpected per-job errors after marking the ingestion run as failed.
 
+The stage-version labels in this runner should stay generic to the stage, such as `normalizer_v1`, `filter_v1`, `prompt_v1`, `economics_v1`, and `triage_v1`, rather than being named after the original local-fixture source.
+
 ## 4. Main data stages
 
 ### Stable job identity
@@ -482,6 +484,8 @@ First live-compatible one-shot command target:
 This command is the first live-compatible batch path. It should load config, open SQLite, fetch raw job payload dicts through the Upwork client boundary, evaluate routed jobs through the AI client boundary, persist the staged outputs, and print the rendered shortlist.
 
 `ingest-once` should not silently fall back to fake data. If the Upwork or OpenAI live boundaries are not configured, it should fail clearly.
+
+`ingest-once` should use the normal SQLite connection behavior from `connect_db()`. Demo-only SQLite tweaks such as forcing `PRAGMA journal_mode = MEMORY` may remain limited to `fake-demo`.
 
 Even in this live-compatible path, OAuth authorization-code flow, token refresh, and recurring polling remain deferred. The command is a one-shot ingest/evaluate run, not a background daemon.
 

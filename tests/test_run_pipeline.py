@@ -49,6 +49,32 @@ def test_strong_fixture_flows_through_all_staged_tables_and_shortlist(
     assert _table_count(conn, "economics_results") == 1
     assert _table_count(conn, "triage_results") == 1
 
+    version_row = conn.execute(
+        """
+        SELECT
+            jsn.normalizer_version,
+            fr.filter_version,
+            ai.model,
+            ai.prompt_version,
+            er.economics_version,
+            tr.triage_version
+        FROM job_snapshots_normalized AS jsn
+        JOIN filter_results AS fr ON fr.job_snapshot_id = jsn.id
+        JOIN ai_evaluations AS ai ON ai.job_snapshot_id = jsn.id
+        JOIN economics_results AS er ON er.job_snapshot_id = jsn.id
+        JOIN triage_results AS tr ON tr.job_snapshot_id = jsn.id
+        WHERE jsn.job_key = ?
+        """,
+        ("upwork:987654321",),
+    ).fetchone()
+    assert version_row is not None
+    assert version_row["normalizer_version"] == "normalizer_v1"
+    assert version_row["filter_version"] == "filter_v1"
+    assert version_row["model"] == "fake-local-model"
+    assert version_row["prompt_version"] == "prompt_v1"
+    assert version_row["economics_version"] == "economics_v1"
+    assert version_row["triage_version"] == "triage_v1"
+
 
 def test_ai_validation_failure_stops_before_ai_economics_and_triage_inserts(
     conn: sqlite3.Connection,

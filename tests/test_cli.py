@@ -92,6 +92,7 @@ def test_main_ingest_once_returns_zero_and_writes_rendered_shortlist(
         "evaluate_with_openai",
         lambda config, payload: make_ai_evaluation(),
     )
+    install_in_memory_cli_connection(monkeypatch, db_path)
 
     stdout = StringIO()
     stderr = StringIO()
@@ -108,6 +109,37 @@ def test_main_ingest_once_returns_zero_and_writes_rendered_shortlist(
     assert "Reason:" in output
     assert "Trap:" in output
     assert "Angle:" in output
+
+
+def test_ingest_once_does_not_use_fake_demo_sqlite_tweak(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "live" / "automat.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    monkeypatch.setenv("AUTOMAT_RUN_MODE", "live")
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-token")
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "fetch_upwork_jobs",
+        lambda config, *, transport=None: [make_strong_raw_payload()],
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "evaluate_with_openai",
+        lambda config, payload: make_ai_evaluation(),
+    )
+    install_in_memory_cli_connection(monkeypatch, db_path)
+
+    def fail_if_called(conn: sqlite3.Connection) -> None:
+        raise AssertionError("fake-demo-only SQLite tweak should not run for ingest-once")
+
+    monkeypatch.setattr("upwork_triage.cli._configure_fake_demo_connection", fail_if_called)
+
+    exit_code = main(["ingest-once"], stdout=StringIO(), stderr=StringIO())
+
+    assert exit_code == 0
 
 
 def test_ingest_once_uses_configured_db_path_and_creates_parent_directory(
@@ -130,6 +162,7 @@ def test_ingest_once_uses_configured_db_path_and_creates_parent_directory(
         "evaluate_with_openai",
         lambda config, payload: make_ai_evaluation(),
     )
+    recorded_paths = install_in_memory_cli_connection(monkeypatch, db_path)
 
     assert not db_dir.exists()
 
@@ -137,7 +170,7 @@ def test_ingest_once_uses_configured_db_path_and_creates_parent_directory(
 
     assert exit_code == 0
     assert db_dir.exists()
-    assert db_path.exists()
+    assert recorded_paths == [db_path]
 
 
 def test_running_fake_demo_twice_reuses_replay_safe_stage_rows(
@@ -183,22 +216,28 @@ def test_running_ingest_once_twice_reuses_replay_safe_stage_rows(
         "evaluate_with_openai",
         lambda config, payload: make_ai_evaluation(),
     )
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    install_in_memory_cli_connection(
+        monkeypatch,
+        db_path,
+        shared_connection=shared_conn,
+    )
 
-    assert main(["ingest-once"], stdout=StringIO(), stderr=StringIO()) == 0
-    assert main(["ingest-once"], stdout=StringIO(), stderr=StringIO()) == 0
-
-    conn = connect_db(db_path)
     try:
-        assert _table_count(conn, "ingestion_runs") == 2
-        assert _table_count(conn, "jobs") == 1
-        assert _table_count(conn, "raw_job_snapshots") == 1
-        assert _table_count(conn, "job_snapshots_normalized") == 1
-        assert _table_count(conn, "filter_results") == 1
-        assert _table_count(conn, "ai_evaluations") == 1
-        assert _table_count(conn, "economics_results") == 1
-        assert _table_count(conn, "triage_results") == 1
+        assert main(["ingest-once"], stdout=StringIO(), stderr=StringIO()) == 0
+        assert main(["ingest-once"], stdout=StringIO(), stderr=StringIO()) == 0
+
+        assert _table_count(shared_conn, "ingestion_runs") == 2
+        assert _table_count(shared_conn, "jobs") == 1
+        assert _table_count(shared_conn, "raw_job_snapshots") == 1
+        assert _table_count(shared_conn, "job_snapshots_normalized") == 1
+        assert _table_count(shared_conn, "filter_results") == 1
+        assert _table_count(shared_conn, "ai_evaluations") == 1
+        assert _table_count(shared_conn, "economics_results") == 1
+        assert _table_count(shared_conn, "triage_results") == 1
     finally:
-        conn.close()
+        shared_conn.close()
 
 
 def test_main_without_command_returns_non_zero_and_prints_usage() -> None:
@@ -229,6 +268,7 @@ def test_ingest_once_missing_credentials_returns_non_zero_and_helpful_error(
     monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
     monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    install_in_memory_cli_connection(monkeypatch, db_path)
 
     stdout = StringIO()
     stderr = StringIO()
@@ -249,6 +289,42 @@ def _table_count(conn: sqlite3.Connection, table_name: str) -> int:
     row = conn.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()
     assert row is not None
     return int(row[0])
+
+
+class ConnectionProxy:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def __enter__(self) -> sqlite3.Connection:
+        return self._conn.__enter__()
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None:
+        return self._conn.__exit__(exc_type, exc, tb)
+
+    def close(self) -> None:
+        # Keep the shared in-memory test DB alive across CLI calls.
+        return None
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._conn, name)
+
+
+def install_in_memory_cli_connection(
+    monkeypatch: pytest.MonkeyPatch,
+    expected_path: Path,
+    *,
+    shared_connection: sqlite3.Connection | None = None,
+) -> list[Path]:
+    conn = shared_connection or sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    recorded_paths: list[Path] = []
+
+    def fake_connect_db(path: str | Path) -> ConnectionProxy:
+        recorded_paths.append(Path(path))
+        return ConnectionProxy(conn)
+
+    monkeypatch.setattr("upwork_triage.cli.connect_db", fake_connect_db)
+    return recorded_paths
 
 
 def make_ai_evaluation() -> AiEvaluation:

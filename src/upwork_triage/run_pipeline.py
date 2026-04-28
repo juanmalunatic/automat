@@ -45,11 +45,11 @@ SOURCE_QUERY = "local_fixture"
 LIVE_SOURCE_NAME = "upwork_graphql"
 MODEL_NAME = "fake-local-model"
 DEFAULT_BATCH_MODEL_NAME = "injected-ai-model"
-NORMALIZER_VERSION = "local_fixture_normalizer_v1"
-FILTER_VERSION = "local_fixture_filter_v1"
-PROMPT_VERSION = "local_fixture_prompt_v1"
-ECONOMICS_VERSION = "local_fixture_economics_v1"
-TRIAGE_VERSION = "local_fixture_triage_v1"
+NORMALIZER_VERSION = "normalizer_v1"
+FILTER_VERSION = "filter_v1"
+PROMPT_VERSION = "prompt_v1"
+ECONOMICS_VERSION = "economics_v1"
+TRIAGE_VERSION = "triage_v1"
 
 AiEvaluator = Callable[[AiPayloadInput], AiEvaluation]
 

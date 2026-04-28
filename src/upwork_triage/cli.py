@@ -110,7 +110,7 @@ def _run_fake_demo(*, stdout: TextIO) -> int:
 
     conn = connect_db(db_path)
     try:
-        _configure_demo_connection(conn)
+        _configure_fake_demo_connection(conn)
         run_fake_pipeline(conn, _fake_raw_payload(), _fake_ai_output())
         rows = fetch_decision_shortlist(conn)
         print(render_decision_shortlist(rows), file=stdout)
@@ -127,7 +127,6 @@ def _run_ingest_once(*, stdout: TextIO) -> int:
 
     conn = connect_db(db_path)
     try:
-        _configure_demo_connection(conn)
         run_live_ingest_once(conn, config)
         rows = fetch_decision_shortlist(conn)
         print(render_decision_shortlist(rows), file=stdout)
@@ -144,7 +143,7 @@ def _ensure_parent_dir(path: str | Path) -> None:
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _configure_demo_connection(conn: sqlite3.Connection) -> None:
+def _configure_fake_demo_connection(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode = MEMORY")
 
 

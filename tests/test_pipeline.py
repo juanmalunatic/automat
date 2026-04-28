@@ -205,6 +205,18 @@ def test_run_live_ingest_once_uses_fetch_boundary_and_injected_ai_provider(
     assert provider.calls[0]["model"] == "gpt-test-model"
     assert _table_count(conn, "ai_evaluations") == 1
 
+    ai_row = conn.execute(
+        """
+        SELECT model, prompt_version
+        FROM ai_evaluations
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert ai_row is not None
+    assert ai_row["model"] == "gpt-test-model"
+    assert ai_row["prompt_version"] == "prompt_v1"
+
 
 def test_run_live_ingest_once_missing_upwork_token_raises_clearly(
     conn: sqlite3.Connection,

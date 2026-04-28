@@ -83,6 +83,7 @@ Should verify:
 - `main(["ingest-once"])` returns `0` when fetch and AI boundaries are monkeypatched with local fakes
 - `ingest-once` writes rendered shortlist output to stdout
 - `ingest-once` uses the configured DB path and creates parent directories when needed
+- `ingest-once` uses the normal SQLite connection behavior and does not apply fake-demo-only connection tweaks
 - running `ingest-once` twice against the same temp DB keeps versioned stage rows replay-safe while still creating a fresh `ingestion_runs` row
 - missing live credentials or client/provider failures make `ingest-once` return a non-zero exit code with a helpful error
 - `main([])` or an unknown command returns a non-zero exit code and prints usage or a helpful error
