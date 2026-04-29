@@ -149,19 +149,9 @@ query marketplaceJobPostingsSearch(
         description
         ciphertext
         createdDateTime
-        amount {
-          rawValue
-          currency
-          displayValue
-        }
         client {
           totalHires
           totalPostedJobs
-          totalSpent {
-            rawValue
-            currency
-            displayValue
-          }
           verificationStatus
           location {
             country
@@ -176,10 +166,6 @@ query marketplaceJobPostingsSearch(
           prettyName
         }
       }
-    }
-    pageInfo {
-      hasNextPage
-      endCursor
     }
   }
 }

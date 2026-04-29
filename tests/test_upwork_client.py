@@ -55,6 +55,12 @@ def test_fetch_upwork_jobs_sends_bearer_header_query_and_variables() -> None:
     assert "jobType" not in str(call["payload"]["query"])
     assert "jobUrl" not in str(call["payload"]["query"])
     assert "hourlyBudget" not in str(call["payload"]["query"])
+    assert "rawValue" not in str(call["payload"]["query"])
+    assert "currency" not in str(call["payload"]["query"])
+    assert "displayValue" not in str(call["payload"]["query"])
+    assert "pageInfo" not in str(call["payload"]["query"])
+    assert "hasNextPage" not in str(call["payload"]["query"])
+    assert "endCursor" not in str(call["payload"]["query"])
     assert call["payload"]["variables"] == {
         "marketPlaceJobFilter": {
             "searchExpression_eq": "WooCommerce API",
@@ -81,6 +87,12 @@ def test_build_job_search_query_uses_marketplace_job_postings_search_shape() -> 
     assert "jobType" not in query
     assert "jobUrl" not in query
     assert "hourlyBudget" not in query
+    assert "rawValue" not in query
+    assert "currency" not in query
+    assert "displayValue" not in query
+    assert "pageInfo" not in query
+    assert "hasNextPage" not in query
+    assert "endCursor" not in query
     assert variables == {
         "marketPlaceJobFilter": {
             "searchExpression_eq": "WordPress PHP",
