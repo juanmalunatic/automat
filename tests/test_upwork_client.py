@@ -184,7 +184,7 @@ def test_probe_upwork_fields_supports_public_marketplace_source() -> None:
 
     payloads = probe_upwork_fields(
         config,
-        ("ciphertext", "createdDateTime", "type", "engagement"),
+        ("ciphertext", "createdDateTime", "amountMoney", "clientBasic"),
         source="public",
         transport=transport,
     )
@@ -203,8 +203,18 @@ def test_probe_upwork_fields_supports_public_marketplace_source() -> None:
     assert "        title\n" in str(call["payload"]["query"])
     assert "        ciphertext\n" in str(call["payload"]["query"])
     assert "        createdDateTime\n" in str(call["payload"]["query"])
-    assert "        type\n" in str(call["payload"]["query"])
-    assert "        engagement\n" in str(call["payload"]["query"])
+    assert "        amount {\n" in str(call["payload"]["query"])
+    assert "          rawValue\n" in str(call["payload"]["query"])
+    assert "          currency\n" in str(call["payload"]["query"])
+    assert "          displayValue\n" in str(call["payload"]["query"])
+    assert "        client {\n" in str(call["payload"]["query"])
+    assert "          country\n" in str(call["payload"]["query"])
+    assert "          paymentVerificationStatus\n" in str(call["payload"]["query"])
+    assert "          totalSpent\n" in str(call["payload"]["query"])
+    assert "          totalHires\n" in str(call["payload"]["query"])
+    assert "          totalPostedJobs\n" in str(call["payload"]["query"])
+    assert "          totalFeedback\n" in str(call["payload"]["query"])
+    assert "          totalReviews\n" in str(call["payload"]["query"])
     assert call["payload"]["variables"] == {
         "marketPlaceJobFilter": {
             "searchExpression_eq": "WooCommerce API",
@@ -216,7 +226,7 @@ def test_build_probe_job_search_query_supports_public_marketplace_shape() -> Non
     query, variables = build_probe_job_search_query(
         ("WordPress", "PHP"),
         10,
-        ("ciphertext", "type", "engagement"),
+        ("ciphertext", "type", "engagement", "amountMoney", "clientBasic"),
         source="public",
     )
 
@@ -233,6 +243,18 @@ def test_build_probe_job_search_query_supports_public_marketplace_shape() -> Non
     assert "        ciphertext\n" in query
     assert "        type\n" in query
     assert "        engagement\n" in query
+    assert "        amount {\n" in query
+    assert "          rawValue\n" in query
+    assert "          currency\n" in query
+    assert "          displayValue\n" in query
+    assert "        client {\n" in query
+    assert "          country\n" in query
+    assert "          paymentVerificationStatus\n" in query
+    assert "          totalSpent\n" in query
+    assert "          totalHires\n" in query
+    assert "          totalPostedJobs\n" in query
+    assert "          totalFeedback\n" in query
+    assert "          totalReviews\n" in query
     assert variables == {
         "marketPlaceJobFilter": {
             "searchExpression_eq": "WordPress PHP",
@@ -253,6 +275,25 @@ def test_build_probe_job_search_query_rejects_public_nested_only_fields() -> Non
             ("amount", "client"),
             source="public",
         )
+
+
+def test_build_probe_job_search_query_accepts_explicit_public_nested_tokens() -> None:
+    query, variables = build_probe_job_search_query(
+        ("WordPress",),
+        10,
+        ("amountMoney", "clientBasic"),
+        source="public",
+    )
+
+    assert "        id\n" in query
+    assert "        title\n" in query
+    assert "        amount {\n" in query
+    assert "        client {\n" in query
+    assert variables == {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": "WordPress",
+        },
+    }
 
 
 def test_extract_job_payloads_handles_data_jobs_edges_node_shape() -> None:

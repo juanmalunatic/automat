@@ -108,7 +108,7 @@ py -m upwork_triage probe-upwork-fields --fields "id,title,ciphertext,createdDat
 You can also probe the public search surface separately:
 
 ```powershell
-py -m upwork_triage probe-upwork-fields --source public --fields "ciphertext,createdDateTime,type,engagement,amount,contractorTier,jobStatus,client"
+py -m upwork_triage probe-upwork-fields --source public --fields "ciphertext,createdDateTime,type,engagement,contractorTier,jobStatus,amountMoney,clientBasic"
 ```
 
 This command:
@@ -120,6 +120,7 @@ This command:
 - prints observed keys plus the first returned node or clear GraphQL validation errors
 
 It is a local schema/debug helper only. Use it to test candidate field names before patching the production raw-inspection query.
+For the public source specifically, prefer narrow search terms such as `WordPress`; broad combined terms can legitimately return zero jobs even when the query shape is valid.
 
 ## Raw artifact dry run
 

@@ -287,9 +287,11 @@ Should verify:
 - `fetch_upwork_jobs()` sends a GraphQL query string plus variables payload
 - query construction uses `marketplaceJobPostingsSearch` with compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables derived from `search_terms`
 - probe query construction uses `marketplaceJobPostingsSearch` with the same compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables
-- public probe query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter` plus the same `searchExpression_eq`, `USER_JOBS_SEARCH`, and `RECENCY` variables
+- public probe query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter!`, `jobs { ... }`, and only `marketPlaceJobFilter.searchExpression_eq`
+- explicit public nested probe tokens such as `amountMoney` and `clientBasic` render the expected nested selections
 - public probe extraction supports `data.publicMarketplaceJobPostingsSearch.jobs`
 - probe requests auto-include `id` and `title` and reject unsupported field names clearly
+- plain public `amount` / `client` probe tokens remain rejected locally until explicitly modeled
 - `extract_job_payloads()` supports `data.jobs.edges[].node`
 - `extract_job_payloads()` supports `data.search.edges[].node`
 - `extract_job_payloads()` supports `data.jobs` as a list

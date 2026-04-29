@@ -182,7 +182,9 @@ MARKETPLACE_PROBE_FIELD_ALLOWLIST = frozenset(
 )
 PUBLIC_PROBE_FIELD_ALLOWLIST = frozenset(
     {
+        "amountMoney",
         "ciphertext",
+        "clientBasic",
         "contractorTier",
         "createdDateTime",
         "description",
@@ -194,6 +196,27 @@ PUBLIC_PROBE_FIELD_ALLOWLIST = frozenset(
         "type",
     }
 )
+
+PUBLIC_PROBE_FIELD_SNIPPETS = {
+    "amountMoney": (
+        "amount {\n"
+        "          rawValue\n"
+        "          currency\n"
+        "          displayValue\n"
+        "        }"
+    ),
+    "clientBasic": (
+        "client {\n"
+        "          country\n"
+        "          paymentVerificationStatus\n"
+        "          totalSpent\n"
+        "          totalHires\n"
+        "          totalPostedJobs\n"
+        "          totalFeedback\n"
+        "          totalReviews\n"
+        "        }"
+    ),
+}
 
 
 def build_job_search_query(
@@ -265,7 +288,7 @@ def build_probe_job_search_query(
 ) -> tuple[str, dict[str, object]]:
     _ = limit
     selected_fields = _normalize_probe_fields(fields, source=source)
-    field_lines = "\n".join(f"        {field_name}" for field_name in selected_fields)
+    field_lines = _render_probe_field_lines(selected_fields, source=source)
     query_text = " ".join(term.strip() for term in search_terms if term.strip())
     if source == "marketplace":
         query = f"""
@@ -510,5 +533,21 @@ def _normalize_probe_fields(fields: tuple[str, ...], *, source: str) -> tuple[st
         ordered_fields.append(field_name)
         seen.add(field_name)
 
-    variables = tuple(ordered_fields)
-    return variables
+    normalized_fields = tuple(ordered_fields)
+    return normalized_fields
+
+
+def _render_probe_field_lines(
+    selected_fields: tuple[str, ...],
+    *,
+    source: str,
+) -> str:
+    if source == "public":
+        rendered_fields = [
+            PUBLIC_PROBE_FIELD_SNIPPETS.get(field_name, field_name)
+            for field_name in selected_fields
+        ]
+    else:
+        rendered_fields = list(selected_fields)
+
+    return "\n".join(f"        {field_value}" for field_value in rendered_fields)
