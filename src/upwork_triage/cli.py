@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from functools import partial
 from pathlib import Path
@@ -110,6 +111,7 @@ def main(
         if args.command == "preview-upwork":
             return _run_preview_upwork(
                 output_path=args.output,
+                limit=args.limit,
                 sample_limit=args.sample_limit,
                 json_output=args.json_output,
                 show_field_status=args.show_field_status,
@@ -242,6 +244,11 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "--output",
         default=str(DEFAULT_PREVIEW_UPWORK_ARTIFACT_PATH),
         help="Raw hydrated inspection artifact path.",
+    )
+    preview_parser.add_argument(
+        "--limit",
+        type=_positive_int_arg,
+        help="Override the effective Upwork poll limit for this preview run only.",
     )
     preview_parser.add_argument(
         "--sample-limit",
@@ -438,14 +445,16 @@ def _run_dry_run_raw_artifact(
 def _run_preview_upwork(
     *,
     output_path: str,
+    limit: int | None,
     sample_limit: int,
     json_output: str | None,
     show_field_status: bool,
     stdout: TextIO,
 ) -> int:
     config = load_config()
+    effective_config = replace(config, poll_limit=limit) if limit is not None else config
     inspection_summary = inspect_upwork_raw(
-        config,
+        effective_config,
         artifact_path=output_path,
         sample_limit=sample_limit,
         hydrate_exact=True,
@@ -490,6 +499,16 @@ def _run_probe_upwork_fields(
     print("First node/job:", file=stdout)
     print(first_job_json, file=stdout)
     return 0
+
+
+def _positive_int_arg(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def _run_action_command(

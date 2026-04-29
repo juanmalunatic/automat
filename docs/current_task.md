@@ -2,72 +2,70 @@
 
 ## Task name
 
-Add a one-command local MVP preview workflow.
+Improve local preview usability with URLs and a per-run limit flag.
 
 ## Goal
 
-Add a thin CLI wrapper that runs the bounded exact-hydrated Upwork inspection step and then the existing no-AI dry-run diagnostics step, so the local MVP preview can be exercised with one command instead of two.
+Make the local no-AI preview flow easier to use by:
 
-This task is additive only. It changes CLI workflow orchestration and user-facing docs for that workflow. It must not change extraction, normalization mappings, filters, scoring, ingest wiring, DB schema, AI, economics, queue behavior, or live API query shapes.
+1. showing useful Upwork URLs in inspection and dry-run sample output when a URL can be derived safely, and
+2. adding a `--limit` override to `preview-upwork` so users do not have to edit `UPWORK_POLL_LIMIT` just to bound one preview run.
+
+This task is additive only. It changes CLI/preview usability and summary rendering. It must not change extraction query shapes, exact hydration behavior, normalization mappings, filters, scoring, ingest wiring, DB schema, AI, economics, queue behavior, or live API behavior.
 
 ## Files to modify
 
 Expected files:
 
 - `src/upwork_triage/cli.py`
+- `src/upwork_triage/inspect_upwork.py`
+- `src/upwork_triage/dry_run.py`
 - `tests/test_cli.py`
+- `tests/test_inspect_upwork.py`
+- `tests/test_dry_run.py`
 - `docs/current_task.md`
 - `docs/testing.md`
 - `README.md` only if a tiny command example is useful
 
 ## Required behavior
 
-1. Add a new CLI command such as `preview-upwork`.
+1. `render_raw_inspection_summary()` should show a real URL when one is already visible in `source_url`, `url`, or `jobUrl`.
 
-2. The command should:
-   - load config
-   - run `inspect_upwork_raw(..., hydrate_exact=True, artifact_path=...)`
-   - load the written raw artifact through `load_raw_inspection_artifact(...)`
-   - run `dry_run_raw_jobs(...)`
-   - print the inspection summary plus the dry-run summary
-   - optionally write the dry-run JSON summary when `--json-output` is supplied
+2. If no explicit URL is present but `ciphertext` is visible in `~...` form, the inspection summary may derive:
+   - `https://www.upwork.com/jobs/<ciphertext>`
 
-3. The preview command should default to a stable local raw artifact path:
-   - `data/debug/upwork_raw_hydrated_latest.json`
+3. `render_raw_artifact_dry_run_summary()` should include each sample result's `source_url` when available.
 
-4. Support at least:
+4. `preview-upwork` should support:
+   - `--limit`
    - `--output`
    - `--sample-limit`
    - `--show-field-status`
    - `--json-output`
 
-5. Exact hydration should be enabled by default for this preview command.
+5. `--limit` should override the effective `poll_limit` for the preview command only and must validate as a positive integer.
 
-6. The command must not:
-   - call OpenAI
-   - write to SQLite
-   - call `run_live_ingest_once`
-   - alter `inspect-upwork-raw` or `dry-run-raw-artifact` behavior
+6. Omitting `--limit` should preserve existing config/env behavior.
 
 ## Test requirements
 
 Update tests so they verify:
 
-- the new CLI command exists and forwards the raw artifact output path to `inspect_upwork_raw`
-- the preview command forces `hydrate_exact=True`
-- the preview command reloads the written artifact through `load_raw_inspection_artifact(...)`
-- the preview command runs `dry_run_raw_jobs(...)` on the loaded jobs
-- the preview command prints the dry-run summary, including the `MVP readiness` section
-- `--sample-limit` and `--show-field-status` are forwarded to the relevant inspection/rendering calls
-- `--json-output` writes a dry-run JSON summary when supplied
-- the preview command does not call DB, ingest, queue, action, or OpenAI boundaries
+- `preview-upwork --limit 30` passes an effective config with `poll_limit == 30` into `inspect_upwork_raw(...)`
+- `preview-upwork` without `--limit` preserves existing poll-limit config
+- `preview-upwork --limit 0` or a negative value fails clearly
+- inspection rendering shows URLs from `source_url`, `url`, or `jobUrl` when present
+- inspection rendering can derive a URL from `ciphertext` when explicit URL fields are absent
+- dry-run sample rendering includes `source_url` when available
+- the preview command still stays no-AI and no-DB-write
 - existing inspect/dry-run/CLI tests remain fake-data-only and secret-free
 
 ## Out of scope
 
 Do not implement:
 
-- extraction changes
+- extraction query changes
+- exact hydration behavior changes
 - normalization mapping changes
 - filter / scoring changes
 - economics changes
@@ -86,7 +84,8 @@ Do not implement:
 
 The task is complete when:
 
-- `preview-upwork` runs exact-hydrated raw inspection plus dry-run diagnostics in one local CLI flow
+- preview sample output shows useful URLs whenever they can be derived safely
+- `preview-upwork --limit` bounds one preview run without changing persistent config
 - the command stays no-AI and no-DB-write
 - committed tests stay network-free
 - the full test suite still passes

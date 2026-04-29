@@ -671,6 +671,127 @@ def test_main_preview_upwork_runs_inspection_then_dry_run_and_prints_summaries(
     assert "MVP readiness:" in output
 
 
+def test_main_preview_upwork_limit_overrides_effective_poll_limit(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_hydrated_latest.json"
+    recorded_poll_limits: list[int] = []
+
+    monkeypatch.setattr(
+        "upwork_triage.cli.load_config",
+        lambda: load_config({"UPWORK_POLL_LIMIT": "99"}),
+    )
+
+    def fake_inspect(
+        config: object,
+        *,
+        transport: object | None = None,
+        artifact_path: object | None = None,
+        sample_limit: int = 3,
+        marketplace_only: bool = False,
+        hydrate_exact: bool = False,
+    ) -> object:
+        recorded_poll_limits.append(config.poll_limit)
+        from upwork_triage.inspect_upwork import RawInspectionSummary
+
+        return RawInspectionSummary(
+            fetched_count=0,
+            observed_keys=(),
+            first_job_keys=(),
+            sample_jobs=(),
+            artifact_path=str(artifact_path),
+            exact_hydration_success_count=0,
+            exact_hydration_failed_count=0,
+            exact_hydration_skipped_count=0,
+        )
+
+    monkeypatch.setattr("upwork_triage.cli.inspect_upwork_raw", fake_inspect)
+    monkeypatch.setattr("upwork_triage.cli.load_raw_inspection_artifact", lambda path: [])
+    monkeypatch.setattr("upwork_triage.cli.dry_run_raw_jobs", lambda raw_jobs, *, artifact_path=None: object())
+    monkeypatch.setattr("upwork_triage.cli.render_raw_inspection_summary", lambda summary: "Inspection summary")
+    monkeypatch.setattr(
+        "upwork_triage.cli.render_raw_artifact_dry_run_summary",
+        lambda summary, *, sample_limit=10, show_field_status=False: "MVP readiness:\n  - automated core ready: 0/0",
+    )
+
+    exit_code = main(
+        ["preview-upwork", "--output", str(artifact_path), "--limit", "30"],
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    assert exit_code == 0
+    assert recorded_poll_limits == [30]
+
+
+def test_main_preview_upwork_without_limit_preserves_existing_poll_limit(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_hydrated_latest.json"
+    recorded_poll_limits: list[int] = []
+
+    monkeypatch.setattr(
+        "upwork_triage.cli.load_config",
+        lambda: load_config({"UPWORK_POLL_LIMIT": "7"}),
+    )
+
+    def fake_inspect(
+        config: object,
+        *,
+        transport: object | None = None,
+        artifact_path: object | None = None,
+        sample_limit: int = 3,
+        marketplace_only: bool = False,
+        hydrate_exact: bool = False,
+    ) -> object:
+        recorded_poll_limits.append(config.poll_limit)
+        from upwork_triage.inspect_upwork import RawInspectionSummary
+
+        return RawInspectionSummary(
+            fetched_count=0,
+            observed_keys=(),
+            first_job_keys=(),
+            sample_jobs=(),
+            artifact_path=str(artifact_path),
+            exact_hydration_success_count=0,
+            exact_hydration_failed_count=0,
+            exact_hydration_skipped_count=0,
+        )
+
+    monkeypatch.setattr("upwork_triage.cli.inspect_upwork_raw", fake_inspect)
+    monkeypatch.setattr("upwork_triage.cli.load_raw_inspection_artifact", lambda path: [])
+    monkeypatch.setattr("upwork_triage.cli.dry_run_raw_jobs", lambda raw_jobs, *, artifact_path=None: object())
+    monkeypatch.setattr("upwork_triage.cli.render_raw_inspection_summary", lambda summary: "Inspection summary")
+    monkeypatch.setattr(
+        "upwork_triage.cli.render_raw_artifact_dry_run_summary",
+        lambda summary, *, sample_limit=10, show_field_status=False: "MVP readiness:\n  - automated core ready: 0/0",
+    )
+
+    exit_code = main(
+        ["preview-upwork", "--output", str(artifact_path)],
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    assert exit_code == 0
+    assert recorded_poll_limits == [7]
+
+
+@pytest.mark.parametrize("bad_limit", ["0", "-5"])
+def test_main_preview_upwork_invalid_limit_returns_non_zero_and_helpful_error(
+    bad_limit: str,
+) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["preview-upwork", "--limit", bad_limit], stdout=stdout, stderr=stderr)
+
+    assert exit_code != 0
+    assert "positive integer" in stderr.getvalue()
+
+
 def test_main_preview_upwork_uses_default_output_path_and_writes_no_json_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -407,6 +407,46 @@ def test_render_raw_inspection_summary_includes_count_keys_and_sample_values() -
     assert "Artifact: data/debug/upwork_raw_latest.json" in rendered
 
 
+def test_render_raw_inspection_summary_uses_explicit_job_url_when_present() -> None:
+    summary = RawInspectionSummary(
+        fetched_count=1,
+        observed_keys=("id", "jobUrl", "title"),
+        first_job_keys=("id", "jobUrl", "title"),
+        sample_jobs=(
+            {
+                "id": "job-3",
+                "title": "Third job",
+                "jobUrl": "https://example.test/jobs/3",
+            },
+        ),
+        artifact_path=None,
+    )
+
+    rendered = render_raw_inspection_summary(summary)
+
+    assert "url=https://example.test/jobs/3" in rendered
+
+
+def test_render_raw_inspection_summary_derives_url_from_ciphertext_when_needed() -> None:
+    summary = RawInspectionSummary(
+        fetched_count=1,
+        observed_keys=("ciphertext", "id", "title"),
+        first_job_keys=("ciphertext", "id", "title"),
+        sample_jobs=(
+            {
+                "id": "2049488018911397244",
+                "title": "Ciphertext job",
+                "ciphertext": "~022049488018911397244",
+            },
+        ),
+        artifact_path=None,
+    )
+
+    rendered = render_raw_inspection_summary(summary)
+
+    assert "url=https://www.upwork.com/jobs/~022049488018911397244" in rendered
+
+
 def sample_jobs() -> list[dict[str, object]]:
     return [
         {

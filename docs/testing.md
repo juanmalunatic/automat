@@ -96,6 +96,8 @@ Should verify:
 - helper CLI error output must not leak fake client-secret values
 - `main(["inspect-upwork-raw", "--no-write"])` returns `0` with fake fetching
 - `inspect-upwork-raw` prints fetched count and observed keys
+- inspection summary sample lines should show a visible URL from `source_url`, `url`, or `jobUrl` when present
+- inspection summary sample lines may derive an Upwork URL from visible `ciphertext` when explicit URL fields are absent
 - `inspect-upwork-raw` does not require `OPENAI_API_KEY`
 - `inspect-upwork-raw` missing `UPWORK_ACCESS_TOKEN` returns a non-zero exit code with a helpful error
 - `inspect-upwork-raw --output PATH` writes the requested artifact
@@ -104,6 +106,9 @@ Should verify:
 - inspect CLI error output must not leak fake token values
 - `main(["preview-upwork"])` returns `0` with monkeypatched local inspect/dry-run boundaries
 - `preview-upwork` forwards the configured raw artifact path into `inspect_upwork_raw(...)`
+- `preview-upwork --limit N` overrides the effective `poll_limit` for that preview run only
+- `preview-upwork` without `--limit` preserves existing config/env poll-limit behavior
+- `preview-upwork --limit 0` or negative values fail clearly
 - `preview-upwork` forces `hydrate_exact=True`
 - `preview-upwork` reloads the written raw artifact through `load_raw_inspection_artifact(...)`
 - `preview-upwork` runs `dry_run_raw_jobs(...)` on the loaded jobs
@@ -376,6 +381,7 @@ Should verify:
 - sanitized hydrated exact-marketplace raw payload fixtures can improve dry-run coverage for description, contract type, pay, payment verification, and activity counters without any live fetch
 - dry-run summaries should expose deterministic `MVP readiness` counts derived from the explicit automated-core fields only
 - rendered dry-run output should include automated-core-ready counts, missing-core-field counts, and the stable manual final-check reminder list
+- rendered dry-run sample lines should include `source_url` when available
 - dry-run JSON output should include the same readiness/manual-check diagnostics
 - `j_qualifications` should appear in field coverage when visible, and `a_hires` / `a_invites_unanswered` may appear there when normalized values exist
 - parse-failure counts are recorded

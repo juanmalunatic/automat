@@ -314,6 +314,7 @@ def test_render_raw_artifact_dry_run_summary_includes_counts_and_sample_lines() 
     assert "c_hist_avg_hourly_rate: 1" in rendered
     assert "Sample jobs:" in rendered
     assert "WooCommerce order sync plugin bug fix | upwork:123456789 | AI_EVAL" in rendered
+    assert "url https://www.upwork.com/jobs/~123456789" in rendered
     assert "positive_flags" not in rendered
 
 

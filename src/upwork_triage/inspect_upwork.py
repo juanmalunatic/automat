@@ -281,13 +281,18 @@ def _sample_value(job: Mapping[str, object], key: str) -> str:
 
 
 def _sample_url(job: Mapping[str, object]) -> str:
-    for key in ("source_url", "url"):
+    for key in ("source_url", "url", "jobUrl"):
         value = job.get(key)
         if value is None:
             continue
         text = str(value).strip()
         if text:
             return text
+    ciphertext = job.get("ciphertext")
+    if isinstance(ciphertext, str):
+        trimmed = ciphertext.strip()
+        if trimmed.startswith("~"):
+            return f"https://www.upwork.com/jobs/{trimmed}"
     return "(missing)"
 
 

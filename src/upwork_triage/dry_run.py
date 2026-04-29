@@ -377,8 +377,9 @@ def _join_or_missing(values: Sequence[str]) -> str:
 def _render_result_line(result: JobDryRunResult) -> str:
     title = result.title or MISSING
     job_key = result.job_key or MISSING
+    source_url = result.source_url or MISSING
     if result.error is not None:
-        return f"  - {result.index}. {title} | {job_key} | ERROR | {result.error}"
+        return f"  - {result.index}. {title} | {job_key} | url {source_url} | ERROR | {result.error}"
 
     rejects = ", ".join(result.reject_reasons) if result.reject_reasons else "none"
     positives = ", ".join(result.positive_flags) if result.positive_flags else "none"
@@ -386,7 +387,7 @@ def _render_result_line(result: JobDryRunResult) -> str:
     score = MISSING if result.filter_score is None else _format_score(result.filter_score)
     return (
         f"  - {result.index}. {title} | {job_key} | {routing_bucket} | "
-        f"score {score} | rejects {rejects} | positives {positives}"
+        f"score {score} | url {source_url} | rejects {rejects} | positives {positives}"
     )
 
 

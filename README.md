@@ -173,6 +173,12 @@ py -m upwork_triage preview-upwork --show-field-status
 
 This wrapper runs bounded exact-hydrated raw inspection first, writes `data/debug/upwork_raw_hydrated_latest.json` by default, then immediately runs the existing no-AI dry-run diagnostics against that artifact. It does not call OpenAI and does not write to SQLite.
 
+If you want to bound one preview run without changing `UPWORK_POLL_LIMIT`, use:
+
+```powershell
+py -m upwork_triage preview-upwork --limit 30 --sample-limit 10
+```
+
 ## Upwork auth helpers
 
 The repository now includes local helper commands for obtaining or refreshing Upwork tokens:
