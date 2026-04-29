@@ -2,14 +2,14 @@
 
 ## Task name
 
-Implement the first lean-MVP Stage 1 code step: safe official client-quality signals for first-stage Upwork triage.
+Persist official-stage candidates from an existing local raw artifact.
 
 ## Product boundary
 
-This stage should answer:
+This step should answer:
 
 ```text
-Is this job worth opening manually?
+Persist the jobs from this local artifact that are worth manual enrichment.
 ```
 
 It should not answer:
@@ -18,124 +18,125 @@ It should not answer:
 Should I apply?
 ```
 
-Final apply decisions still depend on manual UI-only fields that the official API does not safely expose yet, including:
-
-- Connects required
-- client recent review text / work-history comments
-- member since
-- active hires
-- average hourly paid
-- total hours hired
-- open jobs
+It also should not do live fetching, AI, economics, or final triage.
 
 ## Implementation scope
 
 This task is limited to:
 
 ```text
-official API boundary
--> raw payloads / inspection artifacts
+saved raw artifact
 -> normalize
--> first-stage deterministic filters / dry-run preview
+-> deterministic filters
+-> persist candidate memory in SQLite
 ```
 
-Do not implement:
+Add:
 
-- DB schema changes
-- persistence changes
+- a no-AI persistence core for already-loaded raw job dicts
+- a CLI command that reads a saved local artifact and calls that persistence core
+
+Do not add:
+
+- live network fetching
+- OpenAI or any AI provider calls
+- economics
+- `triage_results`
 - manual enrichment storage
-- enriched prospect dump
-- AI/economics changes
-- queue changes
-- browser scraping
-- Upwork mutations
+- enrichment queue behavior
+- prospect dump generation
+- DB schema changes unless truly unavoidable
 
-## Safe marketplace client fields
+## Persistence behavior
 
-Update the production marketplace search query to include these confirmed-safe `client` fields:
+Add a helper such as:
 
-- `totalHires`
-- `totalPostedJobs`
-- `verificationStatus`
-- `totalSpent { rawValue currency displayValue }`
-- `location { country city timezone }`
-- `totalReviews`
-- `totalFeedback`
-- `lastContractPlatform`
-- `lastContractRid`
-- `lastContractTitle`
-- `hasFinancialPrivacy`
+```python
+run_official_candidate_ingest_for_raw_jobs(
+    conn,
+    raw_payloads,
+    source_name,
+    source_query=None,
+)
+```
 
-Do not include:
+Behavior:
 
-- `companyOrgUid`
-- `memberSinceDateTime`
-- `companyName`
+1. initialize the DB
+2. create an `ingestion_runs` row
+3. normalize each raw job
+4. evaluate deterministic filters
+5. count routing buckets for all jobs
+6. skip persistence for `DISCARD`
+7. persist only `AI_EVAL`, `MANUAL_EXCEPTION`, and `LOW_PRIORITY_REVIEW`
+8. for persisted candidates, write:
+   - `jobs`
+   - `raw_job_snapshots`
+   - `job_snapshots_normalized`
+   - `filter_results`
+9. update latest raw/normalized snapshot pointers on `jobs`
+10. finish `ingestion_runs` as `success` or `failed`
 
-Public search should stay unchanged unless a client selection is already safely modeled there.
+The summary should include:
 
-## Stage-1 client-quality proxies
+- `ingestion_run_id`
+- `jobs_seen_count`
+- `jobs_processed_count`
+- `persisted_candidates_count`
+- `skipped_discarded_count`
+- `jobs_new_count`
+- `jobs_updated_count`
+- `raw_snapshots_created_count`
+- `normalized_snapshots_created_count`
+- `filter_results_created_count`
+- routing-bucket counts
+- `status`
+- `error_message`
 
-Expose the safe official signals needed for first-stage manual-open decisions.
+## Persistence safety rules
 
-Normalized existing fields should include or derive:
+- do not write `ai_evaluations`
+- do not write `economics_results`
+- do not write `triage_results`
+- re-ingesting an existing job must not erase `jobs.user_status`
+- re-ingesting the same raw hash must not create duplicate `raw_job_snapshots`
+- missing/unavailable normalized fields should remain nullable and status-marked
 
-- `c_hist_hires_total`
-- `c_hist_jobs_posted`
-- `c_hist_total_spent`
-- `c_hist_hire_rate = totalHires / totalPostedJobs * 100`
+## CLI command
 
-Preview-only client-quality proxies may be used for fields that would otherwise require DB schema changes:
+Add a local command such as:
 
-- `c_hist_spend_per_hire = totalSpent / totalHires`
-- `c_hist_spend_per_post = totalSpent / totalPostedJobs`
-- `c_hist_total_reviews`
-- `c_hist_review_rate = totalReviews / totalHires * 100`
-- `c_hist_feedback_score = totalFeedback`
-- `c_last_contract_title`
-- `c_has_financial_privacy`
+```powershell
+py -m upwork_triage ingest-upwork-artifact data/debug/upwork_raw_hydrated_latest.json
+```
 
-Rules:
+Behavior:
 
-- do not divide by zero
-- do not coerce missing values to zero
-- keep unavailable values as `None` / `NOT_VISIBLE`
-- keep percentages as percent values like `60.0`, not fractions like `0.60`
-
-## Dry-run preview behavior
-
-Dry-run should expose these client-quality fields in coverage, JSON output, and compact preview output where useful:
-
-- `c_hist_hires_total`
-- `c_hist_jobs_posted`
-- `c_hist_hire_rate`
-- `c_hist_total_spent`
-- `c_hist_spend_per_hire`
-- `c_hist_spend_per_post`
-- `c_hist_total_reviews`
-- `c_hist_review_rate`
-- `c_hist_feedback_score`
-- `c_last_contract_title`
-- `c_has_financial_privacy`
-
-Keep the terminal output compact. The goal is to help decide whether a job is worth opening manually.
-
-## Filter scope
-
-Keep filters conservative.
-
-Safe minimum for this task:
-
-- let existing filters benefit from derived `c_hist_hire_rate`
-- do not add broad new hard rejects
-- if client-quality thresholds feel subjective, expose the proxy fields without changing filter scoring
+1. load config and DB path
+2. read the local artifact path argument
+3. reuse the existing raw-artifact loader when possible
+4. call the new no-AI persistence core
+5. print a compact plain-text summary including:
+   - jobs loaded
+   - jobs processed
+   - persisted candidates
+   - skipped discarded
+   - new jobs
+   - updated jobs
+   - raw snapshots created
+   - normalized snapshots created
+   - filter results created
+   - routing bucket counts
+   - the manual-enrichment reminder list
 
 ## Acceptance criteria for this step
 
 This step is done when:
 
-1. the marketplace query fetches the safe client-rich fields above,
-2. normalization derives honest official client-quality proxies without DB changes,
-3. dry-run exposes those proxies clearly for first-stage manual-open decisions,
-4. `companyOrgUid` and `memberSinceDateTime` remain out of the production query,
-5. tests cover the new safe fields and zero-safe derivations.
+1. an existing local raw artifact can be persisted through a dedicated no-AI candidate-ingest core,
+2. only `jobs`, `raw_job_snapshots`, `job_snapshots_normalized`, and `filter_results` are written,
+3. `DISCARD` jobs are counted but skipped by default,
+4. re-ingesting the same persisted job preserves `jobs.user_status`,
+5. re-ingesting the same raw hash reuses the existing raw snapshot,
+6. the new CLI command prints a compact candidate-ingest summary,
+7. tests cover the persistence core, CLI command, discard skipping, and user-status preservation.

@@ -130,6 +130,11 @@ Should verify:
 - `--sample-limit` limits the rendered sample rows
 - `--json-output PATH` writes a JSON dry-run summary when requested
 - the dry-run CLI path does not call Upwork fetch, OpenAI evaluation, live ingest helpers, fake demo helpers, economics, or action recording
+- `main(["ingest-upwork-artifact", PATH])` returns `0` for a valid local raw artifact and prints a compact candidate-ingest summary
+- `ingest-upwork-artifact` uses the configured `AUTOMAT_DB_PATH` and creates parent directories when needed
+- `ingest-upwork-artifact` loads the local artifact through the shared raw-artifact loader and calls the no-AI candidate-ingest core
+- `ingest-upwork-artifact` summary includes loaded/processed/persisted/skipped counts plus routing bucket counts
+- `ingest-upwork-artifact` does not call live Upwork fetch, OpenAI evaluation, preview inspection, dry-run preview, or action-recording boundaries
 - `main(["queue"])` returns `0` and prints the current shortlist from the configured DB
 - `queue` uses the configured `AUTOMAT_DB_PATH` and creates parent directories when needed
 - `queue` on an empty initialized DB prints the empty-queue message
@@ -428,6 +433,11 @@ Should verify:
   - a fresh `ingestion_runs` row is allowed
   - duplicate `raw_job_snapshots` rows are reused/skipped instead of violating uniqueness
   - duplicate versioned downstream rows are reused instead of being blindly duplicated
+- the no-AI official-candidate ingest helper persists only `AI_EVAL`, `MANUAL_EXCEPTION`, and `LOW_PRIORITY_REVIEW` jobs from injected raw payloads
+- `DISCARD` jobs are counted but skipped and do not create `jobs`, raw snapshots, normalized snapshots, or filter rows
+- the no-AI helper creates exactly one `ingestion_runs` row plus persisted-candidate rows in `jobs`, `raw_job_snapshots`, `job_snapshots_normalized`, and `filter_results`
+- the no-AI helper does not create `ai_evaluations`, `economics_results`, or `triage_results`
+- rerunning the same persisted raw payload preserves `jobs.user_status` and reuses the existing raw snapshot, normalized snapshot, and filter result
 
 ### `tests/test_pipeline.py`
 

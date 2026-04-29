@@ -13,7 +13,10 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from upwork_triage.ai_eval import AiValidationError
-from upwork_triage.run_pipeline import run_fake_pipeline
+from upwork_triage.run_pipeline import (
+    run_fake_pipeline,
+    run_official_candidate_ingest_for_raw_jobs,
+)
 
 
 @pytest.fixture
@@ -151,6 +154,137 @@ def test_duplicate_rerun_reuses_stage_rows_but_creates_new_ingestion_run(
     assert _table_count(conn, "triage_results") == 1
 
 
+def test_official_candidate_ingest_persists_only_non_discard_candidates(
+    conn: sqlite3.Connection,
+) -> None:
+    summary = run_official_candidate_ingest_for_raw_jobs(
+        conn,
+        [
+            make_strong_raw_payload(),
+            make_manual_exception_raw_payload(),
+            make_low_priority_review_raw_payload(),
+            make_hard_reject_raw_payload(),
+        ],
+        source_name="upwork_raw_artifact",
+        source_query="artifact.json",
+    )
+
+    assert summary.status == "success"
+    assert summary.error_message is None
+    assert summary.jobs_seen_count == 4
+    assert summary.jobs_processed_count == 4
+    assert summary.persisted_candidates_count == 3
+    assert summary.skipped_discarded_count == 1
+    assert summary.jobs_new_count == 3
+    assert summary.jobs_updated_count == 0
+    assert summary.raw_snapshots_created_count == 3
+    assert summary.normalized_snapshots_created_count == 3
+    assert summary.filter_results_created_count == 3
+    assert summary.routing_bucket_counts == {
+        "AI_EVAL": 1,
+        "MANUAL_EXCEPTION": 1,
+        "LOW_PRIORITY_REVIEW": 1,
+        "DISCARD": 1,
+    }
+
+    assert _table_count(conn, "ingestion_runs") == 1
+    assert _table_count(conn, "jobs") == 3
+    assert _table_count(conn, "raw_job_snapshots") == 3
+    assert _table_count(conn, "job_snapshots_normalized") == 3
+    assert _table_count(conn, "filter_results") == 3
+    assert _table_count(conn, "ai_evaluations") == 0
+    assert _table_count(conn, "economics_results") == 0
+    assert _table_count(conn, "triage_results") == 0
+
+    status_row = conn.execute(
+        "SELECT status, jobs_fetched_count, jobs_new_count, jobs_updated_count FROM ingestion_runs"
+    ).fetchone()
+    assert status_row is not None
+    assert status_row["status"] == "success"
+    assert status_row["jobs_fetched_count"] == 4
+    assert status_row["jobs_new_count"] == 3
+    assert status_row["jobs_updated_count"] == 0
+
+    persisted_job_keys = {
+        row["job_key"]
+        for row in conn.execute("SELECT job_key FROM jobs").fetchall()
+    }
+    assert persisted_job_keys == {
+        "upwork:987654321",
+        "upwork:222333444",
+        "upwork:333444555",
+    }
+
+    latest_snapshot_rows = conn.execute(
+        """
+        SELECT latest_raw_snapshot_id, latest_normalized_snapshot_id
+        FROM jobs
+        ORDER BY job_key
+        """
+    ).fetchall()
+    assert len(latest_snapshot_rows) == 3
+    assert all(row["latest_raw_snapshot_id"] is not None for row in latest_snapshot_rows)
+    assert all(row["latest_normalized_snapshot_id"] is not None for row in latest_snapshot_rows)
+
+
+def test_official_candidate_ingest_rerun_preserves_user_status_and_reuses_raw_snapshot(
+    conn: sqlite3.Connection,
+) -> None:
+    first_summary = run_official_candidate_ingest_for_raw_jobs(
+        conn,
+        [make_strong_raw_payload()],
+        source_name="upwork_raw_artifact",
+        source_query="artifact.json",
+    )
+    assert first_summary.jobs_new_count == 1
+
+    conn.execute(
+        "UPDATE jobs SET user_status = ? WHERE job_key = ?",
+        ("saved", "upwork:987654321"),
+    )
+    conn.commit()
+
+    second_summary = run_official_candidate_ingest_for_raw_jobs(
+        conn,
+        [make_strong_raw_payload()],
+        source_name="upwork_raw_artifact",
+        source_query="artifact.json",
+    )
+
+    assert second_summary.jobs_seen_count == 1
+    assert second_summary.jobs_processed_count == 1
+    assert second_summary.persisted_candidates_count == 1
+    assert second_summary.skipped_discarded_count == 0
+    assert second_summary.jobs_new_count == 0
+    assert second_summary.jobs_updated_count == 1
+    assert second_summary.raw_snapshots_created_count == 0
+    assert second_summary.normalized_snapshots_created_count == 0
+    assert second_summary.filter_results_created_count == 0
+    assert second_summary.routing_bucket_counts["AI_EVAL"] == 1
+
+    assert _table_count(conn, "ingestion_runs") == 2
+    assert _table_count(conn, "jobs") == 1
+    assert _table_count(conn, "raw_job_snapshots") == 1
+    assert _table_count(conn, "job_snapshots_normalized") == 1
+    assert _table_count(conn, "filter_results") == 1
+    assert _table_count(conn, "ai_evaluations") == 0
+    assert _table_count(conn, "economics_results") == 0
+    assert _table_count(conn, "triage_results") == 0
+
+    job_row = conn.execute(
+        """
+        SELECT user_status, latest_raw_snapshot_id, latest_normalized_snapshot_id
+        FROM jobs
+        WHERE job_key = ?
+        """,
+        ("upwork:987654321",),
+    ).fetchone()
+    assert job_row is not None
+    assert job_row["user_status"] == "saved"
+    assert job_row["latest_raw_snapshot_id"] is not None
+    assert job_row["latest_normalized_snapshot_id"] is not None
+
+
 def _table_count(conn: sqlite3.Connection, table_name: str) -> int:
     row = conn.execute(f"SELECT COUNT(*) AS count FROM {table_name}").fetchone()
     assert row is not None
@@ -198,6 +332,36 @@ def make_hard_reject_raw_payload() -> dict[str, object]:
         id="111222333",
         source_url="https://www.upwork.com/jobs/~111222333",
         client={"payment_verified": "payment unverified"},
+    )
+
+
+def make_manual_exception_raw_payload() -> dict[str, object]:
+    return make_strong_raw_payload(
+        id="222333444",
+        source_url="https://www.upwork.com/jobs/~222333444",
+        title="WooCommerce checkout payment issue",
+        description="Need a custom plugin update for checkout behavior",
+        skills=["WooCommerce", "plugin"],
+        qualifications=None,
+    )
+
+
+def make_low_priority_review_raw_payload() -> dict[str, object]:
+    return make_strong_raw_payload(
+        id="333444555",
+        source_url="https://www.upwork.com/jobs/~333444555",
+        title="WordPress maintenance task",
+        description="Need a small content and settings update",
+        budget="$150",
+        skills=["WordPress"],
+        qualifications="WordPress experience",
+        apply_cost_connects="8",
+        client={
+            "total_spent": "$200",
+            "avg_hourly_rate": None,
+            "hire_rate": None,
+        },
+        activity={"proposals": "20 to 50"},
     )
 
 

@@ -71,9 +71,28 @@ class PipelineRunSummary:
     error_message: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class OfficialCandidateIngestSummary:
+    ingestion_run_id: int
+    jobs_seen_count: int
+    jobs_processed_count: int
+    persisted_candidates_count: int
+    skipped_discarded_count: int
+    jobs_new_count: int
+    jobs_updated_count: int
+    raw_snapshots_created_count: int
+    normalized_snapshots_created_count: int
+    filter_results_created_count: int
+    routing_bucket_counts: Mapping[str, int]
+    status: str
+    error_message: str | None
+
+
 __all__ = [
     "AiEvaluator",
+    "OfficialCandidateIngestSummary",
     "PipelineRunSummary",
+    "run_official_candidate_ingest_for_raw_jobs",
     "run_fake_pipeline",
     "run_live_ingest_once",
     "run_pipeline_for_raw_jobs",
@@ -257,6 +276,130 @@ def run_pipeline_for_raw_jobs(
             economics_results_created_count=economics_results_created_count,
             triage_results_created_count=triage_results_created_count,
             shortlist_rows_count=shortlist_rows_count,
+            status="success",
+            error_message=None,
+        )
+    except Exception as exc:
+        if ingestion_run_id is not None:
+            with conn:
+                _finish_ingestion_run(
+                    conn,
+                    ingestion_run_id=ingestion_run_id,
+                    status="failed",
+                    error_message=str(exc),
+                    jobs_fetched_count=jobs_seen_count,
+                    jobs_new_count=jobs_new_count,
+                    jobs_updated_count=jobs_updated_count,
+                )
+        raise
+
+
+def run_official_candidate_ingest_for_raw_jobs(
+    conn: sqlite3.Connection,
+    raw_payloads: Sequence[Mapping[str, object]],
+    *,
+    source_name: str,
+    source_query: str | None = None,
+) -> OfficialCandidateIngestSummary:
+    initialize_db(conn)
+
+    payload_list = list(raw_payloads)
+    jobs_seen_count = len(payload_list)
+    jobs_processed_count = 0
+    persisted_candidates_count = 0
+    skipped_discarded_count = 0
+    jobs_new_count = 0
+    jobs_updated_count = 0
+    raw_snapshots_created_count = 0
+    normalized_snapshots_created_count = 0
+    filter_results_created_count = 0
+    routing_bucket_counts: dict[str, int] = {
+        "AI_EVAL": 0,
+        "MANUAL_EXCEPTION": 0,
+        "LOW_PRIORITY_REVIEW": 0,
+        "DISCARD": 0,
+    }
+    ingestion_run_id: int | None = None
+    query_config_json = _build_query_config_json(source_query)
+
+    try:
+        with conn:
+            ingestion_run_id = _create_ingestion_run(
+                conn,
+                source_name=source_name,
+                query_config_json=query_config_json,
+            )
+
+        for raw_payload in payload_list:
+            normalization = normalize_job_payload(raw_payload)
+            filter_result = evaluate_filters(normalization.to_filter_input())
+            jobs_processed_count += 1
+            routing_bucket_counts[filter_result.routing_bucket] += 1
+
+            if filter_result.routing_bucket == "DISCARD":
+                skipped_discarded_count += 1
+                continue
+
+            with conn:
+                job_was_created = _upsert_job(conn, normalization.to_jobs_upsert_input())
+                jobs_new_count += int(job_was_created)
+                jobs_updated_count += int(not job_was_created)
+
+                raw_snapshot_id, raw_snapshot_created = _get_or_create_raw_snapshot(
+                    conn,
+                    ingestion_run_id=ingestion_run_id,
+                    metadata=normalization.to_raw_snapshot_metadata(),
+                    raw_payload=raw_payload,
+                    source_query=source_query,
+                )
+                raw_snapshots_created_count += int(raw_snapshot_created)
+
+                job_snapshot_id, normalized_snapshot_created = _get_or_create_normalized_snapshot(
+                    conn,
+                    raw_snapshot_id=raw_snapshot_id,
+                    normalized=normalization.to_job_snapshot_insert_input(),
+                )
+                normalized_snapshots_created_count += int(normalized_snapshot_created)
+
+                _update_job_snapshot_pointers(
+                    conn,
+                    job_key=normalization.job_key,
+                    raw_snapshot_id=raw_snapshot_id,
+                    job_snapshot_id=job_snapshot_id,
+                )
+
+                _, filter_result_created = _get_or_create_filter_result(
+                    conn,
+                    job_snapshot_id=job_snapshot_id,
+                    filter_result=filter_result,
+                )
+                filter_results_created_count += int(filter_result_created)
+
+            persisted_candidates_count += 1
+
+        with conn:
+            _finish_ingestion_run(
+                conn,
+                ingestion_run_id=ingestion_run_id,
+                status="success",
+                error_message=None,
+                jobs_fetched_count=jobs_seen_count,
+                jobs_new_count=jobs_new_count,
+                jobs_updated_count=jobs_updated_count,
+            )
+
+        return OfficialCandidateIngestSummary(
+            ingestion_run_id=ingestion_run_id,
+            jobs_seen_count=jobs_seen_count,
+            jobs_processed_count=jobs_processed_count,
+            persisted_candidates_count=persisted_candidates_count,
+            skipped_discarded_count=skipped_discarded_count,
+            jobs_new_count=jobs_new_count,
+            jobs_updated_count=jobs_updated_count,
+            raw_snapshots_created_count=raw_snapshots_created_count,
+            normalized_snapshots_created_count=normalized_snapshots_created_count,
+            filter_results_created_count=filter_results_created_count,
+            routing_bucket_counts=dict(routing_bucket_counts),
             status="success",
             error_message=None,
         )

@@ -671,6 +671,207 @@ def test_main_preview_upwork_runs_inspection_then_dry_run_and_prints_summaries(
     assert "MVP readiness:" in output
 
 
+def test_main_ingest_upwork_artifact_calls_loader_and_persistence_core(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from upwork_triage.run_pipeline import OfficialCandidateIngestSummary
+
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_hydrated_latest.json"
+    db_path = workspace_tmp_dir / "db" / "automat.sqlite3"
+    recorded: dict[str, object] = {}
+
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+
+    def fake_load_artifact(path: str) -> list[dict[str, object]]:
+        recorded["loaded_artifact_path"] = path
+        return [{"id": "job-1"}]
+
+    monkeypatch.setattr("upwork_triage.cli.load_raw_inspection_artifact", fake_load_artifact)
+
+    def fake_ingest(
+        conn: object,
+        raw_payloads: list[dict[str, object]],
+        *,
+        source_name: str,
+        source_query: str | None = None,
+    ) -> OfficialCandidateIngestSummary:
+        recorded["ingest_raw_payloads"] = raw_payloads
+        recorded["source_name"] = source_name
+        recorded["source_query"] = source_query
+        return OfficialCandidateIngestSummary(
+            ingestion_run_id=7,
+            jobs_seen_count=1,
+            jobs_processed_count=1,
+            persisted_candidates_count=1,
+            skipped_discarded_count=0,
+            jobs_new_count=1,
+            jobs_updated_count=0,
+            raw_snapshots_created_count=1,
+            normalized_snapshots_created_count=1,
+            filter_results_created_count=1,
+            routing_bucket_counts={
+                "AI_EVAL": 1,
+                "MANUAL_EXCEPTION": 0,
+                "LOW_PRIORITY_REVIEW": 0,
+                "DISCARD": 0,
+            },
+            status="success",
+            error_message=None,
+        )
+
+    monkeypatch.setattr("upwork_triage.cli.run_official_candidate_ingest_for_raw_jobs", fake_ingest)
+    install_in_memory_cli_connection(monkeypatch, db_path)
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["ingest-upwork-artifact", str(artifact_path)], stdout=stdout, stderr=stderr)
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert recorded["loaded_artifact_path"] == str(artifact_path)
+    assert recorded["ingest_raw_payloads"] == [{"id": "job-1"}]
+    assert recorded["source_name"] == "upwork_raw_artifact"
+    assert recorded["source_query"] == str(artifact_path)
+    assert "Official artifact candidate ingest complete." in output
+    assert "Persisted candidates: 1" in output
+    assert "Routing buckets: AI_EVAL=1" in output
+
+
+def test_main_ingest_upwork_artifact_persists_only_candidates_and_skips_discarded(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_hydrated_latest.json"
+    db_path = workspace_tmp_dir / "nested" / "db" / "automat.sqlite3"
+    write_cli_raw_artifact(
+        artifact_path,
+        jobs=[make_strong_raw_payload(), make_hard_reject_raw_payload()],
+    )
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    recorded_paths = install_in_memory_cli_connection(
+        monkeypatch,
+        db_path,
+        shared_connection=shared_conn,
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+    try:
+        exit_code = main(
+            ["ingest-upwork-artifact", str(artifact_path)],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        output = stdout.getvalue()
+        assert exit_code == 0
+        assert stderr.getvalue() == ""
+        assert recorded_paths == [db_path]
+        assert db_path.parent.exists()
+        assert "Jobs loaded: 2" in output
+        assert "Jobs processed: 2" in output
+        assert "Persisted candidates: 1" in output
+        assert "Skipped discarded: 1" in output
+        assert "Raw snapshots created: 1" in output
+        assert "Normalized snapshots created: 1" in output
+        assert "Filter results created: 1" in output
+        assert "Routing buckets: AI_EVAL=1 | MANUAL_EXCEPTION=0 | LOW_PRIORITY_REVIEW=0 | DISCARD=1" in output
+        assert "Manual enrichment still required:" in output
+
+        assert _table_count(shared_conn, "ingestion_runs") == 1
+        assert _table_count(shared_conn, "jobs") == 1
+        assert _table_count(shared_conn, "raw_job_snapshots") == 1
+        assert _table_count(shared_conn, "job_snapshots_normalized") == 1
+        assert _table_count(shared_conn, "filter_results") == 1
+        assert _table_count(shared_conn, "ai_evaluations") == 0
+        assert _table_count(shared_conn, "economics_results") == 0
+        assert _table_count(shared_conn, "triage_results") == 0
+    finally:
+        shared_conn.close()
+
+
+def test_ingest_upwork_artifact_does_not_call_live_ai_or_action_boundaries(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from upwork_triage.run_pipeline import OfficialCandidateIngestSummary
+
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_hydrated_latest.json"
+    db_path = workspace_tmp_dir / "db" / "automat.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    monkeypatch.setattr(
+        "upwork_triage.cli.load_raw_inspection_artifact",
+        lambda path: [{"id": "job-1"}],
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_official_candidate_ingest_for_raw_jobs",
+        lambda *args, **kwargs: OfficialCandidateIngestSummary(
+            ingestion_run_id=1,
+            jobs_seen_count=1,
+            jobs_processed_count=1,
+            persisted_candidates_count=1,
+            skipped_discarded_count=0,
+            jobs_new_count=1,
+            jobs_updated_count=0,
+            raw_snapshots_created_count=1,
+            normalized_snapshots_created_count=1,
+            filter_results_created_count=1,
+            routing_bucket_counts={
+                "AI_EVAL": 1,
+                "MANUAL_EXCEPTION": 0,
+                "LOW_PRIORITY_REVIEW": 0,
+                "DISCARD": 0,
+            },
+            status="success",
+            error_message=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_fake_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fake demo should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_live_ingest_once",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live ingest should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.inspect_upwork_raw",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw inspection should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.dry_run_raw_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dry run should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.record_user_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("action recording should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "fetch_upwork_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("upwork fetch should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "evaluate_with_openai",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("openai eval should not run")),
+    )
+    install_in_memory_cli_connection(monkeypatch, db_path)
+
+    exit_code = main(
+        ["ingest-upwork-artifact", str(artifact_path)],
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    assert exit_code == 0
+
+
 def test_main_preview_upwork_limit_overrides_effective_poll_limit(
     workspace_tmp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -13,6 +13,7 @@ from upwork_triage.actions import ActionError, record_user_action
 from upwork_triage.config import ConfigError, load_config
 from upwork_triage.db import connect_db, initialize_db
 from upwork_triage.dry_run import (
+    MVP_MANUAL_FINAL_CHECK_FIELDS,
     RawArtifactError,
     dry_run_raw_jobs,
     load_raw_inspection_artifact,
@@ -25,7 +26,11 @@ from upwork_triage.inspect_upwork import (
     render_raw_inspection_summary,
 )
 from upwork_triage.queue_view import fetch_decision_shortlist, render_decision_shortlist
-from upwork_triage.run_pipeline import run_fake_pipeline, run_live_ingest_once
+from upwork_triage.run_pipeline import (
+    run_fake_pipeline,
+    run_live_ingest_once,
+    run_official_candidate_ingest_for_raw_jobs,
+)
 from upwork_triage.upwork_auth import (
     TokenResponse,
     UpworkAuthError,
@@ -115,6 +120,11 @@ def main(
                 sample_limit=args.sample_limit,
                 json_output=args.json_output,
                 show_field_status=args.show_field_status,
+                stdout=out,
+            )
+        if args.command == "ingest-upwork-artifact":
+            return _run_ingest_upwork_artifact(
+                artifact_path=args.artifact_path,
                 stdout=out,
             )
         if args.command == "probe-upwork-fields":
@@ -264,6 +274,14 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "--show-field-status",
         action="store_true",
         help="Include per-field status distribution details in the dry-run output.",
+    )
+    artifact_ingest_parser = subparsers.add_parser(
+        "ingest-upwork-artifact",
+        help="Persist candidate jobs from a saved local Upwork raw artifact without AI.",
+    )
+    artifact_ingest_parser.add_argument(
+        "artifact_path",
+        help="Path to a saved raw inspection artifact JSON file.",
     )
     probe_parser = subparsers.add_parser(
         "probe-upwork-fields",
@@ -474,6 +492,60 @@ def _run_preview_upwork(
             sample_limit=sample_limit,
             show_field_status=show_field_status,
         ),
+        file=stdout,
+    )
+    return 0
+
+
+def _run_ingest_upwork_artifact(
+    *,
+    artifact_path: str,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+
+    raw_jobs = load_raw_inspection_artifact(artifact_path)
+
+    conn = connect_db(db_path)
+    try:
+        summary = run_official_candidate_ingest_for_raw_jobs(
+            conn,
+            raw_jobs,
+            source_name="upwork_raw_artifact",
+            source_query=artifact_path,
+        )
+    finally:
+        conn.close()
+
+    routing_counts = summary.routing_bucket_counts
+    print("Official artifact candidate ingest complete.", file=stdout)
+    print(f"DB: {db_path}", file=stdout)
+    print(f"Artifact: {artifact_path}", file=stdout)
+    print(f"Jobs loaded: {summary.jobs_seen_count}", file=stdout)
+    print(f"Jobs processed: {summary.jobs_processed_count}", file=stdout)
+    print(f"Persisted candidates: {summary.persisted_candidates_count}", file=stdout)
+    print(f"Skipped discarded: {summary.skipped_discarded_count}", file=stdout)
+    print(f"New jobs: {summary.jobs_new_count}", file=stdout)
+    print(f"Updated jobs: {summary.jobs_updated_count}", file=stdout)
+    print(f"Raw snapshots created: {summary.raw_snapshots_created_count}", file=stdout)
+    print(
+        f"Normalized snapshots created: {summary.normalized_snapshots_created_count}",
+        file=stdout,
+    )
+    print(f"Filter results created: {summary.filter_results_created_count}", file=stdout)
+    print(
+        "Routing buckets: "
+        f"AI_EVAL={routing_counts.get('AI_EVAL', 0)} | "
+        f"MANUAL_EXCEPTION={routing_counts.get('MANUAL_EXCEPTION', 0)} | "
+        f"LOW_PRIORITY_REVIEW={routing_counts.get('LOW_PRIORITY_REVIEW', 0)} | "
+        f"DISCARD={routing_counts.get('DISCARD', 0)}",
+        file=stdout,
+    )
+    print(
+        "Manual enrichment still required: "
+        + ", ".join(MVP_MANUAL_FINAL_CHECK_FIELDS),
         file=stdout,
     )
     return 0

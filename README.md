@@ -179,6 +179,14 @@ If you want to bound one preview run without changing `UPWORK_POLL_LIMIT`, use:
 py -m upwork_triage preview-upwork --limit 30 --sample-limit 10
 ```
 
+If you want to turn a saved local raw artifact into durable candidate memory without AI, use:
+
+```powershell
+py -m upwork_triage ingest-upwork-artifact data/debug/upwork_raw_hydrated_latest.json
+```
+
+This command reads the saved local artifact, reruns normalization plus deterministic filters, persists only non-`DISCARD` candidates into SQLite, and keeps the manual-enrichment reminder explicit. It does not fetch live Upwork data and does not call OpenAI.
+
 ## Upwork auth helpers
 
 The repository now includes local helper commands for obtaining or refreshing Upwork tokens:
