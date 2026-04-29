@@ -1,0 +1,21 @@
+
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+pytest_tmp/
+pytest_tmp*/
+.pytest-tmp-debug*/
+.pytest-tmp-debug*/
+
+# Local env / data
+.env
+data/
+*.sqlite3
+*.sqlite
+*.db
+
+# Temporary scratch files
+*.tmp
+*.bak
+docs/current_task.new.md
