@@ -365,6 +365,10 @@ Should verify:
 - sanitized marketplace-search raw payload fixtures produce useful coverage for derived `source_url`, verification status, and posted-time fields
 - sanitized hybrid raw payload fixtures produce useful coverage for contract type, fixed/hourly pay visibility, proposals from applicant counts, and client spend when those values are present
 - sanitized hydrated exact-marketplace raw payload fixtures can improve dry-run coverage for description, contract type, pay, payment verification, and activity counters without any live fetch
+- dry-run summaries should expose deterministic `MVP readiness` counts derived from the explicit automated-core fields only
+- rendered dry-run output should include automated-core-ready counts, missing-core-field counts, and the stable manual final-check reminder list
+- dry-run JSON output should include the same readiness/manual-check diagnostics
+- `j_qualifications` should appear in field coverage when visible, and `a_hires` / `a_invites_unanswered` may appear there when normalized values exist
 - parse-failure counts are recorded
 - empty job lists still produce a valid summary
 - unexpected per-job normalization/filter failures are recorded per job while the overall summary continues

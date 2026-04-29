@@ -2,78 +2,69 @@
 
 ## Task name
 
-Consume confirmed `_exact_marketplace_raw` fields during normalization.
+Add MVP readiness and manual-final-check diagnostics to the dry run.
 
 ## Goal
 
-Improve normalization and dry-run coverage for hydrated inspection artifacts by reading exact marketplace payload fields that are already attached under `_exact_marketplace_raw`.
+Make `dry-run-raw-artifact` operationally honest for the usable local MVP by reporting which fields are already automation-ready and which checks still require a final manual Upwork UI pass before applying.
 
-This task is additive only. It changes the `raw payloads -> normalize` seam for hydrated inspection artifacts. It must not change live fetching, inspection flags, ingest wiring, DB schema, filters, AI, economics, queue, action tracking, or scoring behavior.
+This task is additive only. It changes dry-run diagnostics/reporting. It must not change extraction, normalization mappings, filters, scoring, ingest wiring, DB schema, AI, economics, queue, or live API behavior.
 
 ## Files to modify
 
 Expected files:
 
-- `src/upwork_triage/normalize.py`
-- `tests/test_normalize.py`
-- `tests/test_dry_run.py` if a tiny coverage regression check is useful
+- `src/upwork_triage/dry_run.py`
+- `tests/test_dry_run.py`
 - `docs/current_task.md`
 - `docs/testing.md`
 
 ## Required behavior
 
-1. Read `_exact_marketplace_raw` only when:
-   - `_exact_hydration_status == "success"`
-   - `_exact_marketplace_raw` is a mapping
+1. Extend the dry-run summary with a compact `MVP readiness` section based only on already-normalized fields and field statuses.
 
-2. Keep the original raw payload unchanged. Exact fields should be consumed as additive fallback/improvement inputs during normalization only.
+2. Treat this explicit field set as the automated core readiness surface:
+   - `upwork_job_id`
+   - `source_url`
+   - `j_title`
+   - `j_description`
+   - `c_country`
+   - `c_hist_total_spent`
+   - `j_contract_type`
+   - `j_skills`
+   - `j_posted_at`
+   - `j_mins_since_posted`
 
-3. Use exact hydration for these normalized fields when the exact payload contains a usable value:
-   - `j_title` from `content.title`
-   - `j_description` from `content.description`
-   - `j_contract_type` from `contractTerms.contractType`
-   - `j_pay_fixed` from `contractTerms.fixedPriceContractTerms.amount.rawValue`
-   - `j_pay_hourly_low` from `contractTerms.hourlyContractTerms.hourlyBudgetMin`
-   - `j_pay_hourly_high` from `contractTerms.hourlyContractTerms.hourlyBudgetMax`
-   - `c_verified_payment` from `clientCompanyPublic.paymentVerification.paymentVerified` or `.status`
-   - `a_hires` from `activityStat.jobActivity.totalHired`
-   - `a_interviewing` from `activityStat.jobActivity.totalInvitedToInterview`
-   - `a_invites_sent` from `activityStat.jobActivity.invitesSent`
-   - `a_invites_unanswered` from `activityStat.jobActivity.totalUnansweredInvites`
+3. Add `j_qualifications` to dry-run field coverage so the exact-hydration qualification text is visible in calibration output.
 
-4. Generate `j_qualifications` from exact contractor-selection fields only when there is no better top-level qualification text. The formatting should stay compact, deterministic, and readable.
+4. Add `a_hires` and `a_invites_unanswered` to dry-run field coverage if they can be exposed consistently from existing normalized data.
 
-5. Do not treat exact `clientCompanyPublic.country` as the preferred country source. Search-level `client.location.country` remains authoritative because live exact country can be null.
+5. For each dry-run summary, compute:
+   - processed jobs count
+   - automated-core-ready jobs count
+   - per-core-field missing counts across processed jobs
 
-6. Do not map `activityStat.jobActivity.lastClientActivity` into `a_mins_since_cli_viewed` in this task.
+6. Render a compact stable section like:
+   - `automated core ready: X/Y`
+   - `missing core fields: ...`
+   - `manual final check still required: connectsRequired, client recent reviews, member since, active hires, avg hourly paid, hours hired, open jobs`
 
-7. Do not invent unavailable UI-only fields:
-   - no connects price
-   - no client review text
-   - no member-since value
-   - no active hires
-   - no avg hourly paid
-   - no total hours hired
-   - no open jobs
+7. Include the same readiness/manual-check diagnostics in the JSON written by `write_dry_run_summary_json()`.
 
-8. Keep field-status semantics honest:
-   - exact-derived values should become `VISIBLE`
-   - missing unavailable fields should stay `NOT_VISIBLE`
-   - failed or skipped exact hydration should not create false visible fields
+8. Do not mark manual-only fields as visible or try to derive them.
 
 ## Test requirements
 
 Update tests so they verify:
 
-- exact `content.title` / `content.description` can backfill missing top-level title and description
-- exact hourly contract terms normalize contract type plus hourly low/high
-- exact fixed contract terms normalize contract type plus fixed pay
-- exact payment verification normalizes when the search-level verification field is missing
-- exact job activity normalizes hires, interviewing, invites sent, and unanswered invites
-- exact contractor-selection fields can produce a compact fallback `j_qualifications` string
-- search-level `client.location.country` still wins over exact `clientCompanyPublic.country`
-- failed or skipped exact hydration is ignored by normalization
-- dry-run summaries can reflect the improved exact-derived normalized coverage without using real network calls
+- dry-run summaries expose automated-core readiness counts
+- rendered dry-run output includes the `MVP readiness` section
+- missing automated-core fields are counted accurately
+- manual final-check fields are listed even when automation-ready coverage is high
+- JSON summary output includes the readiness and manual-check diagnostics
+- `j_qualifications` appears in field coverage when visible
+- `a_hires` and `a_invites_unanswered` appear in field coverage if included
+- existing dry-run and normalization tests still pass
 - all tests remain fake-data-only and secret-free
 
 ## Out of scope
@@ -82,8 +73,8 @@ Do not implement:
 
 - live API changes
 - inspect or CLI changes
+- normalization mapping changes unless tiny and unavoidable
 - ingest-once wiring
-- dry-run readiness model changes
 - DB schema changes
 - OpenAI / AI calls
 - paid AI calls
@@ -99,7 +90,7 @@ Do not implement:
 
 The task is complete when:
 
-- hydrated inspection artifacts produce better normalized values for the confirmed exact fields
-- failed/skipped exact hydration remains harmless
+- dry-run summaries clearly distinguish automated-core readiness from manual final-check-only fields
+- readiness diagnostics are deterministic and derived only from normalized data already on hand
 - committed tests stay network-free
 - the full test suite still passes

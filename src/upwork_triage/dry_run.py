@@ -25,11 +25,35 @@ KEY_COVERAGE_FIELDS = (
     "j_pay_hourly_high",
     "j_apply_cost_connects",
     "j_skills",
+    "j_qualifications",
     "a_proposals",
+    "a_hires",
     "a_interviewing",
     "a_invites_sent",
+    "a_invites_unanswered",
     "j_mins_since_posted",
     "j_posted_at",
+)
+MVP_AUTOMATED_CORE_FIELDS = (
+    "upwork_job_id",
+    "source_url",
+    "j_title",
+    "j_description",
+    "c_country",
+    "c_hist_total_spent",
+    "j_contract_type",
+    "j_skills",
+    "j_posted_at",
+    "j_mins_since_posted",
+)
+MVP_MANUAL_FINAL_CHECK_FIELDS = (
+    "connectsRequired",
+    "client recent reviews",
+    "member since",
+    "active hires",
+    "avg hourly paid",
+    "hours hired",
+    "open jobs",
 )
 ROUTING_BUCKET_ORDER = ("AI_EVAL", "MANUAL_EXCEPTION", "LOW_PRIORITY_REVIEW", "DISCARD")
 MISSING = "\N{EM DASH}"
@@ -66,6 +90,10 @@ class RawArtifactDryRunSummary:
     field_status_counts: Mapping[str, Mapping[str, int]]
     key_field_visible_counts: Mapping[str, int]
     parse_failure_counts: Mapping[str, int]
+    automated_core_fields: tuple[str, ...]
+    automated_core_ready_count: int
+    automated_core_missing_counts: Mapping[str, int]
+    manual_final_check_fields: tuple[str, ...]
     results: tuple[JobDryRunResult, ...]
 
 
@@ -119,6 +147,8 @@ def dry_run_raw_jobs(
     key_field_visible_counts = {field: 0 for field in KEY_COVERAGE_FIELDS}
     field_status_counters = {field: Counter[str]() for field in KEY_COVERAGE_FIELDS}
     parse_failure_counts = Counter[str]()
+    automated_core_ready_count = 0
+    automated_core_missing_counts = {field: 0 for field in MVP_AUTOMATED_CORE_FIELDS}
     results: list[JobDryRunResult] = []
     jobs_processed_count = 0
     jobs_failed_count = 0
@@ -137,6 +167,12 @@ def dry_run_raw_jobs(
                     key_field_visible_counts[field_name] += 1
                 if status == "PARSE_FAILURE":
                     parse_failure_counts[field_name] += 1
+            if _is_automated_core_ready(derived_field_status):
+                automated_core_ready_count += 1
+            else:
+                for field_name in MVP_AUTOMATED_CORE_FIELDS:
+                    if derived_field_status.get(field_name) != "VISIBLE":
+                        automated_core_missing_counts[field_name] += 1
 
             normalized = normalization.to_job_snapshot_insert_input()
             results.append(
@@ -191,6 +227,10 @@ def dry_run_raw_jobs(
         },
         key_field_visible_counts=dict(key_field_visible_counts),
         parse_failure_counts=dict(parse_failure_counts),
+        automated_core_fields=MVP_AUTOMATED_CORE_FIELDS,
+        automated_core_ready_count=automated_core_ready_count,
+        automated_core_missing_counts=dict(automated_core_missing_counts),
+        manual_final_check_fields=MVP_MANUAL_FINAL_CHECK_FIELDS,
         results=tuple(results),
     )
 
@@ -226,6 +266,24 @@ def render_raw_artifact_dry_run_summary(
     for field_name in KEY_COVERAGE_FIELDS:
         visible_count = summary.key_field_visible_counts.get(field_name, 0)
         lines.append(f"  - {field_name}: {visible_count}/{denominator}")
+
+    lines.extend(
+        [
+            "MVP readiness:",
+            (
+                "  - automated core ready: "
+                f"{summary.automated_core_ready_count}/{summary.jobs_processed_count}"
+            ),
+            (
+                "  - missing core fields: "
+                f"{_format_missing_core_fields(summary.automated_core_missing_counts)}"
+            ),
+            (
+                "  - manual final check still required: "
+                f"{', '.join(summary.manual_final_check_fields)}"
+            ),
+        ]
+    )
 
     lines.append("Parse failures:")
     if summary.parse_failure_counts:
@@ -275,6 +333,21 @@ def _derive_key_field_statuses(normalization: NormalizationResult) -> dict[str, 
         else:
             derived[field_name] = statuses.get(field_name, "NOT_VISIBLE")
     return derived
+
+
+def _is_automated_core_ready(derived_field_status: Mapping[str, str]) -> bool:
+    return all(derived_field_status.get(field_name) == "VISIBLE" for field_name in MVP_AUTOMATED_CORE_FIELDS)
+
+
+def _format_missing_core_fields(missing_counts: Mapping[str, int]) -> str:
+    parts = [
+        f"{field_name}={count}"
+        for field_name in MVP_AUTOMATED_CORE_FIELDS
+        if (count := missing_counts.get(field_name, 0)) > 0
+    ]
+    if not parts:
+        return "none"
+    return ", ".join(parts)
 
 
 def _has_visible_value(value: object | None) -> bool:

@@ -128,6 +128,7 @@ def test_dry_run_raw_jobs_records_key_field_visible_counts() -> None:
     assert summary.key_field_visible_counts["j_title"] == 1
     assert summary.key_field_visible_counts["c_verified_payment"] == 1
     assert summary.key_field_visible_counts["j_apply_cost_connects"] == 1
+    assert summary.key_field_visible_counts["j_qualifications"] == 1
 
 
 def test_dry_run_raw_jobs_reports_useful_coverage_for_sanitized_real_like_payload() -> None:
@@ -206,10 +207,44 @@ def test_dry_run_raw_jobs_uses_exact_hydration_fields_when_present() -> None:
     assert summary.key_field_visible_counts["j_contract_type"] == 1
     assert summary.key_field_visible_counts["j_pay_fixed"] == 1
     assert summary.key_field_visible_counts["c_verified_payment"] == 1
+    assert summary.key_field_visible_counts["j_qualifications"] == 1
+    assert summary.key_field_visible_counts["a_hires"] == 1
     assert summary.key_field_visible_counts["a_interviewing"] == 1
     assert summary.key_field_visible_counts["a_invites_sent"] == 1
+    assert summary.key_field_visible_counts["a_invites_unanswered"] == 1
     assert summary.results[0].field_status["a_hires"] == "VISIBLE"
     assert summary.results[0].field_status["a_invites_unanswered"] == "VISIBLE"
+
+
+def test_dry_run_raw_jobs_records_mvp_readiness_counts() -> None:
+    summary = dry_run_raw_jobs([make_hybrid_live_like_payload()], artifact_path="artifact.json")
+
+    assert summary.jobs_processed_count == 1
+    assert summary.automated_core_ready_count == 1
+    assert summary.automated_core_missing_counts["j_title"] == 0
+    assert summary.automated_core_missing_counts["j_posted_at"] == 0
+    assert summary.manual_final_check_fields == (
+        "connectsRequired",
+        "client recent reviews",
+        "member since",
+        "active hires",
+        "avg hourly paid",
+        "hours hired",
+        "open jobs",
+    )
+
+
+def test_dry_run_raw_jobs_counts_missing_automated_core_fields() -> None:
+    summary = dry_run_raw_jobs(
+        [make_strong_raw_payload(source_url=None, description=None)],
+        artifact_path="artifact.json",
+    )
+
+    assert summary.jobs_processed_count == 1
+    assert summary.automated_core_ready_count == 0
+    assert summary.automated_core_missing_counts["source_url"] == 1
+    assert summary.automated_core_missing_counts["j_description"] == 1
+    assert summary.automated_core_missing_counts["j_title"] == 0
 
 
 def test_dry_run_raw_jobs_records_parse_failure_counts() -> None:
@@ -271,6 +306,10 @@ def test_render_raw_artifact_dry_run_summary_includes_counts_and_sample_lines() 
     assert "DISCARD=1" in rendered
     assert "Field coverage:" in rendered
     assert "c_hist_avg_hourly_rate: 1/2" in rendered
+    assert "MVP readiness:" in rendered
+    assert "automated core ready: 0/2" in rendered
+    assert "missing core fields: j_posted_at=2" in rendered
+    assert "manual final check still required: connectsRequired, client recent reviews, member since, active hires, avg hourly paid, hours hired, open jobs" in rendered
     assert "Parse failures:" in rendered
     assert "c_hist_avg_hourly_rate: 1" in rendered
     assert "Sample jobs:" in rendered
@@ -281,7 +320,7 @@ def test_render_raw_artifact_dry_run_summary_includes_counts_and_sample_lines() 
 def test_write_dry_run_summary_json_writes_valid_json(
     workspace_tmp_dir: Path,
 ) -> None:
-    summary = dry_run_raw_jobs([make_strong_raw_payload()], artifact_path="artifact.json")
+    summary = dry_run_raw_jobs([make_hybrid_live_like_payload()], artifact_path="artifact.json")
     output_path = workspace_tmp_dir / "nested" / "summary.json"
 
     write_dry_run_summary_json(output_path, summary)
@@ -290,7 +329,19 @@ def test_write_dry_run_summary_json_writes_valid_json(
     assert document["artifact_path"] == "artifact.json"
     assert document["jobs_loaded_count"] == 1
     assert document["routing_bucket_counts"]["AI_EVAL"] == 1
-    assert document["results"][0]["job_key"] == "upwork:123456789"
+    assert document["automated_core_ready_count"] == 1
+    assert document["automated_core_missing_counts"]["j_title"] == 0
+    assert document["automated_core_missing_counts"]["j_posted_at"] == 0
+    assert document["manual_final_check_fields"] == [
+        "connectsRequired",
+        "client recent reviews",
+        "member since",
+        "active hires",
+        "avg hourly paid",
+        "hours hired",
+        "open jobs",
+    ]
+    assert document["results"][0]["job_key"] == "upwork:hybrid-0123456789"
 
 
 def make_strong_raw_payload(**overrides: object) -> dict[str, object]:
