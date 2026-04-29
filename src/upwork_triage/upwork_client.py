@@ -89,8 +89,9 @@ class UpworkGraphQlClient:
     def fetch_jobs(self, search_terms: tuple[str, ...], limit: int) -> list[dict[str, object]]:
         query, variables = build_job_search_query(search_terms, limit)
         headers = {
-            "Authorization": f"Bearer {self._access_token}",
-        }
+			"Authorization": f"bearer {self._access_token}",
+			"User-Agent": "Automat/0.1 personal-internal-upwork-api-client",
+		}
         payload = {
             "query": query,
             "variables": variables,
