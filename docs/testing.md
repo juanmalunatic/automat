@@ -101,8 +101,32 @@ Should verify:
 - `inspect-upwork-raw --output PATH` writes the requested artifact
 - `inspect-upwork-raw --no-write` does not create the default artifact
 - inspect CLI error output must not leak fake token values
+- `main(["action", JOB_KEY, "seen"])` returns `0` and prints a confirmation
+- `main(["action", JOB_KEY, "applied", "--notes", "..."])` stores notes
+- `main(["action-by-upwork-id", UPWORK_JOB_ID, "skipped"])` resolves the correct job
+- invalid action and unknown-job action commands return non-zero with helpful errors
+- action commands use the configured `AUTOMAT_DB_PATH`
+- action commands do not call fake-demo, ingest-once, raw inspection, or auth/network boundaries
 - `main([])` or an unknown command returns a non-zero exit code and prints usage or a helpful error
 - `src/upwork_triage/__main__.py` delegates to the CLI module without requiring a subprocess
+
+### `tests/test_actions.py`
+
+Should verify:
+
+- `record_user_action()` by `job_key` inserts a `user_actions` row
+- `record_user_action()` updates `jobs.user_status` according to the documented mapping
+- `record_user_action()` by `upwork_job_id` resolves the correct job
+- notes are stored when provided
+- `jobs.latest_normalized_snapshot_id` is copied into `user_actions.job_snapshot_id` when available
+- `jobs.upwork_job_id` is copied into `user_actions.upwork_job_id` when available
+- invalid action raises `InvalidActionError`
+- unknown `job_key` raises `UnknownJobError`
+- unknown `upwork_job_id` raises `UnknownJobError`
+- mismatched `job_key` and `upwork_job_id` raise `ActionError`
+- `fetch_user_actions_for_job()` orders rows by `created_at` and `id`
+- each allowed action maps to the expected `jobs.user_status`
+- failed validation leaves `user_actions` unchanged and does not alter the existing `jobs.user_status`
 
 ### `tests/test_economics.py`
 
@@ -369,6 +393,10 @@ CLI tests should use temp DB paths through env overrides or other isolated confi
 Auth-helper CLI tests should monkeypatch token exchange/refresh helpers rather than calling real Upwork OAuth services. They should verify the secret warning comment and ensure fake secret values do not leak through normal error output.
 
 `inspect-upwork-raw` CLI tests should monkeypatch the Upwork fetch boundary rather than calling real Upwork. They should verify the command stays no-AI, can write a local debug artifact, and does not leak fake token values through normal error output.
+
+Action tests should use in-memory SQLite plus `initialize_db(conn)` and should not call Upwork, OpenAI, or the batch pipeline.
+
+Action CLI tests should use temp SQLite paths, initialize their own local seed jobs, and verify that the action commands stay local-only without calling Upwork fetch/auth, OpenAI, raw inspection, fake demo, or live ingest helpers.
 
 For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
 

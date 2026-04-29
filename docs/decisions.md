@@ -300,3 +300,31 @@ The main remaining live-risk is GraphQL schema and response-shape mismatch, not 
 Tradeoff:
 
 There is another CLI command and another local artifact to manage. The artifact is intentionally local/private debug output rather than a reusable checked-in fixture, so anyone who wants a stable fixture later will need to curate it deliberately.
+
+## 2026-04-29 - User actions update `jobs.user_status` while preserving append-only history
+
+Decision:
+
+Local user-action tracking should append rows to `user_actions` and update `jobs.user_status` as the current status summary for the stable job.
+
+The action-to-status mapping for this MVP step is:
+
+- `seen -> seen`
+- `applied -> applied`
+- `skipped -> skipped`
+- `saved -> saved`
+- `bad_recommendation -> archived`
+- `good_recommendation -> seen`
+- `client_replied -> applied`
+- `interview -> applied`
+- `hired -> applied`
+
+The local action CLI commands should record tracking state only. They should not call Upwork mutations or alter historical `filter_results`, `ai_evaluations`, `economics_results`, or `triage_results` rows.
+
+Reason:
+
+The staged recommendation pipeline needs a clean feedback loop for later backtesting, but the historical recommendation rows must keep describing what the system recommended at the time. `user_actions` is the append-only audit trail, while `jobs.user_status` is the current lightweight summary the user can query quickly.
+
+Tradeoff:
+
+There are now two related sources of user-decision state: full history in `user_actions` and the current summary in `jobs.user_status`. That duplication is intentional and small, and it avoids expensive history reconstruction for simple status lookups.

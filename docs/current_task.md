@@ -2,192 +2,203 @@
 
 ## Task name
 
-Implement an Upwork raw-fetch inspection / live smoke-test command.
+Implement user action tracking for shortlist decisions.
 
 ## Goal
 
-Add a safe, non-AI inspection path that can fetch raw Upwork job payloads through the existing GraphQL client boundary, print useful response-shape information, and optionally write a local pretty-JSON artifact for query/normalizer calibration.
+Add a focused local action-tracking boundary so the user can record what they actually did with a lead after seeing a recommendation.
 
-This task should help validate real GraphQL access and schema shape before spending AI cost or running the full live pipeline.
+This task should use the existing `user_actions` table plus `jobs.user_status` summary field. It should not change recommendation logic, AI behavior, or any historical pipeline-stage rows.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/inspect_upwork.py` or an equivalent small module
+- `src/upwork_triage/actions.py`
+- `tests/test_actions.py`
 - `src/upwork_triage/cli.py`
-- `tests/test_inspect_upwork.py`
 - `tests/test_cli.py`
 - `docs/current_task.md`
 - `docs/testing.md`
 - `docs/design.md` if needed
-- `docs/decisions.md` if a durable inspection-artifact decision is made
+- `docs/decisions.md` if a durable action-status decision is made
 - `README.md` if command docs change
 
 Allowed supporting edits:
 
-- `src/upwork_triage/upwork_client.py` only if a tiny client/extractor helper is clearly needed
-- `src/upwork_triage/config.py` only if a small config field is clearly needed
-- `.env.example` only if config changes
+- `src/upwork_triage/db.py` only if a tiny helper or view adjustment is clearly needed and remains consistent with `docs/schema.md`
+- `src/upwork_triage/queue_view.py` only if rendering user action info is needed and documented
+- `docs/schema.md` only if the existing schema is wrong or incomplete
 - `pyproject.toml` only if needed for test/import configuration
 
-## Required public API
+## Public API
 
-Implement a small inspection module with responsibilities like:
+Implement a small action module with responsibilities like:
 
-- `RawInspectionSummary`
-- `inspect_upwork_raw(...)`
-- `render_raw_inspection_summary(...)`
-- `write_raw_inspection_artifact(...)`
+- `ActionError`
+- `UnknownJobError`
+- `InvalidActionError`
+- `UserActionResult`
+- `record_user_action(...)`
+- `fetch_user_actions_for_job(...)`
 
-Equivalent clear names are acceptable if the boundaries stay obvious and typed.
+Equivalent clear names are acceptable if the boundaries stay explicit and typed.
 
 Suggested shape:
 
-- `RawInspectionSummary`
-  - `fetched_count`
-  - `observed_keys`
-  - `first_job_keys`
-  - `sample_jobs`
-  - `artifact_path`
-- `inspect_upwork_raw(config, *, transport=None, artifact_path=None, sample_limit=3) -> RawInspectionSummary`
-- `render_raw_inspection_summary(summary) -> str`
-- `write_raw_inspection_artifact(path, *, config, jobs, summary) -> None`
+- `UserActionResult`
+  - `action_id`
+  - `job_key`
+  - `upwork_job_id`
+  - `job_snapshot_id`
+  - `action`
+  - `user_status`
+  - `notes`
+- `record_user_action(conn, *, job_key=None, upwork_job_id=None, action, notes=None) -> UserActionResult`
+- `fetch_user_actions_for_job(conn, *, job_key) -> list[dict[str, object]]`
 
-## Inspection behavior
+## Allowed action and status values
 
-The inspection path should:
+Use the existing schema-defined action values:
 
-1. load config
-2. fetch raw jobs through `fetch_upwork_jobs(config, transport=...)`
-3. not call AI
-4. not run normalization, economics, triage, or the full pipeline
-5. not write staged DB rows by default
-6. summarize the fetched payload shape
-7. optionally write a local pretty-JSON artifact
+- `seen`
+- `applied`
+- `skipped`
+- `saved`
+- `bad_recommendation`
+- `good_recommendation`
+- `client_replied`
+- `interview`
+- `hired`
 
-The summary should include:
+Use the existing schema-defined `jobs.user_status` values:
 
-- fetched job count
-- combined top-level keys observed across all returned jobs
-- first-job keys
-- a few sample values such as id / title / url when present
+- `new`
+- `seen`
+- `applied`
+- `skipped`
+- `saved`
+- `archived`
 
-Empty fetches should still produce a valid zero-count summary rather than crashing.
+## Action-to-status mapping
 
-## Artifact behavior
+Implement an explicit deterministic mapping from action to updated `jobs.user_status`:
 
-The artifact should be local-only debug output, not a source-controlled fixture by default.
+- `seen -> seen`
+- `applied -> applied`
+- `skipped -> skipped`
+- `saved -> saved`
+- `bad_recommendation -> archived`
+- `good_recommendation -> seen`
+- `client_replied -> applied`
+- `interview -> applied`
+- `hired -> applied`
 
-If written, it should include:
+If implementation reveals a better durable mapping, document it in `docs/decisions.md` and test it explicitly.
 
-- `fetched_at`
-- source metadata such as:
-  - `search_terms`
-  - `poll_limit`
-  - `graphql_url`
-- the raw `jobs` list returned by the Upwork client boundary
-- the observed-key summary
+## Action behavior
 
-The artifact must:
+`record_user_action()` should:
 
-- not include `UPWORK_ACCESS_TOKEN`
-- not include Authorization headers
-- create parent directories as needed
-- use pretty JSON for manual inspection
+1. require exactly one resolvable job identifier:
+   - `job_key`, or
+   - `upwork_job_id` when `job_key` is not provided
+2. allow both identifiers only when they resolve to the same job
+3. raise a clear error if the identifiers disagree
+4. raise `UnknownJobError` when the target job does not exist
+5. validate the action against the allowed action values
+6. insert one append-only row into `user_actions`
+7. copy `jobs.latest_normalized_snapshot_id` into `user_actions.job_snapshot_id` when available
+8. copy `jobs.upwork_job_id` into `user_actions.upwork_job_id` when available
+9. update `jobs.user_status` using the deterministic mapping
+10. return a typed result object
+11. keep the operation transactional
+12. not modify historical `filter_results`, `ai_evaluations`, `economics_results`, or `triage_results`
 
-Default artifact path may be:
-
-- `data/debug/upwork_raw_latest.json`
-
-If a default path is used, it must stay local/ignored rather than becoming a checked-in fixture.
+`fetch_user_actions_for_job()` should return action history ordered deterministically by `created_at` and `id`.
 
 ## CLI behavior
 
-Add a command:
+Add local-only helper commands under the existing package CLI:
 
-- `py -m upwork_triage inspect-upwork-raw`
+- `py -m upwork_triage action JOB_KEY ACTION [--notes TEXT]`
+- `py -m upwork_triage action-by-upwork-id UPWORK_JOB_ID ACTION [--notes TEXT]`
 
-The command should:
+The action commands should:
 
 1. load config with `load_config()`
-2. fetch raw jobs through the Upwork client boundary
-3. print a compact shape summary to stdout
-4. optionally write a JSON artifact
-5. return `0` on success
-6. fail clearly if `UPWORK_ACCESS_TOKEN` is missing or the fetch fails
+2. open SQLite with `connect_db(config.db_path)`
+3. create the DB parent directory only if needed for the configured local DB path
+4. call `initialize_db(conn)` so local DB ownership stays simple and idempotent
+5. record the action through the new action module
+6. print a short confirmation including:
+   - job key
+   - action
+   - resulting user status
+7. return `0` on success
+8. fail with a non-zero exit code and a helpful error on invalid action or unknown job
 
-Suggested flags:
+These commands must not:
 
-- `--no-write`
-- `--output PATH`
-- `--sample-limit N`
-
-The command must not:
-
-- call OpenAI
-- require `OPENAI_API_KEY`
+- call Upwork APIs
+- call OpenAI or any AI provider
+- run `fake-demo`
 - run `ingest-once`
-- write DB rows by default
-- silently fall back to fake data
+- run `inspect-upwork-raw`
+- mutate historical pipeline-stage tables
 
-## Security / privacy rules
-
-- Do not print `UPWORK_ACCESS_TOKEN` or other secrets.
-- Do not save Authorization headers in the artifact.
-- Raw job payloads may contain client/job text, so the artifact should be documented as a local/private debug file.
-- Error paths should stay helpful without echoing fake token values.
+An action-listing command is optional and is not required for this bounded task.
 
 ## Test requirements
 
-Add/update tests covering:
+Add or update tests covering:
 
-1. `inspect_upwork_raw()` calling the Upwork fetch boundary with the supplied config/transport
-2. fetched-count summary behavior
-3. observed-key aggregation across fetched jobs
-4. first-job key summary
-5. sample-limit behavior
-6. empty job-list behavior
-7. artifact JSON writing
-8. artifact metadata content
-9. absence of saved secrets / Authorization headers in artifacts
-10. parent-directory creation for artifact output
-11. rendered summary content
-12. `main(["inspect-upwork-raw", "--no-write"])` returning `0` with fake fetching
-13. inspect CLI output including fetched count and observed keys
-14. inspect CLI not requiring `OPENAI_API_KEY`
-15. inspect CLI missing-token failure path
-16. inspect CLI `--output PATH` writing the requested artifact
-17. inspect CLI `--no-write` not creating the default artifact
-18. inspect CLI not altering `fake-demo` or `ingest-once`
-19. no fake token values leaking through CLI error output
+1. recording an action by `job_key`
+2. recording an action by `upwork_job_id`
+3. deterministic `action -> user_status` updates
+4. notes persistence
+5. copying `latest_normalized_snapshot_id` into `user_actions.job_snapshot_id`
+6. copying `upwork_job_id` from the `jobs` table
+7. invalid action failure
+8. unknown `job_key` failure
+9. unknown `upwork_job_id` failure
+10. mismatched `job_key` and `upwork_job_id` failure
+11. deterministic ordering from `fetch_user_actions_for_job()`
+12. transaction behavior when validation fails
+13. `main(["action", JOB_KEY, "seen"])` success
+14. `main(["action-by-upwork-id", UPWORK_JOB_ID, "skipped"])` success
+15. CLI note persistence
+16. CLI invalid-action and unknown-job failures
+17. CLI use of `AUTOMAT_DB_PATH`
+18. proof that the action CLI path does not call Upwork fetch/auth, OpenAI, raw inspection, fake demo, or live ingest boundaries
+19. existing fake-demo, ingest-once, inspect-upwork-raw, and auth-helper tests staying green
 
-All inspection tests must stay fake-only and make no real network calls.
+All action tests must stay local-only and make no network or AI calls.
 
 ## Out of scope
 
 Do not implement:
 
-- recurring polling
-- background daemon behavior
-- DB schema changes
-- OpenAI / AI calls
-- economics or triage in the inspection path
+- Upwork API mutations
+- auto-apply
+- proposal generation
+- OpenAI or other AI calls
 - normalization / filter / economics / triage rule changes
-- proposal generation or auto-apply
+- Upwork auth or GraphQL client behavior changes
+- recurring polling or background jobs
 - dashboard / web UI
-- token storage in SQLite
+- analytics / backtesting logic
+- DB schema changes unless a real blocking issue is discovered
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- a user can run a no-AI raw Upwork inspection command
-- the command uses the existing Upwork client boundary
-- the command prints useful schema/shape information
-- the command can write a local JSON artifact for manual debugging
-- unit tests use fake boundaries only and require no network/secrets
-- no secrets are printed or saved
-- `fake-demo` and `ingest-once` still behave as before
-- docs are updated and honest about the calibration/debug purpose
+- local user actions can be recorded for existing jobs
+- `jobs.user_status` updates deterministically from the action mapping
+- `user_actions` keeps append-only history
+- historical pipeline-stage rows are unchanged
+- CLI action commands are available and tested
+- the action commands do not call Upwork or OpenAI paths
+- docs are updated and honest about local-only tracking
 - `py -m pytest` passes

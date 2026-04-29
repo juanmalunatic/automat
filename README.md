@@ -151,6 +151,24 @@ Unit tests do not use those live services. They monkeypatch fake fetch/AI bounda
 
 Recurring polling, background refresh policy, and token persistence beyond local `.env` copy/paste are still not implemented.
 
+## Local action tracking
+
+You can record what you actually did with a shortlisted lead without changing any historical recommendation rows on Upwork or in the staged pipeline:
+
+```powershell
+py -m upwork_triage action upwork:12345 applied --notes "Applied with custom WooCommerce hook"
+py -m upwork_triage action-by-upwork-id 12345 saved --notes "Want to revisit after current sprint"
+```
+
+This updates the local `jobs.user_status` summary and appends a row to `user_actions`.
+
+Important:
+
+- this is local tracking only
+- it does not apply on Upwork
+- it does not call OpenAI
+- it does not alter historical triage, AI, or economics rows
+
 ## Development
 
 Preferred test command:

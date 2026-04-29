@@ -177,6 +177,10 @@ Hard filter rejects may still be finalized here as `NO / ARCHIVE` even if no `ai
 
 This is future training/backtesting data.
 
+Action tracking should remain append-only in `user_actions` while `jobs.user_status` acts as the current user-facing summary for the stable job.
+
+Recording a user action should not mutate historical `filter_results`, `ai_evaluations`, `economics_results`, or `triage_results` rows. Those stages describe what the system recommended at the time; `user_actions` describes what the human actually did afterward.
+
 ## 5. Original manual schema mapping
 
 The original manual workflow had these field groups:
@@ -508,6 +512,13 @@ Calibration/debug command target:
 This command should fetch raw jobs through the Upwork client boundary, avoid OpenAI entirely, avoid staged DB writes by default, and print just enough shape information to refine the GraphQL query and normalizer safely.
 
 If it writes a raw inspection artifact, that artifact should be treated as a local/private debug file rather than a checked-in fixture unless it is manually curated later.
+
+Local user-action helper command targets:
+
+- `py -m upwork_triage action JOB_KEY ACTION [--notes TEXT]`
+- `py -m upwork_triage action-by-upwork-id UPWORK_JOB_ID ACTION [--notes TEXT]`
+
+These commands should record local tracking state only. They must not call Upwork mutations, auto-apply, or alter the historical recommendation pipeline.
 
 The first coding task should implement database initialization, schema, default settings, view, and tests.
 

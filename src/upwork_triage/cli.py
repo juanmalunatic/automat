@@ -7,8 +7,9 @@ import sqlite3
 import sys
 from typing import TextIO
 
+from upwork_triage.actions import ActionError, record_user_action
 from upwork_triage.config import ConfigError, load_config
-from upwork_triage.db import connect_db
+from upwork_triage.db import connect_db, initialize_db
 from upwork_triage.inspect_upwork import (
     DEFAULT_INSPECTION_ARTIFACT_PATH,
     inspect_upwork_raw,
@@ -93,11 +94,30 @@ def main(
                 sample_limit=args.sample_limit,
                 stdout=out,
             )
+        if args.command == "action":
+            return _run_action_command(
+                job_key=args.job_key,
+                upwork_job_id=None,
+                action=args.user_action,
+                notes=args.notes,
+                stdout=out,
+            )
+        if args.command == "action-by-upwork-id":
+            return _run_action_command(
+                job_key=None,
+                upwork_job_id=args.upwork_job_id,
+                action=args.user_action,
+                notes=args.notes,
+                stdout=out,
+            )
     except ConfigError as exc:
         err.write(f"Config error: {exc}\n")
         return 1
     except UpworkAuthError as exc:
         err.write(f"Upwork auth error: {exc}\n")
+        return 1
+    except ActionError as exc:
+        err.write(f"Action error: {exc}\n")
         return 1
     except Exception as exc:
         err.write(f"CLI error: {exc}\n")
@@ -160,6 +180,20 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         default=3,
         help="Number of sample jobs to include in the rendered summary.",
     )
+    action_parser = subparsers.add_parser(
+        "action",
+        help="Record a local user action for a job_key.",
+    )
+    action_parser.add_argument("job_key", help="Stable job key such as upwork:12345")
+    action_parser.add_argument("user_action", help="Action value to record")
+    action_parser.add_argument("--notes", help="Optional local note for this action.")
+    action_by_id_parser = subparsers.add_parser(
+        "action-by-upwork-id",
+        help="Record a local user action using a visible Upwork job id.",
+    )
+    action_by_id_parser.add_argument("upwork_job_id", help="Visible Upwork job id")
+    action_by_id_parser.add_argument("user_action", help="Action value to record")
+    action_by_id_parser.add_argument("--notes", help="Optional local note for this action.")
     return parser
 
 
@@ -238,6 +272,39 @@ def _run_inspect_upwork_raw(
         sample_limit=sample_limit,
     )
     print(render_raw_inspection_summary(summary), file=stdout)
+    return 0
+
+
+def _run_action_command(
+    *,
+    job_key: str | None,
+    upwork_job_id: str | None,
+    action: str,
+    notes: str | None,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        result = record_user_action(
+            conn,
+            job_key=job_key,
+            upwork_job_id=upwork_job_id,
+            action=action,
+            notes=notes,
+        )
+        print(f"Recorded action for {result.job_key}", file=stdout)
+        print(f"Action: {result.action}", file=stdout)
+        print(f"User status: {result.user_status}", file=stdout)
+        if result.notes:
+            print(f"Notes: {result.notes}", file=stdout)
+    finally:
+        conn.close()
+
     return 0
 
 

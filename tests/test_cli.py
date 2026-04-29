@@ -18,7 +18,7 @@ import upwork_triage.run_pipeline as run_pipeline_module
 from upwork_triage.ai_eval import AiEvaluation
 from upwork_triage.cli import main
 from upwork_triage.config import load_config
-from upwork_triage.db import connect_db
+from upwork_triage.db import connect_db, initialize_db
 from upwork_triage.upwork_auth import TokenResponse
 
 
@@ -146,6 +146,216 @@ def test_main_inspect_upwork_raw_no_write_returns_zero_and_prints_summary(
     assert "Fetched jobs: 2" in output
     assert "Observed keys:" in output
     assert "id=job-1" in output
+
+
+def test_main_action_returns_zero_and_prints_confirmation(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "actions" / "automat.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_cli_job(shared_conn, job_key="upwork:action-1", upwork_job_id="action-1")
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = main(["action", "upwork:action-1", "seen"], stdout=stdout, stderr=stderr)
+
+        output = stdout.getvalue()
+        assert exit_code == 0
+        assert stderr.getvalue() == ""
+        assert "Recorded action for upwork:action-1" in output
+        assert "Action: seen" in output
+        assert "User status: seen" in output
+    finally:
+        shared_conn.close()
+
+
+def test_main_action_with_notes_stores_notes(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "actions" / "notes.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_cli_job(shared_conn, job_key="upwork:notes-1", upwork_job_id="notes-1")
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        exit_code = main(
+            [
+                "action",
+                "upwork:notes-1",
+                "applied",
+                "--notes",
+                "Applied with custom WooCommerce hook",
+            ],
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+        assert exit_code == 0
+
+        row = shared_conn.execute(
+            "SELECT action, notes FROM user_actions ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "applied"
+        assert row[1] == "Applied with custom WooCommerce hook"
+    finally:
+        shared_conn.close()
+
+
+def test_main_action_by_upwork_id_resolves_job_and_updates_status(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "actions" / "by-id.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_cli_job(shared_conn, job_key="upwork:22222", upwork_job_id="22222")
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        exit_code = main(
+            ["action-by-upwork-id", "22222", "skipped"],
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+        assert exit_code == 0
+
+        row = shared_conn.execute(
+            "SELECT user_status FROM jobs WHERE job_key = ?",
+            ("upwork:22222",),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "skipped"
+    finally:
+        shared_conn.close()
+
+
+def test_action_command_invalid_action_returns_non_zero_and_helpful_error(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "actions" / "invalid.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_cli_job(shared_conn, job_key="upwork:invalid-cli", upwork_job_id="invalid-cli")
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = main(
+            ["action", "upwork:invalid-cli", "not_real"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        assert exit_code != 0
+        assert "Action error:" in stderr.getvalue()
+        assert "action must be one of:" in stderr.getvalue()
+    finally:
+        shared_conn.close()
+
+
+def test_action_command_unknown_job_returns_non_zero_and_helpful_error(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "actions" / "missing.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = main(
+            ["action", "upwork:missing-cli", "seen"],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        assert exit_code != 0
+        assert "Action error:" in stderr.getvalue()
+        assert "unknown job_key" in stderr.getvalue()
+    finally:
+        shared_conn.close()
+
+
+def test_action_command_uses_configured_db_path_and_creates_parent_directory(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_dir = workspace_tmp_dir / "nested" / "actions" / "data"
+    db_path = db_dir / "local-actions.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_cli_job(shared_conn, job_key="upwork:path-1", upwork_job_id="path-1")
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    recorded_paths = install_in_memory_cli_connection(
+        monkeypatch,
+        db_path,
+        shared_connection=shared_conn,
+    )
+
+    try:
+        exit_code = main(["action", "upwork:path-1", "saved"], stdout=StringIO(), stderr=StringIO())
+
+        assert exit_code == 0
+        assert db_dir.exists()
+        assert recorded_paths == [db_path]
+    finally:
+        shared_conn.close()
+
+
+def test_action_command_does_not_call_pipeline_or_inspection_boundaries(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "actions" / "local-only.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_cli_job(shared_conn, job_key="upwork:local-only", upwork_job_id="local-only")
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_fake_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fake demo should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_live_ingest_once",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live ingest should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.inspect_upwork_raw",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw inspection should not run")),
+    )
+
+    try:
+        exit_code = main(
+            ["action", "upwork:local-only", "seen"],
+            stdout=StringIO(),
+            stderr=StringIO(),
+        )
+
+        assert exit_code == 0
+    finally:
+        shared_conn.close()
 
 
 def test_inspect_upwork_raw_output_path_writes_requested_artifact(
@@ -624,3 +834,82 @@ def make_strong_raw_payload() -> dict[str, object]:
             "low": "$25/hr",
         },
     }
+
+
+def seed_cli_job(conn: sqlite3.Connection, *, job_key: str, upwork_job_id: str) -> None:
+    initialize_db(conn)
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            job_key,
+            upwork_job_id,
+            source_url,
+            first_seen_at,
+            last_seen_at
+        ) VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            job_key,
+            upwork_job_id,
+            f"https://www.upwork.com/jobs/~{upwork_job_id}",
+            "2026-04-29T12:00:00Z",
+            "2026-04-29T12:00:00Z",
+        ),
+    )
+    raw_snapshot_id = int(
+        conn.execute(
+            """
+            INSERT INTO raw_job_snapshots (
+                job_key,
+                upwork_job_id,
+                fetched_at,
+                source_query,
+                raw_json,
+                raw_hash
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_key,
+                upwork_job_id,
+                "2026-04-29T12:01:00Z",
+                "fixture",
+                '{"id":"seed"}',
+                f"raw-hash-{upwork_job_id}",
+            ),
+        ).lastrowid
+    )
+    job_snapshot_id = int(
+        conn.execute(
+            """
+            INSERT INTO job_snapshots_normalized (
+                raw_snapshot_id,
+                job_key,
+                upwork_job_id,
+                normalized_at,
+                normalizer_version,
+                source_url,
+                field_status_json,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                raw_snapshot_id,
+                job_key,
+                upwork_job_id,
+                "2026-04-29T12:02:00Z",
+                "normalizer-cli",
+                f"https://www.upwork.com/jobs/~{upwork_job_id}",
+                "{}",
+                "2026-04-29T12:02:00Z",
+            ),
+        ).lastrowid
+    )
+    conn.execute(
+        """
+        UPDATE jobs
+        SET latest_raw_snapshot_id = ?, latest_normalized_snapshot_id = ?
+        WHERE job_key = ?
+        """,
+        (raw_snapshot_id, job_snapshot_id, job_key),
+    )
+    conn.commit()
