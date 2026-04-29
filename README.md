@@ -97,6 +97,40 @@ py -m upwork_triage inspect-upwork-raw --output data/debug/my_upwork_sample.json
 
 Important: raw inspection artifacts are local/private debug files that may contain real job and client text. Do not commit them. Their purpose is to help refine the GraphQL query and the normalizer before using `ingest-once`.
 
+## Raw artifact dry run
+
+After saving a raw inspection artifact, you can run the current normalizer and deterministic filters against it without calling Upwork again and without spending AI cost:
+
+```powershell
+py -m upwork_triage dry-run-raw-artifact
+```
+
+This command:
+
+- reads `data/debug/upwork_raw_latest.json` by default
+- does not require `OPENAI_API_KEY`
+- does not require a live Upwork call if the artifact already exists
+- does not write staged DB rows by default
+- reports field coverage, parse failures, and deterministic routing buckets
+
+Optional examples:
+
+```powershell
+py -m upwork_triage dry-run-raw-artifact --input data/debug/my_upwork_sample.json
+py -m upwork_triage dry-run-raw-artifact --sample-limit 5
+py -m upwork_triage dry-run-raw-artifact --json-output data/debug/my_upwork_dry_run.json
+```
+
+This is the calibration bridge between raw inspection and the live-compatible ingest path. Use it to refine the GraphQL query, normalizer, and deterministic filters before paying AI cost through `ingest-once`.
+
+Suggested calibration workflow:
+
+```powershell
+py -m upwork_triage inspect-upwork-raw
+py -m upwork_triage dry-run-raw-artifact
+py -m upwork_triage ingest-once
+```
+
 ## Upwork auth helpers
 
 The repository now includes local helper commands for obtaining or refreshing Upwork tokens:
@@ -146,6 +180,7 @@ It will use:
 
 The OAuth helper commands above are how you obtain or refresh `UPWORK_ACCESS_TOKEN` locally in this MVP step.
 The raw inspection command above is the safer first live smoke test before spending AI cost through `ingest-once`.
+The dry-run command above is the next calibration step when you want to inspect normalized coverage and deterministic filter routing without paying AI cost.
 
 Unit tests do not use those live services. They monkeypatch fake fetch/AI boundaries instead, and `fake-demo` remains the no-credentials local path.
 

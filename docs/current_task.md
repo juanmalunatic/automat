@@ -2,162 +2,210 @@
 
 ## Task name
 
-Implement an actionable, re-openable terminal queue.
+Implement a no-AI raw-artifact normalization/filter dry run.
 
 ## Goal
 
-Add a standalone queue command and render the identifiers/status needed for local action tracking directly in the terminal shortlist.
+Add a local calibration bridge between `inspect-upwork-raw` and `ingest-once`.
 
-This task should make the current workflow practical:
+The command should read a raw inspection artifact, run the current normalizer and deterministic filters only, and report:
 
-1. run `ingest-once`
-2. run `queue`
-3. copy `job_key` from the queue
-4. run `action <job_key> applied|skipped|saved`
-5. run `queue` again and still see the local status if the row remains shortlisted
+1. how many jobs loaded successfully
+2. routing-bucket distribution
+3. key-field coverage after normalization
+4. parse-failure hotspots
+5. a few per-job sample lines for manual review
 
-The task should not change recommendation logic, AI behavior, or shortlist selection semantics beyond exposing the local status/identifier fields needed for action tracking.
+This task should not call AI, should not run economics or triage, and should not write staged DB rows by default.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/queue_view.py`
+- `src/upwork_triage/dry_run.py`
 - `src/upwork_triage/cli.py`
-- `tests/test_queue_view.py`
+- `tests/test_dry_run.py`
 - `tests/test_cli.py`
 - `docs/current_task.md`
 - `docs/testing.md`
-- `README.md`
 - `docs/design.md` if needed
-- `docs/schema.md` if the view contract changes
-- `docs/decisions.md` if a durable queue/action UX decision is made
+- `docs/decisions.md` if a durable dry-run decision is made
+- `README.md` if command docs change
 
 Allowed supporting edits:
 
-- `src/upwork_triage/db.py` if `v_decision_shortlist` needs to expose `jobs.user_status`
-- `tests/test_db.py` if the view contract changes
-- `docs/schema.md` if `v_decision_shortlist` adds `user_status`
+- `src/upwork_triage/normalize.py` only if a tiny helper is clearly needed, without changing normalization semantics unless a bug is discovered and documented
+- `src/upwork_triage/filters.py` only if a tiny helper is clearly needed, without changing filter rules
+- `.gitignore` only if a new default output path is introduced
 - `pyproject.toml` only if needed for test/import configuration
 
-## Queue command behavior
+## Public API
 
-Add a standalone package CLI command:
+Implement a small pure dry-run module with responsibilities like:
 
-- `py -m upwork_triage queue`
+- `RawArtifactError`
+- `JobDryRunResult`
+- `RawArtifactDryRunSummary`
+- `load_raw_inspection_artifact(path)`
+- `dry_run_raw_jobs(raw_jobs, *, artifact_path=None)`
+- `render_raw_artifact_dry_run_summary(summary, *, sample_limit=10, show_field_status=False)`
+- `write_dry_run_summary_json(path, summary)` if JSON summary output is implemented
 
-The queue command should:
+Equivalent clear names are acceptable if the module stays explicit, typed, and local-only.
 
-1. load config with `load_config()`
-2. open SQLite with `connect_db(config.db_path)`
-3. create the DB parent directory if needed for the configured local DB path
-4. call `initialize_db(conn)` safely/idempotently
-5. fetch rows through `fetch_decision_shortlist(conn)`
-6. render rows through `render_decision_shortlist(rows)`
-7. print the rendered output to stdout
-8. close the DB connection
-9. return `0` on success
+## Dry-run command behavior
 
-The queue command must not:
+Add a package CLI command:
+
+- `py -m upwork_triage dry-run-raw-artifact`
+
+Suggested flags:
+
+- `--input PATH`
+  - default: `data/debug/upwork_raw_latest.json`
+- `--sample-limit N`
+  - default: `10`
+- `--json-output PATH`
+  - optional
+- `--show-field-status`
+  - optional
+
+The command should:
+
+1. read a raw inspection artifact produced by `inspect-upwork-raw`
+2. load the top-level `jobs` list
+3. normalize each raw job with `normalize_job_payload()`
+4. evaluate deterministic filters with `evaluate_filters()`
+5. print a compact summary to stdout
+6. optionally write a JSON dry-run summary if `--json-output` is supplied
+7. return `0` when processing completes, even if some jobs have missing fields or route to `DISCARD`
+
+The command must not:
 
 - call Upwork
 - call OpenAI or any AI provider
+- run economics
+- run final triage
 - run `fake-demo`
 - run `ingest-once`
-- mutate `user_actions`
-- mutate `jobs.user_status`
+- write staged SQLite rows by default
 
-Read-only DB initialization is acceptable because the project already owns the local SQLite schema.
+## Dry-run summary behavior
 
-## Queue rendering requirements
+The dry run should report at least:
 
-Rendered shortlist rows should include:
+- artifact path
+- total jobs loaded
+- jobs processed successfully
+- jobs failed unexpectedly
+- normalization successes / failures
+- observed `job_key` examples
+- routing bucket counts
+- hard reject count
+- `AI_EVAL` count
+- `MANUAL_EXCEPTION` count
+- `LOW_PRIORITY_REVIEW` count
+- `DISCARD` count
+- key-field visible coverage after normalization
+- parse-failure counts
+- sample per-job lines showing:
+  - title
+  - `job_key`
+  - routing bucket
+  - score
+  - reject reasons
+  - positive flags
 
-- `job_key`
-- `upwork_job_id` when available
-- `user_status` when available
-- final verdict
-- queue bucket
-- title
-- source URL
-- existing AI summary fields
-- existing economics summary fields
-- existing client/activity summary fields
-- final reason / trap / proposal angle
+Coverage must be based on normalized values and/or normalized field-status information. Missing values must not be guessed or treated as zero.
 
-The renderer should also include a short compact action hint, for example:
+At minimum, coverage should be reported for:
 
-- `Action: py -m upwork_triage action <job_key> applied|skipped|saved`
+- `upwork_job_id`
+- `source_url`
+- `j_title`
+- `j_description`
+- `c_verified_payment`
+- `c_country`
+- `c_hist_total_spent`
+- `c_hist_hire_rate`
+- `c_hist_avg_hourly_rate`
+- `j_contract_type`
+- `j_pay_fixed`
+- `j_pay_hourly_low`
+- `j_pay_hourly_high`
+- `j_apply_cost_connects`
+- `j_skills`
+- `a_proposals`
+- `a_interviewing`
+- `a_invites_sent`
+- `j_mins_since_posted`
 
-Missing values should render as `—` and must not crash rendering, including rows that do not include `user_status` or `upwork_job_id`.
+## Artifact behavior
 
-Keep queue grouping and ordering unchanged:
+The dry-run command should read the raw-artifact shape produced by `inspect-upwork-raw`:
 
-1. `HOT`
-2. `MANUAL_EXCEPTION`
-3. `REVIEW`
+- top-level JSON object
+- `jobs` list
+- optional source/summary metadata
 
-## View contract change
+Malformed artifacts should fail clearly:
 
-If needed, extend `v_decision_shortlist` to expose:
+- missing file
+- invalid JSON
+- missing `jobs`
+- non-list `jobs`
 
-- `jobs.user_status AS user_status`
-
-This is a view-only contract update, not a new table/schema concept.
-
-The view must still:
-
-- expose `job_key` and `upwork_job_id`
-- filter to `HOT`, `REVIEW`, and `MANUAL_EXCEPTION`
-- select the latest triage row per `job_key` with `MAX(triage_results.id)`
-
-Do not change shortlist filtering by `user_status` in this task. Rows should continue to appear or not appear based on the existing triage/queue logic, not local action status.
+If an individual job fails normalization or filtering unexpectedly, prefer recording an error result for that job and continuing rather than failing the entire dry run.
 
 ## Test requirements
 
 Add or update tests covering:
 
-1. `render_decision_shortlist()` includes `job_key`
-2. rendering includes `upwork_job_id` when present
-3. rendering includes `user_status` when present
-4. rendering includes a compact action hint
-5. missing `job_key` / `upwork_job_id` / `user_status` render as `—` without crashing
-6. existing bucket grouping and high-signal row content still render
-7. empty rows still render the clear empty-queue message
-8. if the view changes, `v_decision_shortlist` includes `user_status`
-9. if the view changes, `v_decision_shortlist` still includes `job_key` and `upwork_job_id`
-10. if the view changes, `v_decision_shortlist` still filters to `HOT`, `REVIEW`, and `MANUAL_EXCEPTION`
-11. if the view changes, `v_decision_shortlist` still selects the latest triage row per `job_key`
-12. `main(["queue"])` returns `0` and prints the current shortlist from the configured DB
-13. the queue command uses `AUTOMAT_DB_PATH` and creates parent directories if needed
-14. the queue command on an empty initialized DB prints the empty-queue message
-15. the queue command does not call fake-demo, ingest-once, raw inspection, Upwork fetch, OpenAI evaluation, or action recording
-16. queue CLI output includes `job_key` and the action hint for a seeded shortlist row
-17. existing fake-demo, ingest-once, inspect-upwork-raw, auth-helper, and action tests remain passing
+1. `load_raw_inspection_artifact()` reads the `jobs` list from an inspect artifact
+2. missing artifact path raises a clear `RawArtifactError`
+3. malformed JSON raises a clear `RawArtifactError`
+4. missing or non-list `jobs` raises a clear `RawArtifactError`
+5. `dry_run_raw_jobs()` normalizes and filters a strong fake raw job
+6. `dry_run_raw_jobs()` records routing bucket counts
+7. `dry_run_raw_jobs()` records key-field visible counts
+8. `dry_run_raw_jobs()` records parse-failure counts
+9. `dry_run_raw_jobs()` handles an empty jobs list
+10. `dry_run_raw_jobs()` handles an individual malformed job according to the chosen behavior
+11. `render_raw_artifact_dry_run_summary()` includes counts, bucket distribution, coverage, parse failures, and sample per-job lines
+12. `write_dry_run_summary_json()` writes valid JSON if implemented
+13. `main(["dry-run-raw-artifact", "--input", PATH])` returns `0` for a valid artifact
+14. CLI output includes total loaded, routing distribution, and sample title / `job_key`
+15. the command does not require `UPWORK_ACCESS_TOKEN` or `OPENAI_API_KEY`
+16. missing or malformed artifact returns non-zero with a helpful error
+17. `--sample-limit` limits rendered sample rows
+18. `--json-output` writes a JSON summary if implemented
+19. the dry-run CLI path does not call Upwork fetch, OpenAI evaluation, live ingest, fake demo, economics, or action recording
+20. existing fake-demo, inspect-upwork-raw, ingest-once, queue, and action tests remain passing
 
-All queue tests must stay local-only and make no network or AI calls.
+All dry-run tests must stay local-only and make no network, AI, or staged DB writes by default.
 
 ## Out of scope
 
 Do not implement:
 
-- Upwork API mutations
-- auto-apply
 - OpenAI or other AI calls
-- queue-triggered ingest/fetch/evaluation
-- normalization / filter / economics / triage rule changes
-- dashboard / web UI
-- analytics / backtesting
+- economics or final triage in this command
+- default staged DB writes
+- live Upwork fetch inside this command
 - polling / daemon behavior
+- proposal generation
+- auto-apply
+- dashboard / web UI
+- normalization or filter rule changes beyond clearly documented tiny bug fixes
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- a user can re-open the current local shortlist without ingesting again
-- rendered queue rows include the `job_key` needed by action commands
-- rendered queue rows include `user_status` when available
-- the queue command is effectively read-only aside from idempotent DB initialization
-- the queue command makes no Upwork or OpenAI calls
-- docs are updated and honest about the local queue/action flow
+- a user can analyze a raw Upwork artifact without AI cost
+- the dry run reports normalized field coverage and deterministic filter routing
+- the dry run does not write DB rows by default
+- the dry run does not call Upwork or OpenAI
+- missing or malformed artifacts fail clearly
+- docs are updated and honest about the calibration purpose
 - `py -m pytest` passes

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from io import StringIO
 import shutil
 import sqlite3
@@ -146,6 +147,198 @@ def test_main_inspect_upwork_raw_no_write_returns_zero_and_prints_summary(
     assert "Fetched jobs: 2" in output
     assert "Observed keys:" in output
     assert "id=job-1" in output
+
+
+def test_main_dry_run_raw_artifact_returns_zero_and_prints_summary(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_latest.json"
+    write_cli_raw_artifact(
+        artifact_path,
+        jobs=[make_strong_raw_payload(), make_hard_reject_raw_payload()],
+    )
+    monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "upwork_triage.cli.load_config",
+        lambda: (_ for _ in ()).throw(AssertionError("dry-run should not need load_config")),
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        ["dry-run-raw-artifact", "--input", str(artifact_path)],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert "Jobs loaded: 2" in output
+    assert "Routing buckets:" in output
+    assert "WooCommerce order sync plugin bug fix" in output
+    assert "upwork:987654321" in output
+
+
+def test_dry_run_raw_artifact_missing_artifact_returns_non_zero_and_helpful_error(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "missing.json"
+    monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        ["dry-run-raw-artifact", "--input", str(artifact_path)],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code != 0
+    assert "Dry-run error:" in stderr.getvalue()
+    assert "not found" in stderr.getvalue()
+
+
+def test_dry_run_raw_artifact_malformed_artifact_returns_non_zero_and_helpful_error(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "broken.json"
+    artifact_path.write_text("{not json", encoding="utf-8")
+    monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        ["dry-run-raw-artifact", "--input", str(artifact_path)],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code != 0
+    assert "Dry-run error:" in stderr.getvalue()
+    assert "valid JSON" in stderr.getvalue()
+
+
+def test_dry_run_raw_artifact_sample_limit_limits_rendered_rows(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_latest.json"
+    write_cli_raw_artifact(
+        artifact_path,
+        jobs=[
+            make_strong_raw_payload(),
+            make_strong_raw_payload(
+                job_id="222333444",
+                source_url="https://www.upwork.com/jobs/~222333444",
+                title="Second calibration job",
+            ),
+        ],
+    )
+    monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        [
+            "dry-run-raw-artifact",
+            "--input",
+            str(artifact_path),
+            "--sample-limit",
+            "1",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert "WooCommerce order sync plugin bug fix" in output
+    assert "Second calibration job" not in output
+
+
+def test_dry_run_raw_artifact_json_output_writes_summary(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_latest.json"
+    json_output_path = workspace_tmp_dir / "debug" / "dry_run_summary.json"
+    write_cli_raw_artifact(artifact_path, jobs=[make_strong_raw_payload()])
+    monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    exit_code = main(
+        [
+            "dry-run-raw-artifact",
+            "--input",
+            str(artifact_path),
+            "--json-output",
+            str(json_output_path),
+        ],
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    assert exit_code == 0
+    assert json_output_path.exists()
+
+
+def test_dry_run_raw_artifact_does_not_call_live_or_action_boundaries(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_latest.json"
+    write_cli_raw_artifact(artifact_path, jobs=[make_strong_raw_payload()])
+    monkeypatch.setattr(
+        "upwork_triage.cli.load_config",
+        lambda: (_ for _ in ()).throw(AssertionError("dry-run should not need load_config")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_fake_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fake demo should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_live_ingest_once",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live ingest should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.inspect_upwork_raw",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw inspection should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.record_user_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("action recording should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "fetch_upwork_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("upwork fetch should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "evaluate_with_openai",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("openai eval should not run")),
+    )
+
+    exit_code = main(
+        ["dry-run-raw-artifact", "--input", str(artifact_path)],
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    assert exit_code == 0
 
 
 def test_main_queue_returns_zero_and_prints_current_shortlist(
@@ -925,8 +1118,8 @@ def make_ai_evaluation() -> AiEvaluation:
     )
 
 
-def make_strong_raw_payload() -> dict[str, object]:
-    return {
+def make_strong_raw_payload(**overrides: object) -> dict[str, object]:
+    payload = {
         "id": "987654321",
         "source_url": "https://www.upwork.com/jobs/~987654321",
         "title": "WooCommerce order sync plugin bug fix",
@@ -959,6 +1152,18 @@ def make_strong_raw_payload() -> dict[str, object]:
             "low": "$25/hr",
         },
     }
+    payload.update(overrides)
+    return payload
+
+
+def make_hard_reject_raw_payload() -> dict[str, object]:
+    payload = make_strong_raw_payload()
+    payload["id"] = "111222333"
+    payload["source_url"] = "https://www.upwork.com/jobs/~111222333"
+    client = dict(payload["client"])
+    client["payment_verified"] = "payment unverified"
+    payload["client"] = client
+    return payload
 
 
 def make_fake_ai_output() -> dict[str, object]:
@@ -990,6 +1195,25 @@ def seed_queue_shortlist(conn: sqlite3.Connection, *, user_status: str = "new") 
         (user_status, "upwork:987654321"),
     )
     conn.commit()
+
+
+def write_cli_raw_artifact(path: Path, *, jobs: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = {
+        "fetched_at": "2026-04-29T12:00:00Z",
+        "source": {
+            "search_terms": ["WooCommerce", "API"],
+            "poll_limit": 25,
+            "graphql_url": "https://api.upwork.com/graphql",
+        },
+        "summary": {
+            "fetched_count": len(jobs),
+            "observed_keys": sorted({key for job in jobs for key in job.keys()}),
+            "first_job_keys": sorted(jobs[0].keys()) if jobs else [],
+        },
+        "jobs": jobs,
+    }
+    path.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def seed_cli_job(conn: sqlite3.Connection, *, job_key: str, upwork_job_id: str) -> None:

@@ -10,6 +10,13 @@ from typing import TextIO
 from upwork_triage.actions import ActionError, record_user_action
 from upwork_triage.config import ConfigError, load_config
 from upwork_triage.db import connect_db, initialize_db
+from upwork_triage.dry_run import (
+    RawArtifactError,
+    dry_run_raw_jobs,
+    load_raw_inspection_artifact,
+    render_raw_artifact_dry_run_summary,
+    write_dry_run_summary_json,
+)
 from upwork_triage.inspect_upwork import (
     DEFAULT_INSPECTION_ARTIFACT_PATH,
     inspect_upwork_raw,
@@ -94,6 +101,14 @@ def main(
                 sample_limit=args.sample_limit,
                 stdout=out,
             )
+        if args.command == "dry-run-raw-artifact":
+            return _run_dry_run_raw_artifact(
+                input_path=args.input,
+                sample_limit=args.sample_limit,
+                json_output=args.json_output,
+                show_field_status=args.show_field_status,
+                stdout=out,
+            )
         if args.command == "queue":
             return _run_queue(stdout=out)
         if args.command == "action":
@@ -117,6 +132,9 @@ def main(
         return 1
     except UpworkAuthError as exc:
         err.write(f"Upwork auth error: {exc}\n")
+        return 1
+    except RawArtifactError as exc:
+        err.write(f"Dry-run error: {exc}\n")
         return 1
     except ActionError as exc:
         err.write(f"Action error: {exc}\n")
@@ -185,6 +203,30 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         type=int,
         default=3,
         help="Number of sample jobs to include in the rendered summary.",
+    )
+    dry_run_parser = subparsers.add_parser(
+        "dry-run-raw-artifact",
+        help="Run normalization and deterministic filters against a saved raw inspection artifact.",
+    )
+    dry_run_parser.add_argument(
+        "--input",
+        default=str(DEFAULT_INSPECTION_ARTIFACT_PATH),
+        help="Path to a raw inspection artifact JSON file.",
+    )
+    dry_run_parser.add_argument(
+        "--sample-limit",
+        type=int,
+        default=10,
+        help="Number of sample job lines to include in the rendered summary.",
+    )
+    dry_run_parser.add_argument(
+        "--json-output",
+        help="Optional JSON path for a machine-readable dry-run summary.",
+    )
+    dry_run_parser.add_argument(
+        "--show-field-status",
+        action="store_true",
+        help="Include per-field status distribution details in stdout.",
     )
     action_parser = subparsers.add_parser(
         "action",
@@ -294,6 +336,29 @@ def _run_inspect_upwork_raw(
         sample_limit=sample_limit,
     )
     print(render_raw_inspection_summary(summary), file=stdout)
+    return 0
+
+
+def _run_dry_run_raw_artifact(
+    *,
+    input_path: str,
+    sample_limit: int,
+    json_output: str | None,
+    show_field_status: bool,
+    stdout: TextIO,
+) -> int:
+    raw_jobs = load_raw_inspection_artifact(input_path)
+    summary = dry_run_raw_jobs(raw_jobs, artifact_path=input_path)
+    if json_output:
+        write_dry_run_summary_json(json_output, summary)
+    print(
+        render_raw_artifact_dry_run_summary(
+            summary,
+            sample_limit=sample_limit,
+            show_field_status=show_field_status,
+        ),
+        file=stdout,
+    )
     return 0
 
 

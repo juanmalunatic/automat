@@ -101,6 +101,13 @@ Should verify:
 - `inspect-upwork-raw --output PATH` writes the requested artifact
 - `inspect-upwork-raw --no-write` does not create the default artifact
 - inspect CLI error output must not leak fake token values
+- `main(["dry-run-raw-artifact", "--input", PATH])` returns `0` for a valid raw inspection artifact
+- `dry-run-raw-artifact` prints total jobs loaded, routing bucket counts, and sample normalized/filter lines
+- `dry-run-raw-artifact` does not require `UPWORK_ACCESS_TOKEN` or `OPENAI_API_KEY`
+- missing or malformed dry-run artifacts return a non-zero exit code with a helpful error
+- `--sample-limit` limits the rendered sample rows
+- `--json-output PATH` writes a JSON dry-run summary when requested
+- the dry-run CLI path does not call Upwork fetch, OpenAI evaluation, live ingest helpers, fake demo helpers, economics, or action recording
 - `main(["queue"])` returns `0` and prints the current shortlist from the configured DB
 - `queue` uses the configured `AUTOMAT_DB_PATH` and creates parent directories when needed
 - `queue` on an empty initialized DB prints the empty-queue message
@@ -290,6 +297,24 @@ Should verify:
 - parent artifact directories are created automatically
 - `render_raw_inspection_summary()` includes count, observed keys, first-job keys, and sample id/title/url-like values
 
+### `tests/test_dry_run.py`
+
+Should verify:
+
+- `load_raw_inspection_artifact()` reads the `jobs` list from an `inspect-upwork-raw` artifact
+- missing artifact files raise `RawArtifactError`
+- malformed JSON raises `RawArtifactError`
+- missing or non-list `jobs` values raise `RawArtifactError`
+- non-object items inside `jobs` are rejected clearly
+- `dry_run_raw_jobs()` normalizes and filters a strong fake raw job
+- routing bucket counts are recorded
+- key field visible-count coverage is recorded
+- parse-failure counts are recorded
+- empty job lists still produce a valid summary
+- unexpected per-job normalization/filter failures are recorded per job while the overall summary continues
+- `render_raw_artifact_dry_run_summary()` includes counts, routing distribution, field coverage, parse failures, and sample per-job lines
+- `write_dry_run_summary_json()` writes valid JSON when requested
+
 ### `tests/test_upwork_auth.py`
 
 Should verify:
@@ -375,6 +400,8 @@ Upwork auth tests should use fake form transports only. They should not require 
 
 Upwork raw-inspection tests should use fake fetch boundaries only. They should not require real Upwork credentials, real network access, or OpenAI credentials.
 
+Dry-run artifact tests should use local JSON fixtures only. They should not require real Upwork credentials, real network access, OpenAI credentials, or staged DB writes.
+
 Do not require real AI calls for unit tests.
 
 AI tests should use fake model responses or stored fixture JSON.
@@ -398,6 +425,8 @@ CLI tests should use temp DB paths through env overrides or other isolated confi
 Auth-helper CLI tests should monkeypatch token exchange/refresh helpers rather than calling real Upwork OAuth services. They should verify the secret warning comment and ensure fake secret values do not leak through normal error output.
 
 `inspect-upwork-raw` CLI tests should monkeypatch the Upwork fetch boundary rather than calling real Upwork. They should verify the command stays no-AI, can write a local debug artifact, and does not leak fake token values through normal error output.
+
+`dry-run-raw-artifact` CLI tests should read local raw-inspection artifacts, stay no-AI and no-network, avoid staged DB writes by default, and ensure missing or malformed artifacts fail clearly.
 
 Action tests should use in-memory SQLite plus `initialize_db(conn)` and should not call Upwork, OpenAI, or the batch pipeline.
 

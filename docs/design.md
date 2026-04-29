@@ -88,6 +88,8 @@ The first live-ingestion step may use a best-effort GraphQL query that still nee
 
 Before spending AI cost through `ingest-once`, the app may run a raw-fetch inspection step that fetches Upwork payloads, prints response-shape information, and optionally writes a local debug artifact for schema/normalizer calibration.
 
+The next calibration bridge after raw inspection is a no-AI dry run over a saved raw artifact. That step should reuse the real normalizer and deterministic filters, report field coverage and routing distribution, and avoid staged DB writes by default so query/normalizer adjustments can happen before AI cost is incurred.
+
 ### Normalized data
 
 Normalized visible job data is stored in `job_snapshots_normalized`.
@@ -514,6 +516,12 @@ Calibration/debug command target:
 This command should fetch raw jobs through the Upwork client boundary, avoid OpenAI entirely, avoid staged DB writes by default, and print just enough shape information to refine the GraphQL query and normalizer safely.
 
 If it writes a raw inspection artifact, that artifact should be treated as a local/private debug file rather than a checked-in fixture unless it is manually curated later.
+
+Calibration dry-run command target:
+
+`py -m upwork_triage dry-run-raw-artifact`
+
+This command should read a previously saved raw inspection artifact, run only normalization plus deterministic filtering, and print field-coverage, parse-failure, and routing-bucket summaries. It should not call Upwork live, should not call OpenAI, and should not persist staged DB rows by default.
 
 Local user-action helper command targets:
 

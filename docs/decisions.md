@@ -344,3 +344,17 @@ The local action commands already operate on stable job identifiers, but the que
 Tradeoff:
 
 The shortlist view now exposes one more local-state field, but it remains read-only and keeps its existing HOT / MANUAL_EXCEPTION / REVIEW selection policy. Filtering rows by `user_status` is intentionally deferred to a later policy decision.
+
+## 2026-04-29 - Raw inspection artifacts can be analyzed locally before live AI spend
+
+Decision:
+
+Saved raw Upwork inspection artifacts should be analyzable through a separate `py -m upwork_triage dry-run-raw-artifact` command that reuses the real normalizer and deterministic filters, avoids live Upwork calls, avoids OpenAI calls, and does not persist staged DB rows by default.
+
+Reason:
+
+The main remaining live risk before `ingest-once` is GraphQL and normalization mismatch, not missing pipeline structure. A dry-run bridge lets the project measure field coverage, parse failures, and routing distribution against real fetched payloads before spending AI cost or writing a staged local history.
+
+Tradeoff:
+
+There is another calibration command and another local-only artifact flow to document. The dry run intentionally stops before DB persistence and final triage, so anyone who wants full staged history still needs `ingest-once` after calibration looks healthy.
