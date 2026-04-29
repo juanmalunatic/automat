@@ -142,6 +142,17 @@ def test_dry_run_raw_jobs_reports_useful_coverage_for_sanitized_real_like_payloa
     assert summary.routing_bucket_counts["AI_EVAL"] == 1
 
 
+def test_dry_run_raw_jobs_reports_useful_coverage_for_marketplace_live_like_payload() -> None:
+    summary = dry_run_raw_jobs([make_marketplace_live_like_payload()], artifact_path="artifact.json")
+
+    assert summary.jobs_processed_count == 1
+    assert summary.key_field_visible_counts["source_url"] == 1
+    assert summary.key_field_visible_counts["c_verified_payment"] == 1
+    assert summary.key_field_visible_counts["j_skills"] == 1
+    assert summary.key_field_visible_counts["j_posted_at"] == 1
+    assert summary.key_field_visible_counts["j_mins_since_posted"] == 1
+
+
 def test_dry_run_raw_jobs_records_parse_failure_counts() -> None:
     summary = dry_run_raw_jobs(
         [make_strong_raw_payload(client={"avg_hourly_rate": "fortyish"})],
@@ -295,6 +306,29 @@ def make_sanitized_real_like_payload() -> dict[str, object]:
             "inviteCount": 2,
             "lastViewedMinutesAgo": 20,
         },
+    }
+
+
+def make_marketplace_live_like_payload() -> dict[str, object]:
+    return {
+        "id": "0123456789",
+        "ciphertext": "~022049488018911397244",
+        "createdDateTime": "2020-01-01T00:00:00+0000",
+        "title": "Sanitized marketplace search job",
+        "description": "Sanitized description mentioning WooCommerce and API integration.",
+        "client": {
+            "verificationStatus": "VERIFIED",
+            "totalHires": 12,
+            "totalPostedJobs": 34,
+            "totalFeedback": 10,
+            "totalReviews": 8,
+            "location": {"country": "US"},
+        },
+        "skills": [
+            {"name": "WooCommerce"},
+            {"prettyName": "API"},
+            {"bogus": "skip me"},
+        ],
     }
 
 

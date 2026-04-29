@@ -216,6 +216,10 @@ Should verify:
 - sanitized real-like Upwork payload fixtures normalize client payment/client-history fields when present
 - sanitized real-like Upwork payload fixtures normalize budget/hourly/activity fields when present
 - sanitized real-like Upwork payload fixtures preserve `NOT_VISIBLE` and `PARSE_FAILURE` for unavailable or malformed visible fields
+- sanitized marketplace-search payload fixtures derive `source_url` from `ciphertext`
+- sanitized marketplace-search payload fixtures map `createdDateTime` to `j_posted_at` and can derive `j_mins_since_posted` with a deterministic test clock
+- sanitized marketplace-search payload fixtures map `client.verificationStatus`, `client.totalHires`, and `client.totalPostedJobs`
+- mixed valid/malformed marketplace skill objects still yield a usable `j_skills`
 - normalized output can build `FilterInput`
 - normalized output can build `AiPayloadInput`
 - normalized output can build `EconomicsJobInput`
@@ -322,6 +326,7 @@ Should verify:
 - routing bucket counts are recorded
 - key field visible-count coverage is recorded
 - sanitized real-like raw payload fixtures produce useful field-coverage counts
+- sanitized marketplace-search raw payload fixtures produce useful coverage for derived `source_url`, verification status, and posted-time fields
 - parse-failure counts are recorded
 - empty job lists still produce a valid summary
 - unexpected per-job normalization/filter failures are recorded per job while the overall summary continues

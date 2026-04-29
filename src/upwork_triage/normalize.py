@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
@@ -256,7 +257,11 @@ __all__ = [
 ]
 
 
-def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationResult:
+def normalize_job_payload(
+    raw_payload: Mapping[str, object],
+    *,
+    now_utc: datetime | None = None,
+) -> NormalizationResult:
     statuses: dict[str, FieldStatus] = {}
     raw_hash = stable_hash_payload(raw_payload)
 
@@ -297,6 +302,8 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         "source_url",
         statuses,
     )
+    if source_url is None:
+        source_url = _derive_source_url_from_ciphertext(raw_payload, statuses)
     job_key = build_job_key(raw_payload, upwork_job_id=upwork_job_id, source_url=source_url, raw_hash=raw_hash)
 
     id_original = _normalize_identifier(
@@ -318,6 +325,12 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         statuses.pop("action", None)
         action = "triage"
 
+    j_posted_at, j_mins_since_posted = _normalize_posted_fields(
+        raw_payload,
+        statuses,
+        now_utc=now_utc,
+    )
+
     normalized = JobSnapshotNormalizedInput(
         job_key=job_key,
         upwork_job_id=upwork_job_id,
@@ -335,10 +348,14 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
             (
                 ("client", "payment_verified"),
                 ("client", "paymentVerified"),
+                ("client", "verification_status"),
+                ("client", "verificationStatus"),
                 ("client", "payment_verification_status"),
                 ("client", "paymentVerificationStatus"),
                 ("buyer", "payment_verified"),
                 ("buyer", "paymentVerified"),
+                ("buyer", "verification_status"),
+                ("buyer", "verificationStatus"),
                 ("buyer", "is_payment_verified"),
                 ("buyer", "isPaymentVerified"),
                 ("buyer", "payment_verification_status"),
@@ -370,7 +387,17 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         ),
         c_hist_jobs_posted=_normalize_int(
             raw_payload,
-            (("client", "jobs_posted"), "c_hist_jobs_posted"),
+            (
+                ("client", "jobs_posted"),
+                ("client", "jobsPosted"),
+                ("client", "total_posted_jobs"),
+                ("client", "totalPostedJobs"),
+                ("buyer", "jobs_posted"),
+                ("buyer", "jobsPosted"),
+                ("buyer", "total_posted_jobs"),
+                ("buyer", "totalPostedJobs"),
+                "c_hist_jobs_posted",
+            ),
             "c_hist_jobs_posted",
             statuses,
         ),
@@ -414,7 +441,17 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         ),
         c_hist_hires_total=_normalize_int(
             raw_payload,
-            (("client", "hires_total"), "c_hist_hires_total"),
+            (
+                ("client", "hires_total"),
+                ("client", "hiresTotal"),
+                ("client", "total_hires"),
+                ("client", "totalHires"),
+                ("buyer", "hires_total"),
+                ("buyer", "hiresTotal"),
+                ("buyer", "total_hires"),
+                ("buyer", "totalHires"),
+                "c_hist_hires_total",
+            ),
             "c_hist_hires_total",
             statuses,
         ),
@@ -470,38 +507,8 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
             "j_description",
             statuses,
         ),
-        j_mins_since_posted=_normalize_minutes(
-            raw_payload,
-            (
-                "mins_since_posted",
-                "posted_minutes_ago",
-                "postedMinutesAgo",
-                ("job", "mins_since_posted"),
-                ("job", "posted_minutes_ago"),
-                ("job", "postedMinutesAgo"),
-            ),
-            "j_mins_since_posted",
-            statuses,
-        ),
-        j_posted_at=_normalize_text(
-            raw_payload,
-            (
-                "posted_at",
-                "postedAt",
-                "published_on",
-                "publishedOn",
-                "created_on",
-                "createdOn",
-                ("job", "posted_at"),
-                ("job", "postedAt"),
-                ("job", "published_on"),
-                ("job", "publishedOn"),
-                ("job", "created_on"),
-                ("job", "createdOn"),
-            ),
-            "j_posted_at",
-            statuses,
-        ),
+        j_mins_since_posted=j_mins_since_posted,
+        j_posted_at=j_posted_at,
         j_apply_cost_connects=_normalize_int(
             raw_payload,
             (
@@ -789,6 +796,26 @@ def _normalize_source_url(
     return _coerce_value(extracted, field_name, _parse_source_url, statuses)
 
 
+def _derive_source_url_from_ciphertext(
+    raw_payload: Mapping[str, object],
+    statuses: dict[str, FieldStatus],
+) -> str | None:
+    ciphertext = _normalize_identifier(
+        raw_payload,
+        (
+            "ciphertext",
+            ("job", "ciphertext"),
+            ("meta", "ciphertext"),
+        ),
+        "source_url_ciphertext",
+        statuses={},
+    )
+    if ciphertext is None or not ciphertext.startswith("~"):
+        return None
+    statuses["source_url"] = "VISIBLE"
+    return _canonicalize_url(f"https://www.upwork.com/jobs/{ciphertext}")
+
+
 def _normalize_text(
     raw_payload: Mapping[str, object],
     aliases: tuple[object, ...],
@@ -903,6 +930,72 @@ def _normalize_contract_type(
         ),
     )
     return _coerce_value(extracted, "j_contract_type", _parse_contract_type, statuses)
+
+
+def _normalize_posted_fields(
+    raw_payload: Mapping[str, object],
+    statuses: dict[str, FieldStatus],
+    *,
+    now_utc: datetime | None,
+) -> tuple[str | None, int | None]:
+    j_posted_at = _normalize_text(
+        raw_payload,
+        (
+            "posted_at",
+            "postedAt",
+            "published_on",
+            "publishedOn",
+            "created_on",
+            "createdOn",
+            "createdDateTime",
+            ("job", "posted_at"),
+            ("job", "postedAt"),
+            ("job", "published_on"),
+            ("job", "publishedOn"),
+            ("job", "created_on"),
+            ("job", "createdOn"),
+            ("job", "createdDateTime"),
+        ),
+        "j_posted_at",
+        statuses,
+    )
+    if j_posted_at is not None:
+        statuses["j_posted_at"] = "VISIBLE"
+
+    j_mins_since_posted = _normalize_minutes(
+        raw_payload,
+        (
+            "mins_since_posted",
+            "posted_minutes_ago",
+            "postedMinutesAgo",
+            ("job", "mins_since_posted"),
+            ("job", "posted_minutes_ago"),
+            ("job", "postedMinutesAgo"),
+        ),
+        "j_mins_since_posted",
+        statuses,
+    )
+    if j_mins_since_posted is not None:
+        statuses["j_mins_since_posted"] = "VISIBLE"
+        return j_posted_at, j_mins_since_posted
+
+    if j_posted_at is None:
+        return j_posted_at, j_mins_since_posted
+
+    parsed_posted_at = _parse_datetime_text(j_posted_at)
+    if parsed_posted_at is PARSE_ERROR:
+        statuses["j_mins_since_posted"] = "PARSE_FAILURE"
+        return j_posted_at, None
+
+    reference_now = now_utc or datetime.now(timezone.utc)
+    if reference_now.tzinfo is None:
+        reference_now = reference_now.replace(tzinfo=timezone.utc)
+    else:
+        reference_now = reference_now.astimezone(timezone.utc)
+    delta_seconds = (reference_now - parsed_posted_at).total_seconds()
+    derived_minutes = max(0, int(delta_seconds // 60))
+    statuses["j_mins_since_posted"] = "VISIBLE"
+    return j_posted_at, derived_minutes
 
 
 def _extract_value(raw_payload: Mapping[str, object], aliases: tuple[object, ...]) -> _ExtractedValue:
@@ -1046,9 +1139,10 @@ def _parse_joined_text(value: object) -> str | object:
         for item in value:
             parsed = _parse_text(item)
             if parsed is PARSE_ERROR:
-                text = str(item).strip()
-                if text:
-                    items.append(text)
+                if isinstance(item, str):
+                    text = item.strip()
+                    if text:
+                        items.append(text)
                 continue
             items.append(parsed)
         return ", ".join(items) if items else PARSE_ERROR
@@ -1072,9 +1166,10 @@ def _parse_bool(value: object) -> int | object:
         return value
     if isinstance(value, str):
         lowered = value.strip().lower()
-        if lowered in TRUE_MARKERS:
+        normalized = lowered.replace("_", " ").replace("-", " ")
+        if lowered in TRUE_MARKERS or normalized in TRUE_MARKERS:
             return 1
-        if lowered in FALSE_MARKERS:
+        if lowered in FALSE_MARKERS or normalized in FALSE_MARKERS:
             return 0
     return PARSE_ERROR
 
@@ -1264,6 +1359,29 @@ def _parse_contract_type(value: object) -> str | object:
     if lowered in HOURLY_MARKERS:
         return "hourly"
     return PARSE_ERROR
+
+
+def _parse_datetime_text(value: object) -> datetime | object:
+    if not isinstance(value, str):
+        return PARSE_ERROR
+    trimmed = value.strip()
+    if not trimmed:
+        return PARSE_ERROR
+
+    normalized = trimmed
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    elif re.search(r"[+-]\d{4}$", normalized):
+        normalized = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", normalized)
+
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return PARSE_ERROR
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _is_unavailable_marker(value: object) -> bool:

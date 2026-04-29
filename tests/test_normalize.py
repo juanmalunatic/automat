@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import json
 import sys
 from pathlib import Path
@@ -274,6 +275,72 @@ def test_sanitized_real_like_payload_preserves_parse_failure_for_malformed_visib
     assert statuses["j_apply_cost_connects"] == "PARSE_FAILURE"
 
 
+def test_marketplace_live_like_payload_derives_source_url_from_ciphertext() -> None:
+    result = normalize_job_payload(make_marketplace_live_like_payload())
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.source_url == "https://www.upwork.com/jobs/~022049488018911397244"
+    assert statuses["source_url"] == "VISIBLE"
+
+
+def test_marketplace_live_like_payload_maps_created_datetime_to_posted_fields() -> None:
+    now_utc = datetime(2026, 4, 29, 14, 56, 36, tzinfo=timezone.utc)
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(createdDateTime="2026-04-29T13:56:36+0000"),
+        now_utc=now_utc,
+    )
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.j_posted_at == "2026-04-29T13:56:36+0000"
+    assert normalized.j_mins_since_posted == 60
+    assert statuses["j_posted_at"] == "VISIBLE"
+    assert statuses["j_mins_since_posted"] == "VISIBLE"
+
+
+def test_marketplace_live_like_payload_maps_verified_payment_status() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            client={"verificationStatus": "VERIFIED"},
+        )
+    )
+
+    assert result.to_job_snapshot_insert_input().c_verified_payment == 1
+
+
+def test_marketplace_live_like_payload_maps_negative_verification_status() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            client={"verificationStatus": "NOT_VERIFIED"},
+        )
+    )
+
+    assert result.to_job_snapshot_insert_input().c_verified_payment == 0
+
+
+def test_marketplace_live_like_payload_maps_client_hires_and_jobs_posted() -> None:
+    result = normalize_job_payload(make_marketplace_live_like_payload())
+    normalized = result.to_job_snapshot_insert_input()
+
+    assert normalized.c_hist_hires_total == 12
+    assert normalized.c_hist_jobs_posted == 34
+
+
+def test_marketplace_live_like_payload_skips_malformed_skill_items_when_valid_skills_exist() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            skills=[
+                {"prettyName": "WooCommerce"},
+                {"bogus": "skip me"},
+                {"name": "API"},
+            ]
+        )
+    )
+
+    assert result.to_job_snapshot_insert_input().j_skills == "WooCommerce, API"
+
+
 def make_raw_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "id": "123456789",
@@ -350,6 +417,38 @@ def make_sanitized_real_like_payload(**overrides: object) -> dict[str, object]:
     cloned = copy.deepcopy(payload)
     for key, value in overrides.items():
         if key in {"buyer", "jobActivity"} and isinstance(value, dict):
+            nested = cloned[key]
+            assert isinstance(nested, dict)
+            nested.update(value)
+        else:
+            cloned[key] = value
+    return cloned
+
+
+def make_marketplace_live_like_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "0123456789",
+        "ciphertext": "~022049488018911397244",
+        "createdDateTime": "2026-04-29T13:56:36+0000",
+        "title": "Sanitized WooCommerce marketplace job",
+        "description": "Sanitized description mentioning WooCommerce and API integration.",
+        "client": {
+            "verificationStatus": "VERIFIED",
+            "totalHires": 12,
+            "totalPostedJobs": 34,
+            "totalFeedback": 10,
+            "totalReviews": 8,
+            "location": {"country": "US"},
+        },
+        "skills": [
+            {"name": "WooCommerce"},
+            {"prettyName": "API"},
+        ],
+    }
+
+    cloned = copy.deepcopy(payload)
+    for key, value in overrides.items():
+        if key in {"client"} and isinstance(value, dict):
             nested = cloned[key]
             assert isinstance(nested, dict)
             nested.update(value)

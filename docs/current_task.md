@@ -2,86 +2,94 @@
 
 ## Task name
 
-Add a temporary Upwork schema-probe command for marketplace job search.
+Patch normalization for confirmed live Upwork marketplace search fields.
 
 ## Goal
 
-Make it cheap to test candidate live GraphQL node fields without changing the production raw-inspection query blindly.
+Improve live raw-artifact dry-run coverage by mapping the confirmed `marketplaceJobPostingsSearch` payload shape without changing AI, DB schema, economics, triage, or queue behavior.
 
-The probe command is a temporary local calibration/debug helper. It should:
+Confirmed live fields now include:
 
-- reuse the existing Upwork token and GraphQL endpoint config
-- reuse the same marketplace search filter/searchType/sort shape as the production query
-- dynamically build `node { ... }` from an allowlisted comma-separated field list
-- print either a successful first-node/key summary or clear GraphQL validation errors
-- avoid AI, DB writes, dry-run, normalization, economics, triage, and queue work
+- `id`
+- `ciphertext`
+- `createdDateTime`
+- `title`
+- `description`
+- `client.verificationStatus`
+- `client.totalHires`
+- `client.totalPostedJobs`
+- `client.totalFeedback`
+- `client.totalReviews`
+- `client.location.country`
+- `skills[]` objects with `name` / `prettyName`
 
 ## Files to modify
 
 Expected files:
 
-- `src/upwork_triage/upwork_client.py`
-- `src/upwork_triage/cli.py`
-- `tests/test_upwork_client.py`
-- `tests/test_cli.py`
+- `src/upwork_triage/normalize.py`
+- `tests/test_normalize.py`
+- `tests/test_dry_run.py`
 - `docs/current_task.md`
 - `docs/testing.md`
 
 ## Required behavior
 
-1. Add a CLI command:
+1. `source_url`
 
-   - `py -m upwork_triage probe-upwork-fields --fields "id,title,ciphertext,createdDateTime"`
+   - If no explicit `source_url` / `url` / `jobUrl` is present but `ciphertext` exists and starts with `~`, derive:
+     - `https://www.upwork.com/jobs/<ciphertext>`
+   - Keep existing explicit URL behavior unchanged.
 
-2. The probe path must:
+2. Posted time
 
-   - use `marketplaceJobPostingsSearch`
-   - use `marketPlaceJobFilter.searchExpression_eq`
-   - use `searchType = USER_JOBS_SEARCH`
-   - use `sortAttributes = [{"field": "RECENCY"}]`
-   - send `Authorization: bearer <token>`
-   - send `User-Agent: Automat/0.1 personal-internal-upwork-api-client`
+   - Map `createdDateTime` to `j_posted_at`
+   - If feasible, derive `j_mins_since_posted` from `createdDateTime` using a deterministic/testable helper or optional clock input
 
-3. Probe field handling must:
+3. Client verification
 
-   - accept a comma-separated allowlisted top-level field list
-   - always include `id` and `title`
-   - reject unsupported field names clearly
+   - Map `client.verificationStatus` / `buyer.verificationStatus`
+   - `VERIFIED -> 1`
+   - `NOT_VERIFIED` / `UNVERIFIED` / clearly negative values -> `0`
+   - unknown non-empty values should fail as `PARSE_FAILURE`, not be guessed
 
-4. Successful probe output should include:
+4. Client counts
 
-   - fetched count
-   - observed keys across returned nodes
-   - first node JSON
+   - Map `client.totalHires` / `buyer.totalHires` to `c_hist_hires_total`
+   - Map `client.totalPostedJobs` / `buyer.totalPostedJobs` to `c_hist_jobs_posted`
 
-5. Failure output should surface GraphQL validation errors clearly.
+5. Skills
+
+   - Parse list-of-object skills robustly from `name` / `prettyName`
+   - A malformed skill item should not poison the whole field when at least one valid skill is present
 
 ## Test requirements
 
 Update tests so they verify:
 
-- probe requests reuse the same lowercase `bearer` auth header and `User-Agent`
-- the probe query uses `marketplaceJobPostingsSearch`
-- probe variables use `marketPlaceJobFilter.searchExpression_eq`, `USER_JOBS_SEARCH`, and `RECENCY`
-- `id` and `title` are auto-included in probe selections
-- unsupported probe fields fail clearly
-- the CLI probe command prints a compact success summary and stays outside pipeline/AI/action paths
+- `source_url` is derived from `ciphertext`
+- `createdDateTime` maps to `j_posted_at`
+- `j_mins_since_posted` can be derived deterministically when a test clock is provided
+- `client.verificationStatus` maps to positive and negative payment verification values
+- `client.totalHires` and `client.totalPostedJobs` are persisted
+- mixed valid/malformed skill objects still produce a usable `j_skills`
+- dry-run coverage becomes useful for the sanitized marketplace-like payload
 
 ## Out of scope
 
 Do not implement:
 
-- OpenAI changes
+- Upwork query changes
+- OpenAI / AI changes
 - DB/schema changes
-- normalizer or dry-run changes
-- new persisted artifacts by default
-- production query redesign based only on speculation
+- economics or triage changes
+- queue or action behavior changes
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- `probe-upwork-fields` can issue a live marketplace search probe against an allowlisted field set
-- the command prints a useful success summary or clear GraphQL validation errors
-- focused Upwork client / CLI tests pass
+- confirmed live marketplace fields normalize into the expected local fields
+- dry-run coverage improves for a sanitized marketplace-like payload
+- focused normalization and dry-run tests pass
 - the full test suite still passes
