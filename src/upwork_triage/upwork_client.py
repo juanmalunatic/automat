@@ -149,26 +149,10 @@ query marketplaceJobPostingsSearch(
         description
         ciphertext
         createdDateTime
-        publishedOn
-        type
-        jobType
-        jobUrl
         amount {
           rawValue
           currency
           displayValue
-        }
-        hourlyBudget {
-          min {
-            rawValue
-            currency
-            displayValue
-          }
-          max {
-            rawValue
-            currency
-            displayValue
-          }
         }
         client {
           totalHires

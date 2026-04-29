@@ -50,6 +50,11 @@ def test_fetch_upwork_jobs_sends_bearer_header_query_and_variables() -> None:
     assert call["headers"]["Authorization"] == "bearer token-123"
     assert call["headers"]["User-Agent"] == "Automat/0.1 personal-internal-upwork-api-client"
     assert "query marketplaceJobPostingsSearch" in str(call["payload"]["query"])
+    assert "publishedOn" not in str(call["payload"]["query"])
+    assert "        type\n" not in str(call["payload"]["query"])
+    assert "jobType" not in str(call["payload"]["query"])
+    assert "jobUrl" not in str(call["payload"]["query"])
+    assert "hourlyBudget" not in str(call["payload"]["query"])
     assert call["payload"]["variables"] == {
         "marketPlaceJobFilter": {
             "q": "WooCommerce API",
@@ -71,6 +76,11 @@ def test_build_job_search_query_uses_marketplace_job_postings_search_shape() -> 
     assert "$marketPlaceJobFilter" in query
     assert "$searchType" in query
     assert "$sortAttributes" in query
+    assert "publishedOn" not in query
+    assert "        type\n" not in query
+    assert "jobType" not in query
+    assert "jobUrl" not in query
+    assert "hourlyBudget" not in query
     assert variables == {
         "marketPlaceJobFilter": {
             "q": "WordPress PHP",
@@ -142,7 +152,7 @@ def test_extract_job_payloads_handles_sanitized_real_like_nested_search_results_
             "ciphertext": "~0123456789",
             "title": "Sanitized WooCommerce job",
             "description": "Sanitized description mentioning WooCommerce and API integration.",
-            "jobUrl": "https://www.example.test/jobs/~0123456789",
+            "createdDateTime": "2026-04-29T12:00:00Z",
         }
     ]
 
@@ -237,7 +247,7 @@ def real_like_search_results_response() -> dict[str, object]:
                                 "description": (
                                     "Sanitized description mentioning WooCommerce and API integration."
                                 ),
-                                "jobUrl": "https://www.example.test/jobs/~0123456789",
+                                "createdDateTime": "2026-04-29T12:00:00Z",
                             }
                         }
                     ]
