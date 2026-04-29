@@ -95,8 +95,15 @@ class UpworkGraphQlClient:
         search_terms: tuple[str, ...],
         limit: int,
         fields: tuple[str, ...],
+        *,
+        source: str = "marketplace",
     ) -> list[dict[str, object]]:
-        query, variables = build_probe_job_search_query(search_terms, limit, fields)
+        query, variables = build_probe_job_search_query(
+            search_terms,
+            limit,
+            fields,
+            source=source,
+        )
         return self._execute_and_extract(query, variables)
 
     def _execute_and_extract(
@@ -144,7 +151,7 @@ __all__ = [
 
 UPWORK_GRAPHQL_USER_AGENT = "Automat/0.1 personal-internal-upwork-api-client"
 
-PROBE_FIELD_ALLOWLIST = frozenset(
+MARKETPLACE_PROBE_FIELD_ALLOWLIST = frozenset(
     {
         "amount",
         "budget",
@@ -171,6 +178,23 @@ PROBE_FIELD_ALLOWLIST = frozenset(
         "title",
         "type",
         "url",
+    }
+)
+PUBLIC_PROBE_FIELD_ALLOWLIST = frozenset(
+    {
+        "amount",
+        "ciphertext",
+        "client",
+        "contractorTier",
+        "createdDateTime",
+        "description",
+        "engagement",
+        "id",
+        "jobStatus",
+        "recno",
+        "skills",
+        "title",
+        "type",
     }
 )
 
@@ -239,12 +263,15 @@ def build_probe_job_search_query(
     search_terms: tuple[str, ...],
     limit: int,
     fields: tuple[str, ...],
+    *,
+    source: str = "marketplace",
 ) -> tuple[str, dict[str, object]]:
     _ = limit
-    selected_fields = _normalize_probe_fields(fields)
+    selected_fields = _normalize_probe_fields(fields, source=source)
     field_lines = "\n".join(f"        {field_name}" for field_name in selected_fields)
     query_text = " ".join(term.strip() for term in search_terms if term.strip())
-    query = f"""
+    if source == "marketplace":
+        query = f"""
 query marketplaceJobPostingsSearch(
   $marketPlaceJobFilter: MarketplaceJobPostingsSearchFilter,
   $searchType: MarketplaceJobPostingSearchType,
@@ -264,6 +291,29 @@ query marketplaceJobPostingsSearch(
   }}
 }}
 """.strip()
+    elif source == "public":
+        query = f"""
+query publicMarketplaceJobPostingsSearch(
+  $marketPlaceJobFilter: PublicMarketplaceJobPostingsSearchFilter,
+  $searchType: MarketplaceJobPostingSearchType,
+  $sortAttributes: [MarketplaceJobPostingSearchSortAttribute]
+) {{
+  publicMarketplaceJobPostingsSearch(
+    marketPlaceJobFilter: $marketPlaceJobFilter,
+    searchType: $searchType,
+    sortAttributes: $sortAttributes
+  ) {{
+    totalCount
+    jobs {{
+{field_lines}
+    }}
+  }}
+}}
+""".strip()
+    else:
+        raise UpworkClientError(
+            f"Unsupported probe source: {source}. Allowed sources: marketplace, public"
+        )
     variables: dict[str, object] = {
         "marketPlaceJobFilter": {
             "searchExpression_eq": query_text,
@@ -291,6 +341,7 @@ def extract_job_payloads(response_json: Mapping[str, object]) -> list[dict[str, 
         "jobs",
         "search",
         "marketplaceJobPostingsSearch",
+        "publicMarketplaceJobPostingsSearch",
         "marketplaceJobSearch",
     ):
         if container_name not in data:
@@ -325,6 +376,7 @@ def probe_upwork_fields(
     config: AppConfig,
     fields: tuple[str, ...],
     *,
+    source: str = "marketplace",
     transport: HttpJsonTransport | None = None,
 ) -> list[dict[str, object]]:
     client = UpworkGraphQlClient(
@@ -332,7 +384,12 @@ def probe_upwork_fields(
         config.upwork_access_token,
         transport=transport,
     )
-    return client.probe_fields(config.search_terms, config.poll_limit, fields)
+    return client.probe_fields(
+        config.search_terms,
+        config.poll_limit,
+        fields,
+        source=source,
+    )
 
 
 def _extract_from_edge_list(
@@ -421,17 +478,25 @@ def _format_graphql_errors(errors_value: object) -> str:
     return f"Upwork GraphQL returned errors: {errors_value}"
 
 
-def _normalize_probe_fields(fields: tuple[str, ...]) -> tuple[str, ...]:
+def _normalize_probe_fields(fields: tuple[str, ...], *, source: str) -> tuple[str, ...]:
     requested = [field.strip() for field in fields if field.strip()]
+    if source == "marketplace":
+        allowed_fields = MARKETPLACE_PROBE_FIELD_ALLOWLIST
+    elif source == "public":
+        allowed_fields = PUBLIC_PROBE_FIELD_ALLOWLIST
+    else:
+        raise UpworkClientError(
+            f"Unsupported probe source: {source}. Allowed sources: marketplace, public"
+        )
     unsupported = sorted(
         {
             field
             for field in requested
-            if field not in PROBE_FIELD_ALLOWLIST
+            if field not in allowed_fields
         }
     )
     if unsupported:
-        allowed = ", ".join(sorted(PROBE_FIELD_ALLOWLIST))
+        allowed = ", ".join(sorted(allowed_fields))
         unsupported_fields = ", ".join(unsupported)
         raise UpworkClientError(
             f"Unsupported probe fields: {unsupported_fields}. "

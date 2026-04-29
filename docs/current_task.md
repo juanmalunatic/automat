@@ -2,94 +2,78 @@
 
 ## Task name
 
-Patch normalization for confirmed live Upwork marketplace search fields.
+Add a temporary public-marketplace probe to the Upwork field-calibration helper.
 
 ## Goal
 
-Improve live raw-artifact dry-run coverage by mapping the confirmed `marketplaceJobPostingsSearch` payload shape without changing AI, DB schema, economics, triage, or queue behavior.
+Extend the temporary `probe-upwork-fields` command so it can test `publicMarketplaceJobPostingsSearch` separately from the production marketplace search query.
 
-Confirmed live fields now include:
-
-- `id`
-- `ciphertext`
-- `createdDateTime`
-- `title`
-- `description`
-- `client.verificationStatus`
-- `client.totalHires`
-- `client.totalPostedJobs`
-- `client.totalFeedback`
-- `client.totalReviews`
-- `client.location.country`
-- `skills[]` objects with `name` / `prettyName`
+This is still a local calibration/debug helper only. It should not alter the production fetch query, AI path, DB path, dry-run path, or staged pipeline.
 
 ## Files to modify
 
 Expected files:
 
-- `src/upwork_triage/normalize.py`
-- `tests/test_normalize.py`
-- `tests/test_dry_run.py`
+- `src/upwork_triage/upwork_client.py`
+- `src/upwork_triage/cli.py`
+- `tests/test_upwork_client.py`
+- `tests/test_cli.py`
 - `docs/current_task.md`
 - `docs/testing.md`
+- `README.md`
 
 ## Required behavior
 
-1. `source_url`
+1. Keep the current default probe source as marketplace:
 
-   - If no explicit `source_url` / `url` / `jobUrl` is present but `ciphertext` exists and starts with `~`, derive:
-     - `https://www.upwork.com/jobs/<ciphertext>`
-   - Keep existing explicit URL behavior unchanged.
+   - `py -m upwork_triage probe-upwork-fields --fields "id,title,ciphertext,createdDateTime"`
 
-2. Posted time
+2. Add a public-source probe mode:
 
-   - Map `createdDateTime` to `j_posted_at`
-   - If feasible, derive `j_mins_since_posted` from `createdDateTime` using a deterministic/testable helper or optional clock input
+   - `py -m upwork_triage probe-upwork-fields --source public --fields "ciphertext,createdDateTime,type,engagement,amount,contractorTier,jobStatus,client"`
 
-3. Client verification
+3. The public probe path must:
 
-   - Map `client.verificationStatus` / `buyer.verificationStatus`
-   - `VERIFIED -> 1`
-   - `NOT_VERIFIED` / `UNVERIFIED` / clearly negative values -> `0`
-   - unknown non-empty values should fail as `PARSE_FAILURE`, not be guessed
+   - use `publicMarketplaceJobPostingsSearch`
+   - use `PublicMarketplaceJobPostingsSearchFilter`
+   - use `marketPlaceJobFilter.searchExpression_eq`
+   - use `searchType = USER_JOBS_SEARCH`
+   - use `sortAttributes = [{"field": "RECENCY"}]`
+   - query through `jobs { ... }` rather than `edges { node { ... } }`
 
-4. Client counts
+4. The probe path must continue to:
 
-   - Map `client.totalHires` / `buyer.totalHires` to `c_hist_hires_total`
-   - Map `client.totalPostedJobs` / `buyer.totalPostedJobs` to `c_hist_jobs_posted`
-
-5. Skills
-
-   - Parse list-of-object skills robustly from `name` / `prettyName`
-   - A malformed skill item should not poison the whole field when at least one valid skill is present
+   - reuse `Authorization: bearer <token>`
+   - reuse `User-Agent: Automat/0.1 personal-internal-upwork-api-client`
+   - auto-include `id` and `title`
+   - print fetched count, observed keys, and first node/job JSON on success
+   - print GraphQL validation errors clearly on failure
 
 ## Test requirements
 
 Update tests so they verify:
 
-- `source_url` is derived from `ciphertext`
-- `createdDateTime` maps to `j_posted_at`
-- `j_mins_since_posted` can be derived deterministically when a test clock is provided
-- `client.verificationStatus` maps to positive and negative payment verification values
-- `client.totalHires` and `client.totalPostedJobs` are persisted
-- mixed valid/malformed skill objects still produce a usable `j_skills`
-- dry-run coverage becomes useful for the sanitized marketplace-like payload
+- marketplace probe behavior still works by default
+- public probe query uses `publicMarketplaceJobPostingsSearch`
+- public probe query uses `jobs { ... }`
+- public probe variables still use `searchExpression_eq`, `USER_JOBS_SEARCH`, and `RECENCY`
+- extractor support covers `data.publicMarketplaceJobPostingsSearch.jobs`
+- CLI supports `--source public` with fake probes only
 
 ## Out of scope
 
 Do not implement:
 
-- Upwork query changes
-- OpenAI / AI changes
+- production query changes
+- AI / OpenAI changes
 - DB/schema changes
-- economics or triage changes
-- queue or action behavior changes
+- normalizer, dry-run, economics, triage, queue, or action changes
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- confirmed live marketplace fields normalize into the expected local fields
-- dry-run coverage improves for a sanitized marketplace-like payload
-- focused normalization and dry-run tests pass
+- `probe-upwork-fields` supports both marketplace and public sources
+- the public probe uses the documented public query shape
+- focused Upwork client / CLI tests pass
 - the full test suite still passes

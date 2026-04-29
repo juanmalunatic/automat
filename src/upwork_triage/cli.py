@@ -105,6 +105,7 @@ def main(
             )
         if args.command == "probe-upwork-fields":
             return _run_probe_upwork_fields(
+                source=args.source,
                 fields_text=args.fields,
                 stdout=out,
             )
@@ -213,7 +214,13 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
     )
     probe_parser = subparsers.add_parser(
         "probe-upwork-fields",
-        help="Temporary calibration helper for probing marketplaceJobPostingsSearch node fields.",
+        help="Temporary calibration helper for probing marketplace or public Upwork job-search fields.",
+    )
+    probe_parser.add_argument(
+        "--source",
+        choices=("marketplace", "public"),
+        default="marketplace",
+        help="Which temporary Upwork search surface to probe.",
     )
     probe_parser.add_argument(
         "--fields",
@@ -380,20 +387,22 @@ def _run_dry_run_raw_artifact(
 
 def _run_probe_upwork_fields(
     *,
+    source: str,
     fields_text: str,
     stdout: TextIO,
 ) -> int:
     config = load_config()
     fields = tuple(field.strip() for field in fields_text.split(","))
-    jobs = probe_upwork_fields(config, fields)
+    jobs = probe_upwork_fields(config, fields, source=source)
     observed_keys = sorted({key for job in jobs for key in job.keys()})
     first_job_json = "—"
     if jobs:
         first_job_json = json.dumps(jobs[0], indent=2, sort_keys=True)
     print("Probe succeeded.", file=stdout)
+    print(f"Source: {source}", file=stdout)
     print(f"Fetched jobs: {len(jobs)}", file=stdout)
     print(f"Observed keys: {', '.join(observed_keys) if observed_keys else '—'}", file=stdout)
-    print("First node:", file=stdout)
+    print("First node/job:", file=stdout)
     print(first_job_json, file=stdout)
     return 0
 

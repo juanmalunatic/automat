@@ -105,11 +105,17 @@ If raw inspection shows poor coverage and you want to test candidate GraphQL nod
 py -m upwork_triage probe-upwork-fields --fields "id,title,ciphertext,createdDateTime"
 ```
 
+You can also probe the public search surface separately:
+
+```powershell
+py -m upwork_triage probe-upwork-fields --source public --fields "ciphertext,createdDateTime,type,engagement,amount,contractorTier,jobStatus,client"
+```
+
 This command:
 
 - requires `UPWORK_ACCESS_TOKEN`
 - does not require `OPENAI_API_KEY`
-- uses the same marketplace search filter/sort shape as the current live query
+- defaults to the current marketplace search probe and can also target the temporary public search probe
 - does not write DB rows or artifacts by default
 - prints observed keys plus the first returned node or clear GraphQL validation errors
 

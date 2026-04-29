@@ -156,7 +156,7 @@ def test_main_probe_upwork_fields_returns_zero_and_prints_summary(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
         "upwork_triage.cli.probe_upwork_fields",
-        lambda config, fields: [
+        lambda config, fields, source="marketplace": [
             {
                 "id": "job-1",
                 "title": "First job",
@@ -179,9 +179,50 @@ def test_main_probe_upwork_fields_returns_zero_and_prints_summary(
     assert exit_code == 0
     assert stderr.getvalue() == ""
     assert "Probe succeeded." in output
+    assert "Source: marketplace" in output
     assert "Fetched jobs: 1" in output
     assert "Observed keys:" in output
     assert '"ciphertext": "~0123456789"' in output
+
+
+def test_main_probe_upwork_fields_supports_public_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "upwork_triage.cli.probe_upwork_fields",
+        lambda config, fields, source="marketplace": [
+            {
+                "id": "job-public-1",
+                "title": "Public job",
+                "ciphertext": "~022049488018911397244",
+                "type": "FIXED_PRICE",
+            }
+        ],
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        [
+            "probe-upwork-fields",
+            "--source",
+            "public",
+            "--fields",
+            "ciphertext,createdDateTime,type,client",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert "Probe succeeded." in output
+    assert "Source: public" in output
+    assert '"type": "FIXED_PRICE"' in output
 
 
 def test_probe_upwork_fields_missing_token_returns_non_zero_and_helpful_error(
@@ -212,7 +253,7 @@ def test_probe_upwork_fields_does_not_call_pipeline_or_action_boundaries(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
         "upwork_triage.cli.probe_upwork_fields",
-        lambda config, fields: [{"id": "job-1", "title": "First job"}],
+        lambda config, fields, source="marketplace": [{"id": "job-1", "title": "First job"}],
     )
     monkeypatch.setattr(
         "upwork_triage.cli.run_fake_pipeline",

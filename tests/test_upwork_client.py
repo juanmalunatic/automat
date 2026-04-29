@@ -171,6 +171,83 @@ def test_build_probe_job_search_query_uses_marketplace_shape_and_auto_includes_i
     }
 
 
+def test_probe_upwork_fields_supports_public_marketplace_source() -> None:
+    transport = FakeTransport(response_json=public_jobs_response())
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+            "UPWORK_SEARCH_TERMS": "WooCommerce, API",
+            "UPWORK_POLL_LIMIT": "25",
+        }
+    )
+
+    payloads = probe_upwork_fields(
+        config,
+        ("ciphertext", "createdDateTime", "type", "client"),
+        source="public",
+        transport=transport,
+    )
+
+    assert payloads == [{"id": "job-public-1", "title": "Public job"}]
+    assert len(transport.calls) == 1
+    call = transport.calls[0]
+    assert "query publicMarketplaceJobPostingsSearch" in str(call["payload"]["query"])
+    assert "publicMarketplaceJobPostingsSearch(" in str(call["payload"]["query"])
+    assert "    jobs {" in str(call["payload"]["query"])
+    assert "      node {" not in str(call["payload"]["query"])
+    assert "        id\n" in str(call["payload"]["query"])
+    assert "        title\n" in str(call["payload"]["query"])
+    assert "        ciphertext\n" in str(call["payload"]["query"])
+    assert "        createdDateTime\n" in str(call["payload"]["query"])
+    assert "        type\n" in str(call["payload"]["query"])
+    assert "        client\n" in str(call["payload"]["query"])
+    assert call["payload"]["variables"] == {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": "WooCommerce API",
+        },
+        "searchType": "USER_JOBS_SEARCH",
+        "sortAttributes": [
+            {
+                "field": "RECENCY",
+            }
+        ],
+    }
+
+
+def test_build_probe_job_search_query_supports_public_marketplace_shape() -> None:
+    query, variables = build_probe_job_search_query(
+        ("WordPress", "PHP"),
+        10,
+        ("ciphertext", "type", "client"),
+        source="public",
+    )
+
+    assert "query publicMarketplaceJobPostingsSearch" in query
+    assert "publicMarketplaceJobPostingsSearch(" in query
+    assert "$marketPlaceJobFilter" in query
+    assert "$searchType" in query
+    assert "$sortAttributes" in query
+    assert "    jobs {" in query
+    assert "      node {" not in query
+    assert "        id\n" in query
+    assert "        title\n" in query
+    assert "        ciphertext\n" in query
+    assert "        type\n" in query
+    assert "        client\n" in query
+    assert variables == {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": "WordPress PHP",
+        },
+        "searchType": "USER_JOBS_SEARCH",
+        "sortAttributes": [
+            {
+                "field": "RECENCY",
+            }
+        ],
+    }
+
+
 def test_build_probe_job_search_query_rejects_unsupported_fields() -> None:
     with pytest.raises(UpworkClientError, match="Unsupported probe fields"):
         build_probe_job_search_query(("WordPress",), 10, ("totallyNotRealField",))
@@ -237,6 +314,12 @@ def test_extract_job_payloads_handles_sanitized_real_like_nested_search_results_
             "createdDateTime": "2026-04-29T12:00:00Z",
         }
     ]
+
+
+def test_extract_job_payloads_handles_public_marketplace_jobs_list_shape() -> None:
+    payloads = extract_job_payloads(public_jobs_response())
+
+    assert payloads == [{"id": "job-public-1", "title": "Public job"}]
 
 
 def test_extract_job_payloads_ignores_null_nodes_and_items_safely() -> None:
@@ -334,6 +417,18 @@ def real_like_search_results_response() -> dict[str, object]:
                         }
                     ]
                 }
+            }
+        }
+    }
+
+
+def public_jobs_response() -> dict[str, object]:
+    return {
+        "data": {
+            "publicMarketplaceJobPostingsSearch": {
+                "jobs": [
+                    {"id": "job-public-1", "title": "Public job"},
+                ]
             }
         }
     }
