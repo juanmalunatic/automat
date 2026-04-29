@@ -2,32 +2,23 @@
 
 ## Task name
 
-Implement the lean MVP direction: discovery memory plus enrichment packet generation.
+Implement the first lean-MVP Stage 1 code step: safe official client-quality signals for first-stage Upwork triage.
 
-## MVP product definition
+## Product boundary
 
-The immediate MVP is:
+This stage should answer:
 
 ```text
-discovery memory + enrichment packet generation
+Is this job worth opening manually?
 ```
 
-The tool should help the user:
+It should not answer:
 
-1. fetch recent Upwork jobs through official API surfaces,
-2. apply a conservative official-data sanity filter,
-3. persist promising candidates,
-4. show an enrichment queue,
-5. accept manual UI-only client-quality data through a structured text bridge, and
-6. dump enriched prospect packets for manual or external-AI appraisal.
+```text
+Should I apply?
+```
 
-The MVP is not an autonomous apply engine.
-
-## Why this architecture is required
-
-Official API data is good enough for discovery and first-pass filtering, but not enough for final apply decisions.
-
-Important client-quality signals are UI-only or not confirmed through official API access:
+Final apply decisions still depend on manual UI-only fields that the official API does not safely expose yet, including:
 
 - Connects required
 - client recent review text / work-history comments
@@ -37,192 +28,114 @@ Important client-quality signals are UI-only or not confirmed through official A
 - total hours hired
 - open jobs
 
-These signals are critical for avoiding wasted Connects, so the MVP must persist candidates and support manual enrichment before final appraisal.
+## Implementation scope
 
-## Current agreed pipeline
-
-```text
-official discovery
--> official-data sanity filter
--> persistence / memory
--> manual enrichment bridge
--> enriched prospect dump
-```
-
-## Stage 1: official discovery and client-quality proxies
-
-Add all safe official client-quality fields that are confirmed available.
-
-Use safe marketplace/public/exact sources only.
-
-Do not query `companyOrgUid` in production because live probing showed it can null-bubble and destroy search edges.
-
-Do not treat `memberSinceDateTime` as available until separately confirmed.
-
-Use official fields such as:
-
-- total spend
-- total hires
-- total posted jobs
-- total reviews
-- total feedback score
-- last contract title
-- financial privacy flag
-- payment verification
-- country/location
-
-Derive:
+This task is limited to:
 
 ```text
-hire_rate = totalHires / totalPostedJobs
-spend_per_hire = totalSpent / totalHires
-spend_per_post = totalSpent / totalPostedJobs
-review_rate = totalReviews / totalHires
-feedback_score = totalFeedback
+official API boundary
+-> raw payloads / inspection artifacts
+-> normalize
+-> first-stage deterministic filters / dry-run preview
 ```
 
-These proxies should be used for first-stage sanity filtering and preview/queue display.
+Do not implement:
 
-## Stage 2: persist official-stage candidates
-
-After the first official-data sanity filter, persist survivors to SQLite.
-
-Persist:
-
-- job identity
-- source URL
-- raw snapshot
-- normalized snapshot
-- filter result
-- official score/flags
-- current user status
-
-Do not erase existing `jobs.user_status` on re-ingest.
-
-No OpenAI call is required for this path.
-
-## Stage 3: enrichment queue
-
-Add a terminal queue for persisted candidates that need manual enrichment.
-
-The queue should show:
-
-- title
-- URL
-- official bucket/score
-- pay
-- country
-- official client-quality data
-- derived client-quality proxies
-- activity/competition signals
-- missing enrichment fields
-
-It should hide or de-prioritize jobs marked applied/skipped/archived.
-
-## Stage 4: structured text manual enrichment bridge
-
-Do not build complex manual flags or an interactive UI yet.
-
-Use a structured plain-text import format.
-
-Example:
-
-```text
-job_key: upwork:2049588347231477717
-connects_required: 16
-member_since: 2021
-active_hires: 2
-avg_hourly_paid: 28
-hours_hired: 430
-open_jobs: 3
-
-client_recent_reviews:
-- Great client, clear instructions, paid promptly.
-- Good communication, reasonable expectations.
-
-manual_notes:
-Recent work history is mostly technical/WordPress-adjacent.
-```
-
-The bridge should store both structured fields and raw/freeform text.
-
-Manual enrichment is decision input and should not be stored only as `user_actions.notes`.
-
-## Stage 5: enriched prospect dump
-
-Add a command that dumps enriched prospects that are ready for manual or external-AI appraisal.
-
-The dump should include:
-
-- title
-- URL
-- description
-- skills / qualifications
-- contract type and pay
-- official bucket and score
-- official flags
-- official client history
-- derived client-quality proxies
-- manual Connects required
-- manual UI-only client fields
-- manual recent review text
-- manual notes
-
-This output is intended to be pasted into ChatGPT or another external AI.
-
-Internal AI appraisal is deferred.
-
-## Deferred
-
-Do not implement yet:
-
-- internal enriched AI appraisal
-- internal final apply/maybe/skip decision from enriched data
-- proposal generation
-- auto-apply
+- DB schema changes
+- persistence changes
+- manual enrichment storage
+- enriched prospect dump
+- AI/economics changes
+- queue changes
 - browser scraping
-- internal/session Upwork endpoint work
-- background polling
-- dashboard
+- Upwork mutations
 
-## Next implementation priority
+## Safe marketplace client fields
 
-The next code work should proceed in this order:
+Update the production marketplace search query to include these confirmed-safe `client` fields:
 
-1. official client-quality fields + derived proxies
-2. persisted official-stage candidate intake
-3. enrichment queue
-4. structured text manual enrichment bridge
-5. enriched prospect dump
+- `totalHires`
+- `totalPostedJobs`
+- `verificationStatus`
+- `totalSpent { rawValue currency displayValue }`
+- `location { country city timezone }`
+- `totalReviews`
+- `totalFeedback`
+- `lastContractPlatform`
+- `lastContractRid`
+- `lastContractTitle`
+- `hasFinancialPrivacy`
 
-Keep each step bounded and tested.
+Do not include:
 
-## Current coding rules
+- `companyOrgUid`
+- `memberSinceDateTime`
+- `companyName`
 
-Each Codex task should be small and bounded.
+Public search should stay unchanged unless a client selection is already safely modeled there.
 
-Prefer:
+## Stage-1 client-quality proxies
 
-- no AI calls unless explicitly requested
-- no DB schema change unless the task is specifically about persistence/enrichment
-- no browser scraping
-- no Upwork mutations
-- no auto-apply
-- no proposal submission
-- no committing debug artifacts or tokens
-- tests for every behavior changed
-- docs updates only where relevant
+Expose the safe official signals needed for first-stage manual-open decisions.
 
-## Acceptance criteria for the MVP
+Normalized existing fields should include or derive:
 
-The MVP is usable when this loop works:
+- `c_hist_hires_total`
+- `c_hist_jobs_posted`
+- `c_hist_total_spent`
+- `c_hist_hire_rate = totalHires / totalPostedJobs * 100`
 
-```text
-run persisted official intake 2x/3x per day
--> candidates are remembered in SQLite
--> enrichment queue shows only jobs worth opening manually
--> user imports manual UI-only client data through structured text
--> enriched prospect dump produces a compact packet
--> user reviews packet manually or with external ChatGPT
--> user records applied/skipped/saved actions
-```
+Preview-only client-quality proxies may be used for fields that would otherwise require DB schema changes:
+
+- `c_hist_spend_per_hire = totalSpent / totalHires`
+- `c_hist_spend_per_post = totalSpent / totalPostedJobs`
+- `c_hist_total_reviews`
+- `c_hist_review_rate = totalReviews / totalHires * 100`
+- `c_hist_feedback_score = totalFeedback`
+- `c_last_contract_title`
+- `c_has_financial_privacy`
+
+Rules:
+
+- do not divide by zero
+- do not coerce missing values to zero
+- keep unavailable values as `None` / `NOT_VISIBLE`
+- keep percentages as percent values like `60.0`, not fractions like `0.60`
+
+## Dry-run preview behavior
+
+Dry-run should expose these client-quality fields in coverage, JSON output, and compact preview output where useful:
+
+- `c_hist_hires_total`
+- `c_hist_jobs_posted`
+- `c_hist_hire_rate`
+- `c_hist_total_spent`
+- `c_hist_spend_per_hire`
+- `c_hist_spend_per_post`
+- `c_hist_total_reviews`
+- `c_hist_review_rate`
+- `c_hist_feedback_score`
+- `c_last_contract_title`
+- `c_has_financial_privacy`
+
+Keep the terminal output compact. The goal is to help decide whether a job is worth opening manually.
+
+## Filter scope
+
+Keep filters conservative.
+
+Safe minimum for this task:
+
+- let existing filters benefit from derived `c_hist_hire_rate`
+- do not add broad new hard rejects
+- if client-quality thresholds feel subjective, expose the proxy fields without changing filter scoring
+
+## Acceptance criteria for this step
+
+This step is done when:
+
+1. the marketplace query fetches the safe client-rich fields above,
+2. normalization derives honest official client-quality proxies without DB changes,
+3. dry-run exposes those proxies clearly for first-stage manual-open decisions,
+4. `companyOrgUid` and `memberSinceDateTime` remain out of the production query,
+5. tests cover the new safe fields and zero-safe derivations.

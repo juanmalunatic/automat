@@ -345,6 +345,10 @@ query marketplaceJobPostingsSearch(
           }
           totalReviews
           totalFeedback
+          lastContractPlatform
+          lastContractRid
+          lastContractTitle
+          hasFinancialPrivacy
         }
         skills {
           name

@@ -143,7 +143,7 @@ This command:
 - does not require `OPENAI_API_KEY`
 - does not require a live Upwork call if the artifact already exists
 - does not write staged DB rows by default
-- reports field coverage, parse failures, and deterministic routing buckets
+- reports field coverage, parse failures, deterministic routing buckets, and safe official client-quality proxies such as hire-rate and spend-per-hire
 
 Optional examples:
 

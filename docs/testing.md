@@ -236,6 +236,9 @@ Should verify:
 - sanitized marketplace-search payload fixtures derive `source_url` from `ciphertext`
 - sanitized marketplace-search payload fixtures map `createdDateTime` to `j_posted_at` and can derive `j_mins_since_posted` with a deterministic test clock
 - sanitized marketplace-search payload fixtures map `client.verificationStatus`, `client.totalSpent`, `client.totalHires`, and `client.totalPostedJobs`
+- marketplace-search payload fixtures can derive `c_hist_hire_rate` from `totalHires / totalPostedJobs` when no explicit hire-rate field exists
+- marketplace-search payload fixtures can expose preview-only client-quality proxies such as spend-per-hire, spend-per-post, review-rate, feedback score, last contract title, and financial privacy without requiring DB schema changes
+- division-by-zero or missing client-history inputs must leave those derived client-quality proxies unavailable instead of coercing them to zero
 - sanitized public-marketplace payload fixtures map `publishedDateTime`, top-level `type`, fixed/hourly pay fields, and `totalApplicants`
 - hydrated exact-marketplace payload fixtures can backfill missing title/description, contract type, fixed/hourly pay fields, payment verification, and exact job-activity counters when `_exact_hydration_status = "success"`
 - hydrated exact-marketplace payload fixtures can generate a compact fallback `j_qualifications` string from confirmed contractor-selection fields
@@ -307,6 +310,8 @@ Should verify:
 - `fetch_upwork_jobs()` sends a GraphQL query string plus variables payload
 - query construction uses `marketplaceJobPostingsSearch` with compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables derived from `search_terms`
 - the marketplace query includes `client.totalSpent { rawValue currency displayValue }`
+- the marketplace query includes the safe client-quality fields `totalHires`, `totalPostedJobs`, `verificationStatus`, `location`, `totalReviews`, `totalFeedback`, `lastContractPlatform`, `lastContractRid`, `lastContractTitle`, and `hasFinancialPrivacy`
+- the marketplace query must not include `companyOrgUid`, `memberSinceDateTime`, or `companyName`
 - `build_exact_marketplace_job_query()` uses `marketplaceJobPosting(id: $id)` and preserves the provided numeric id string in variables
 - the exact-job hydration query includes the confirmed `content`, `activityStat.jobActivity`, `contractTerms`, `contractorSelection`, and `clientCompanyPublic.paymentVerification` fields
 - the exact-job fetch helper returns a single `data.marketplaceJobPosting` object through fake transport
@@ -379,6 +384,7 @@ Should verify:
 - sanitized marketplace-search raw payload fixtures produce useful coverage for derived `source_url`, verification status, and posted-time fields
 - sanitized hybrid raw payload fixtures produce useful coverage for contract type, fixed/hourly pay visibility, proposals from applicant counts, and client spend when those values are present
 - sanitized hydrated exact-marketplace raw payload fixtures can improve dry-run coverage for description, contract type, pay, payment verification, and activity counters without any live fetch
+- dry-run summaries should expose safe official client-quality coverage for hires/posts, hire-rate, total spend, spend-per-hire, spend-per-post, total reviews, review-rate, feedback score, last contract title, and financial privacy when available
 - dry-run summaries should expose deterministic `MVP readiness` counts derived from the explicit automated-core fields only
 - rendered dry-run output should include automated-core-ready counts, missing-core-field counts, and the stable manual final-check reminder list
 - rendered dry-run sample lines should include `source_url` when available

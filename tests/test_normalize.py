@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 SRC_PATH = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
@@ -327,10 +329,105 @@ def test_marketplace_live_like_payload_maps_client_hires_and_jobs_posted() -> No
     assert normalized.c_hist_jobs_posted == 34
 
 
+def test_marketplace_live_like_payload_derives_hire_rate_from_hires_and_jobs_posted() -> None:
+    result = normalize_job_payload(make_marketplace_live_like_payload())
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.c_hist_hire_rate == pytest.approx((12 / 34) * 100.0)
+    assert statuses["c_hist_hire_rate"] == "VISIBLE"
+
+
 def test_marketplace_live_like_payload_maps_client_total_spent() -> None:
     result = normalize_job_payload(make_marketplace_live_like_payload())
 
     assert result.to_job_snapshot_insert_input().c_hist_total_spent == 25000.0
+
+
+def test_marketplace_live_like_payload_exposes_client_quality_proxy_signals() -> None:
+    raw_payload = make_marketplace_live_like_payload(
+        client={
+            "totalHires": 12,
+            "totalPostedJobs": 30,
+            "totalSpent": {
+                "rawValue": "24000",
+                "currency": "USD",
+                "displayValue": "$24,000",
+            },
+            "totalReviews": 9,
+            "totalFeedback": 4.9,
+            "lastContractTitle": "Recent WooCommerce API integration",
+            "hasFinancialPrivacy": True,
+        }
+    )
+    result = normalize_job_payload(raw_payload)
+    signals = result.to_client_quality_signals(raw_payload)
+
+    assert result.to_job_snapshot_insert_input().c_hist_hires_total == 12
+    assert result.to_job_snapshot_insert_input().c_hist_jobs_posted == 30
+    assert result.to_job_snapshot_insert_input().c_hist_total_spent == 24000.0
+    assert result.to_job_snapshot_insert_input().c_hist_hire_rate == 40.0
+    assert signals.c_hist_spend_per_hire == 2000.0
+    assert signals.c_hist_spend_per_post == 800.0
+    assert signals.c_hist_total_reviews == 9
+    assert signals.c_hist_review_rate == 75.0
+    assert signals.c_hist_feedback_score == 4.9
+    assert signals.c_last_contract_title == "Recent WooCommerce API integration"
+    assert signals.c_has_financial_privacy == 1
+    assert signals.field_status["c_hist_spend_per_hire"] == "VISIBLE"
+    assert signals.field_status["c_hist_review_rate"] == "VISIBLE"
+    assert signals.field_status["c_last_contract_title"] == "VISIBLE"
+    assert signals.field_status["c_has_financial_privacy"] == "VISIBLE"
+
+
+def test_client_quality_proxy_signals_do_not_divide_by_zero_or_fake_visibility() -> None:
+    raw_payload = make_marketplace_live_like_payload(
+        client={
+            "totalHires": 0,
+            "totalPostedJobs": 0,
+            "totalSpent": {
+                "rawValue": "24000",
+                "currency": "USD",
+                "displayValue": "$24,000",
+            },
+            "totalReviews": 0,
+        }
+    )
+    result = normalize_job_payload(raw_payload)
+    signals = result.to_client_quality_signals(raw_payload)
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.c_hist_hire_rate is None
+    assert statuses["c_hist_hire_rate"] == "NOT_VISIBLE"
+    assert signals.c_hist_spend_per_hire is None
+    assert signals.c_hist_spend_per_post is None
+    assert signals.c_hist_review_rate is None
+    assert signals.field_status["c_hist_spend_per_hire"] == "NOT_VISIBLE"
+    assert signals.field_status["c_hist_spend_per_post"] == "NOT_VISIBLE"
+    assert signals.field_status["c_hist_review_rate"] == "NOT_VISIBLE"
+
+
+def test_missing_client_quality_fields_do_not_create_false_visible_values() -> None:
+    raw_payload = make_marketplace_live_like_payload(
+        client={
+            "totalReviews": None,
+            "totalFeedback": None,
+            "lastContractTitle": None,
+            "hasFinancialPrivacy": None,
+        }
+    )
+    result = normalize_job_payload(raw_payload)
+    signals = result.to_client_quality_signals(raw_payload)
+
+    assert signals.c_hist_total_reviews is None
+    assert signals.c_hist_feedback_score is None
+    assert signals.c_last_contract_title is None
+    assert signals.c_has_financial_privacy is None
+    assert signals.field_status["c_hist_total_reviews"] == "NOT_VISIBLE"
+    assert signals.field_status["c_hist_feedback_score"] == "NOT_VISIBLE"
+    assert signals.field_status["c_last_contract_title"] == "NOT_VISIBLE"
+    assert signals.field_status["c_has_financial_privacy"] == "NOT_VISIBLE"
 
 
 def test_exact_marketplace_payload_fills_missing_title_and_description() -> None:

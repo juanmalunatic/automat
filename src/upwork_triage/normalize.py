@@ -238,6 +238,28 @@ class NormalizationResult:
             c_hist_avg_hourly_rate=self.normalized.c_hist_avg_hourly_rate,
         )
 
+    def to_client_quality_signals(
+        self,
+        raw_payload: Mapping[str, object],
+    ) -> ClientQualitySignals:
+        return derive_client_quality_signals(raw_payload, self)
+
+
+@dataclass(frozen=True, slots=True)
+class ClientQualitySignals:
+    c_hist_hires_total: int | None
+    c_hist_jobs_posted: int | None
+    c_hist_hire_rate: float | None
+    c_hist_total_spent: float | None
+    c_hist_spend_per_hire: float | None
+    c_hist_spend_per_post: float | None
+    c_hist_total_reviews: int | None
+    c_hist_review_rate: float | None
+    c_hist_feedback_score: float | None
+    c_last_contract_title: str | None
+    c_has_financial_privacy: int | None
+    field_status: dict[str, FieldStatus]
+
 
 @dataclass(frozen=True, slots=True)
 class _ExtractedValue:
@@ -247,11 +269,13 @@ class _ExtractedValue:
 
 
 __all__ = [
+    "ClientQualitySignals",
     "JobSnapshotNormalizedInput",
     "JobsUpsertInput",
     "NormalizationResult",
     "RawSnapshotMetadata",
     "build_job_key",
+    "derive_client_quality_signals",
     "normalize_job_payload",
     "stable_hash_payload",
 ]
@@ -651,6 +675,7 @@ def normalize_job_payload(
 
     normalized = _apply_exact_marketplace_fallbacks(raw_payload, normalized, statuses)
     normalized = _apply_contract_specific_pay_fields(raw_payload, normalized, statuses)
+    normalized = _apply_client_quality_proxy_derivations(normalized, statuses)
     normalized = _replace_field_status_json(normalized, statuses)
 
     return NormalizationResult(
@@ -680,6 +705,120 @@ def build_job_key(
 def stable_hash_payload(raw_payload: Mapping[str, object]) -> str:
     serialized = json.dumps(raw_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return _stable_hash_text(serialized)
+
+
+def derive_client_quality_signals(
+    raw_payload: Mapping[str, object],
+    normalization: NormalizationResult,
+) -> ClientQualitySignals:
+    normalized = normalization.to_job_snapshot_insert_input()
+    field_status: dict[str, FieldStatus] = {
+        "c_hist_hires_total": _field_status_from_value(
+            normalized.c_hist_hires_total,
+            normalization.field_status.get("c_hist_hires_total"),
+        ),
+        "c_hist_jobs_posted": _field_status_from_value(
+            normalized.c_hist_jobs_posted,
+            normalization.field_status.get("c_hist_jobs_posted"),
+        ),
+        "c_hist_hire_rate": _field_status_from_value(
+            normalized.c_hist_hire_rate,
+            normalization.field_status.get("c_hist_hire_rate"),
+        ),
+        "c_hist_total_spent": _field_status_from_value(
+            normalized.c_hist_total_spent,
+            normalization.field_status.get("c_hist_total_spent"),
+        ),
+    }
+
+    c_hist_total_reviews = _extract_preview_value(
+        raw_payload,
+        (
+            ("client", "totalReviews"),
+            ("client", "total_reviews"),
+            ("buyer", "totalReviews"),
+            ("buyer", "total_reviews"),
+        ),
+        _parse_int,
+        "c_hist_total_reviews",
+        field_status,
+    )
+    c_hist_feedback_score = _extract_preview_value(
+        raw_payload,
+        (
+            ("client", "totalFeedback"),
+            ("client", "total_feedback"),
+            ("buyer", "totalFeedback"),
+            ("buyer", "total_feedback"),
+        ),
+        _parse_number,
+        "c_hist_feedback_score",
+        field_status,
+    )
+    c_last_contract_title = _extract_preview_value(
+        raw_payload,
+        (
+            ("client", "lastContractTitle"),
+            ("client", "last_contract_title"),
+            ("buyer", "lastContractTitle"),
+            ("buyer", "last_contract_title"),
+        ),
+        _parse_text,
+        "c_last_contract_title",
+        field_status,
+    )
+    c_has_financial_privacy = _extract_preview_value(
+        raw_payload,
+        (
+            ("client", "hasFinancialPrivacy"),
+            ("client", "has_financial_privacy"),
+            ("buyer", "hasFinancialPrivacy"),
+            ("buyer", "has_financial_privacy"),
+        ),
+        _parse_bool,
+        "c_has_financial_privacy",
+        field_status,
+    )
+
+    c_hist_spend_per_hire = _safe_ratio_percentless(
+        numerator=normalized.c_hist_total_spent,
+        numerator_status=field_status["c_hist_total_spent"],
+        denominator=normalized.c_hist_hires_total,
+        denominator_status=field_status["c_hist_hires_total"],
+        field_name="c_hist_spend_per_hire",
+        statuses=field_status,
+    )
+    c_hist_spend_per_post = _safe_ratio_percentless(
+        numerator=normalized.c_hist_total_spent,
+        numerator_status=field_status["c_hist_total_spent"],
+        denominator=normalized.c_hist_jobs_posted,
+        denominator_status=field_status["c_hist_jobs_posted"],
+        field_name="c_hist_spend_per_post",
+        statuses=field_status,
+    )
+    c_hist_review_rate = _safe_ratio_percent(
+        numerator=c_hist_total_reviews,
+        numerator_status=field_status["c_hist_total_reviews"],
+        denominator=normalized.c_hist_hires_total,
+        denominator_status=field_status["c_hist_hires_total"],
+        field_name="c_hist_review_rate",
+        statuses=field_status,
+    )
+
+    return ClientQualitySignals(
+        c_hist_hires_total=normalized.c_hist_hires_total,
+        c_hist_jobs_posted=normalized.c_hist_jobs_posted,
+        c_hist_hire_rate=normalized.c_hist_hire_rate,
+        c_hist_total_spent=normalized.c_hist_total_spent,
+        c_hist_spend_per_hire=c_hist_spend_per_hire,
+        c_hist_spend_per_post=c_hist_spend_per_post,
+        c_hist_total_reviews=c_hist_total_reviews,
+        c_hist_review_rate=c_hist_review_rate,
+        c_hist_feedback_score=c_hist_feedback_score,
+        c_last_contract_title=c_last_contract_title,
+        c_has_financial_privacy=c_has_financial_privacy,
+        field_status=field_status,
+    )
 
 
 def _apply_contract_specific_pay_fields(
@@ -832,6 +971,35 @@ def _apply_contract_specific_pay_fields(
         )
 
     return normalized
+
+
+def _apply_client_quality_proxy_derivations(
+    normalized: JobSnapshotNormalizedInput,
+    statuses: dict[str, FieldStatus],
+) -> JobSnapshotNormalizedInput:
+    current_status = statuses.get("c_hist_hire_rate")
+    if normalized.c_hist_hire_rate is not None and _field_status_from_value(
+        normalized.c_hist_hire_rate,
+        current_status,
+    ) == "VISIBLE":
+        return normalized
+    if current_status in {"PARSE_FAILURE", "MANUAL"}:
+        return normalized
+
+    hires_total = normalized.c_hist_hires_total
+    jobs_posted = normalized.c_hist_jobs_posted
+    if hires_total is None or jobs_posted is None or jobs_posted <= 0:
+        return normalized
+    if _field_status_from_value(hires_total, statuses.get("c_hist_hires_total")) != "VISIBLE":
+        return normalized
+    if _field_status_from_value(jobs_posted, statuses.get("c_hist_jobs_posted")) != "VISIBLE":
+        return normalized
+
+    statuses["c_hist_hire_rate"] = "VISIBLE"
+    return _replace_fields(
+        normalized,
+        c_hist_hire_rate=(float(hires_total) / float(jobs_posted)) * 100.0,
+    )
 
 
 def _apply_exact_marketplace_fallbacks(
@@ -1191,6 +1359,109 @@ def _format_compact_number(value: float | int) -> str:
     if numeric.is_integer():
         return str(int(numeric))
     return f"{numeric:g}"
+
+
+def _extract_preview_value(
+    raw_payload: Mapping[str, object],
+    aliases: tuple[object, ...],
+    parser: Any,
+    field_name: str,
+    statuses: dict[str, FieldStatus],
+) -> object | None:
+    found, status, value = _extract_parsed_value_from_mapping(raw_payload, aliases, parser)
+    if not found:
+        statuses[field_name] = "NOT_VISIBLE"
+        return None
+    if status is None:
+        statuses[field_name] = "NOT_VISIBLE"
+        return None
+    statuses[field_name] = status
+    return value
+
+
+def _safe_ratio_percent(
+    *,
+    numerator: int | float | None,
+    numerator_status: FieldStatus | None,
+    denominator: int | float | None,
+    denominator_status: FieldStatus | None,
+    field_name: str,
+    statuses: dict[str, FieldStatus],
+) -> float | None:
+    return _safe_ratio(
+        numerator=numerator,
+        numerator_status=numerator_status,
+        denominator=denominator,
+        denominator_status=denominator_status,
+        field_name=field_name,
+        statuses=statuses,
+        multiplier=100.0,
+    )
+
+
+def _safe_ratio_percentless(
+    *,
+    numerator: int | float | None,
+    numerator_status: FieldStatus | None,
+    denominator: int | float | None,
+    denominator_status: FieldStatus | None,
+    field_name: str,
+    statuses: dict[str, FieldStatus],
+) -> float | None:
+    return _safe_ratio(
+        numerator=numerator,
+        numerator_status=numerator_status,
+        denominator=denominator,
+        denominator_status=denominator_status,
+        field_name=field_name,
+        statuses=statuses,
+        multiplier=1.0,
+    )
+
+
+def _safe_ratio(
+    *,
+    numerator: int | float | None,
+    numerator_status: FieldStatus | None,
+    denominator: int | float | None,
+    denominator_status: FieldStatus | None,
+    field_name: str,
+    statuses: dict[str, FieldStatus],
+    multiplier: float,
+) -> float | None:
+    if numerator is None or denominator is None:
+        statuses[field_name] = "NOT_VISIBLE"
+        return None
+    if not _is_visible_status(numerator_status) or not _is_visible_status(denominator_status):
+        statuses[field_name] = "NOT_VISIBLE"
+        return None
+
+    denominator_float = float(denominator)
+    if denominator_float <= 0:
+        statuses[field_name] = "NOT_VISIBLE"
+        return None
+
+    statuses[field_name] = "VISIBLE"
+    return (float(numerator) / denominator_float) * multiplier
+
+
+def _field_status_from_value(
+    value: object | None,
+    current_status: FieldStatus | None,
+) -> FieldStatus:
+    if _has_visible_python_value(value):
+        return "VISIBLE"
+    if current_status is not None:
+        return current_status
+    return "NOT_VISIBLE"
+
+
+def _has_visible_python_value(value: object | None) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
 
 
 def _replace_field_status_json(

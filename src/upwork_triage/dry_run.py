@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from upwork_triage.filters import evaluate_filters
-from upwork_triage.normalize import NormalizationResult, normalize_job_payload
+from upwork_triage.normalize import ClientQualitySignals, NormalizationResult, normalize_job_payload
 
 KEY_COVERAGE_FIELDS = (
     "upwork_job_id",
@@ -16,8 +16,17 @@ KEY_COVERAGE_FIELDS = (
     "j_description",
     "c_verified_payment",
     "c_country",
+    "c_hist_hires_total",
+    "c_hist_jobs_posted",
     "c_hist_total_spent",
     "c_hist_hire_rate",
+    "c_hist_spend_per_hire",
+    "c_hist_spend_per_post",
+    "c_hist_total_reviews",
+    "c_hist_review_rate",
+    "c_hist_feedback_score",
+    "c_last_contract_title",
+    "c_has_financial_privacy",
     "c_hist_avg_hourly_rate",
     "j_contract_type",
     "j_pay_fixed",
@@ -76,6 +85,7 @@ class JobDryRunResult:
     reject_reasons: tuple[str, ...]
     positive_flags: tuple[str, ...]
     negative_flags: tuple[str, ...]
+    client_quality_signals: Mapping[str, object | None]
     field_status: Mapping[str, str]
     error: str | None
 
@@ -156,11 +166,18 @@ def dry_run_raw_jobs(
     for index, raw_job in enumerate(raw_jobs, start=1):
         try:
             normalization = normalize_job_payload(raw_job)
+            client_quality_signals = normalization.to_client_quality_signals(raw_job)
             filter_result = evaluate_filters(normalization.to_filter_input())
             jobs_processed_count += 1
             routing_bucket_counts[filter_result.routing_bucket] += 1
 
-            derived_field_status = _derive_key_field_statuses(normalization)
+            combined_field_status = dict(normalization.field_status)
+            combined_field_status.update(client_quality_signals.field_status)
+            derived_field_status = _derive_key_field_statuses(
+                normalization,
+                client_quality_signals,
+                combined_field_status,
+            )
             for field_name, status in derived_field_status.items():
                 field_status_counters[field_name][status] += 1
                 if status == "VISIBLE":
@@ -188,7 +205,8 @@ def dry_run_raw_jobs(
                     reject_reasons=tuple(filter_result.reject_reasons),
                     positive_flags=tuple(filter_result.positive_flags),
                     negative_flags=tuple(filter_result.negative_flags),
-                    field_status=dict(normalization.field_status),
+                    client_quality_signals=_client_quality_signal_values(client_quality_signals),
+                    field_status=combined_field_status,
                     error=None,
                 )
             )
@@ -210,6 +228,7 @@ def dry_run_raw_jobs(
                     reject_reasons=(),
                     positive_flags=(),
                     negative_flags=(),
+                    client_quality_signals={},
                     field_status={},
                     error=str(exc),
                 )
@@ -322,21 +341,52 @@ def write_dry_run_summary_json(path: str | Path, summary: RawArtifactDryRunSumma
     )
 
 
-def _derive_key_field_statuses(normalization: NormalizationResult) -> dict[str, str]:
+def _derive_key_field_statuses(
+    normalization: NormalizationResult,
+    client_quality_signals: ClientQualitySignals,
+    combined_statuses: Mapping[str, str],
+) -> dict[str, str]:
     normalized = normalization.to_job_snapshot_insert_input()
-    statuses = dict(normalization.field_status)
     derived: dict[str, str] = {}
     for field_name in KEY_COVERAGE_FIELDS:
-        value = getattr(normalized, field_name)
+        value = _coverage_field_value(normalized, client_quality_signals, field_name)
         if _has_visible_value(value):
             derived[field_name] = "VISIBLE"
         else:
-            derived[field_name] = statuses.get(field_name, "NOT_VISIBLE")
+            derived[field_name] = combined_statuses.get(field_name, "NOT_VISIBLE")
     return derived
 
 
 def _is_automated_core_ready(derived_field_status: Mapping[str, str]) -> bool:
     return all(derived_field_status.get(field_name) == "VISIBLE" for field_name in MVP_AUTOMATED_CORE_FIELDS)
+
+
+def _coverage_field_value(
+    normalized: object,
+    client_quality_signals: ClientQualitySignals,
+    field_name: str,
+) -> object | None:
+    if hasattr(normalized, field_name):
+        return getattr(normalized, field_name)
+    return getattr(client_quality_signals, field_name)
+
+
+def _client_quality_signal_values(
+    client_quality_signals: ClientQualitySignals,
+) -> dict[str, object | None]:
+    return {
+        "c_hist_hires_total": client_quality_signals.c_hist_hires_total,
+        "c_hist_jobs_posted": client_quality_signals.c_hist_jobs_posted,
+        "c_hist_hire_rate": client_quality_signals.c_hist_hire_rate,
+        "c_hist_total_spent": client_quality_signals.c_hist_total_spent,
+        "c_hist_spend_per_hire": client_quality_signals.c_hist_spend_per_hire,
+        "c_hist_spend_per_post": client_quality_signals.c_hist_spend_per_post,
+        "c_hist_total_reviews": client_quality_signals.c_hist_total_reviews,
+        "c_hist_review_rate": client_quality_signals.c_hist_review_rate,
+        "c_hist_feedback_score": client_quality_signals.c_hist_feedback_score,
+        "c_last_contract_title": client_quality_signals.c_last_contract_title,
+        "c_has_financial_privacy": client_quality_signals.c_has_financial_privacy,
+    }
 
 
 def _format_missing_core_fields(missing_counts: Mapping[str, int]) -> str:
@@ -385,9 +435,10 @@ def _render_result_line(result: JobDryRunResult) -> str:
     positives = ", ".join(result.positive_flags) if result.positive_flags else "none"
     routing_bucket = result.routing_bucket or MISSING
     score = MISSING if result.filter_score is None else _format_score(result.filter_score)
+    client_quality = _render_client_quality_summary(result.client_quality_signals)
     return (
         f"  - {result.index}. {title} | {job_key} | {routing_bucket} | "
-        f"score {score} | url {source_url} | rejects {rejects} | positives {positives}"
+        f"score {score} | url {source_url}{client_quality} | rejects {rejects} | positives {positives}"
     )
 
 
@@ -395,6 +446,26 @@ def _format_score(value: float) -> str:
     if value.is_integer():
         return str(int(value))
     return f"{value:.2f}"
+
+
+def _render_client_quality_summary(signals: Mapping[str, object | None]) -> str:
+    parts: list[str] = []
+    hires_total = signals.get("c_hist_hires_total")
+    jobs_posted = signals.get("c_hist_jobs_posted")
+    if hires_total is not None and jobs_posted is not None:
+        parts.append(f"client {hires_total}/{jobs_posted} hires/posts")
+
+    hire_rate = signals.get("c_hist_hire_rate")
+    if isinstance(hire_rate, int | float):
+        parts.append(f"hire-rate {_format_score(float(hire_rate))}%")
+
+    spend_per_hire = signals.get("c_hist_spend_per_hire")
+    if isinstance(spend_per_hire, int | float):
+        parts.append(f"spend/hire {_format_score(float(spend_per_hire))}")
+
+    if not parts:
+        return ""
+    return " | " + " | ".join(parts)
 
 
 def _raw_text_value(raw_job: Mapping[str, object], key: str) -> str | None:

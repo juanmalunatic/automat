@@ -68,6 +68,13 @@ def test_fetch_upwork_jobs_sends_bearer_header_query_and_variables() -> None:
     assert "rawValue" in str(call["payload"]["query"])
     assert "currency" in str(call["payload"]["query"])
     assert "displayValue" in str(call["payload"]["query"])
+    assert "lastContractPlatform" in str(call["payload"]["query"])
+    assert "lastContractRid" in str(call["payload"]["query"])
+    assert "lastContractTitle" in str(call["payload"]["query"])
+    assert "hasFinancialPrivacy" in str(call["payload"]["query"])
+    assert "companyOrgUid" not in str(call["payload"]["query"])
+    assert "memberSinceDateTime" not in str(call["payload"]["query"])
+    assert "companyName" not in str(call["payload"]["query"])
     assert "pageInfo" not in str(call["payload"]["query"])
     assert "hasNextPage" not in str(call["payload"]["query"])
     assert "endCursor" not in str(call["payload"]["query"])
@@ -101,6 +108,13 @@ def test_build_job_search_query_uses_marketplace_job_postings_search_shape() -> 
     assert "rawValue" in query
     assert "currency" in query
     assert "displayValue" in query
+    assert "lastContractPlatform" in query
+    assert "lastContractRid" in query
+    assert "lastContractTitle" in query
+    assert "hasFinancialPrivacy" in query
+    assert "companyOrgUid" not in query
+    assert "memberSinceDateTime" not in query
+    assert "companyName" not in query
     assert "pageInfo" not in query
     assert "hasNextPage" not in query
     assert "endCursor" not in query

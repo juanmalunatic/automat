@@ -127,6 +127,8 @@ def test_dry_run_raw_jobs_records_key_field_visible_counts() -> None:
     assert summary.key_field_visible_counts["source_url"] == 1
     assert summary.key_field_visible_counts["j_title"] == 1
     assert summary.key_field_visible_counts["c_verified_payment"] == 1
+    assert summary.key_field_visible_counts["c_hist_hires_total"] == 1
+    assert summary.key_field_visible_counts["c_hist_jobs_posted"] == 1
     assert summary.key_field_visible_counts["j_apply_cost_connects"] == 1
     assert summary.key_field_visible_counts["j_qualifications"] == 1
 
@@ -149,10 +151,48 @@ def test_dry_run_raw_jobs_reports_useful_coverage_for_marketplace_live_like_payl
     assert summary.jobs_processed_count == 1
     assert summary.key_field_visible_counts["source_url"] == 1
     assert summary.key_field_visible_counts["c_verified_payment"] == 1
+    assert summary.key_field_visible_counts["c_hist_hires_total"] == 1
+    assert summary.key_field_visible_counts["c_hist_jobs_posted"] == 1
     assert summary.key_field_visible_counts["c_hist_total_spent"] == 1
+    assert summary.key_field_visible_counts["c_hist_hire_rate"] == 1
     assert summary.key_field_visible_counts["j_skills"] == 1
     assert summary.key_field_visible_counts["j_posted_at"] == 1
     assert summary.key_field_visible_counts["j_mins_since_posted"] == 1
+
+
+def test_dry_run_raw_jobs_exposes_client_quality_proxy_fields_when_available() -> None:
+    summary = dry_run_raw_jobs(
+        [
+            make_marketplace_live_like_payload(
+                client={
+                    "totalHires": 12,
+                    "totalPostedJobs": 30,
+                    "totalSpent": {
+                        "rawValue": "24000",
+                        "currency": "USD",
+                        "displayValue": "$24,000",
+                    },
+                    "totalReviews": 9,
+                    "totalFeedback": 4.9,
+                    "lastContractTitle": "Recent WooCommerce API integration",
+                    "hasFinancialPrivacy": True,
+                }
+            )
+        ],
+        artifact_path="artifact.json",
+    )
+
+    assert summary.key_field_visible_counts["c_hist_spend_per_hire"] == 1
+    assert summary.key_field_visible_counts["c_hist_spend_per_post"] == 1
+    assert summary.key_field_visible_counts["c_hist_total_reviews"] == 1
+    assert summary.key_field_visible_counts["c_hist_review_rate"] == 1
+    assert summary.key_field_visible_counts["c_hist_feedback_score"] == 1
+    assert summary.key_field_visible_counts["c_last_contract_title"] == 1
+    assert summary.key_field_visible_counts["c_has_financial_privacy"] == 1
+    assert summary.results[0].client_quality_signals["c_hist_spend_per_hire"] == 2000.0
+    assert summary.results[0].client_quality_signals["c_hist_review_rate"] == 75.0
+    assert summary.results[0].client_quality_signals["c_last_contract_title"] == "Recent WooCommerce API integration"
+    assert summary.results[0].client_quality_signals["c_has_financial_privacy"] == 1
 
 
 def test_dry_run_raw_jobs_reports_useful_coverage_for_hybrid_fixed_payload() -> None:
@@ -306,6 +346,7 @@ def test_render_raw_artifact_dry_run_summary_includes_counts_and_sample_lines() 
     assert "DISCARD=1" in rendered
     assert "Field coverage:" in rendered
     assert "c_hist_avg_hourly_rate: 1/2" in rendered
+    assert "c_hist_spend_per_hire: 2/2" in rendered
     assert "MVP readiness:" in rendered
     assert "automated core ready: 0/2" in rendered
     assert "missing core fields: j_posted_at=2" in rendered
@@ -315,6 +356,8 @@ def test_render_raw_artifact_dry_run_summary_includes_counts_and_sample_lines() 
     assert "Sample jobs:" in rendered
     assert "WooCommerce order sync plugin bug fix | upwork:123456789 | AI_EVAL" in rendered
     assert "url https://www.upwork.com/jobs/~123456789" in rendered
+    assert "client 12/20 hires/posts" in rendered
+    assert "hire-rate 60" in rendered
     assert "positive_flags" not in rendered
 
 
@@ -343,6 +386,7 @@ def test_write_dry_run_summary_json_writes_valid_json(
         "open jobs",
     ]
     assert document["results"][0]["job_key"] == "upwork:hybrid-0123456789"
+    assert document["results"][0]["client_quality_signals"]["c_hist_spend_per_hire"] is not None
 
 
 def make_strong_raw_payload(**overrides: object) -> dict[str, object]:
@@ -362,8 +406,11 @@ def make_strong_raw_payload(**overrides: object) -> dict[str, object]:
         "client": {
             "payment_verified": "Payment verified",
             "country": "US",
-            "hire_rate": "75%",
             "total_spent": "$25K",
+            "total_hires": 12,
+            "total_posted_jobs": 20,
+            "total_reviews": 6,
+            "total_feedback": 4.8,
             "avg_hourly_rate": "$42/hr",
         },
         "activity": {
