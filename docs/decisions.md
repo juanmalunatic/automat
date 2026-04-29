@@ -284,3 +284,19 @@ Reason:
 Tradeoff:
 
 There is one more local integration boundary and a few more CLI commands to maintain. Token persistence and recurring refresh behavior remain an explicit future decision instead of being hidden inside the first live-compatible ingestion path.
+
+## 2026-04-29 - Raw Upwork inspection uses a separate no-AI local artifact path
+
+Decision:
+
+Raw Upwork schema inspection should be a separate CLI command, `py -m upwork_triage inspect-upwork-raw`, that does not write DB rows or call AI by default.
+
+When it writes an inspection artifact, the default local path should be `data/debug/upwork_raw_latest.json`, which stays outside source control through the existing ignored `data/` tree.
+
+Reason:
+
+The main remaining live-risk is GraphQL schema and response-shape mismatch, not missing architecture. A dedicated raw inspection step makes it cheap to validate real payload shape before OpenAI cost or staged persistence enter the loop, and the local artifact gives the project a concrete calibration file for refining the query and normalizer.
+
+Tradeoff:
+
+There is another CLI command and another local artifact to manage. The artifact is intentionally local/private debug output rather than a reusable checked-in fixture, so anyone who wants a stable fixture later will need to curate it deliberately.

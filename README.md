@@ -72,6 +72,31 @@ This demo uses a local fake WooCommerce/plugin/API fixture plus a fake validated
 The repository now also includes a real AI client wrapper boundary for future live evaluation work, but the local demo remains fake-mode only.
 The repository also includes Upwork GraphQL and OAuth helper boundaries for future live ingestion work, but fake-demo remains fully local and requires no credentials.
 
+## Upwork raw inspection
+
+Before running the full live-compatible ingest path, you can inspect raw Upwork payload shape without calling OpenAI:
+
+```powershell
+py -m upwork_triage inspect-upwork-raw
+```
+
+This command:
+
+- requires `UPWORK_ACCESS_TOKEN`
+- does not require `OPENAI_API_KEY`
+- fetches raw jobs through the existing Upwork GraphQL client boundary
+- prints a compact key/shape summary to stdout
+- writes a local debug artifact to `data/debug/upwork_raw_latest.json` by default
+
+Optional examples:
+
+```powershell
+py -m upwork_triage inspect-upwork-raw --no-write
+py -m upwork_triage inspect-upwork-raw --output data/debug/my_upwork_sample.json
+```
+
+Important: raw inspection artifacts are local/private debug files that may contain real job and client text. Do not commit them. Their purpose is to help refine the GraphQL query and the normalizer before using `ingest-once`.
+
 ## Upwork auth helpers
 
 The repository now includes local helper commands for obtaining or refreshing Upwork tokens:
@@ -120,6 +145,7 @@ It will use:
 - `OPENAI_MODEL` for the AI model name
 
 The OAuth helper commands above are how you obtain or refresh `UPWORK_ACCESS_TOKEN` locally in this MVP step.
+The raw inspection command above is the safer first live smoke test before spending AI cost through `ingest-once`.
 
 Unit tests do not use those live services. They monkeypatch fake fetch/AI boundaries instead, and `fake-demo` remains the no-credentials local path.
 

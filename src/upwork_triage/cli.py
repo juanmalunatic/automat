@@ -9,6 +9,11 @@ from typing import TextIO
 
 from upwork_triage.config import ConfigError, load_config
 from upwork_triage.db import connect_db
+from upwork_triage.inspect_upwork import (
+    DEFAULT_INSPECTION_ARTIFACT_PATH,
+    inspect_upwork_raw,
+    render_raw_inspection_summary,
+)
 from upwork_triage.queue_view import fetch_decision_shortlist, render_decision_shortlist
 from upwork_triage.run_pipeline import run_fake_pipeline, run_live_ingest_once
 from upwork_triage.upwork_auth import (
@@ -81,6 +86,13 @@ def main(
             return _run_upwork_exchange_code(args.code, stdout=out)
         if args.command == "upwork-refresh-token":
             return _run_upwork_refresh_token(stdout=out)
+        if args.command == "inspect-upwork-raw":
+            return _run_inspect_upwork_raw(
+                no_write=args.no_write,
+                output_path=args.output,
+                sample_limit=args.sample_limit,
+                stdout=out,
+            )
     except ConfigError as exc:
         err.write(f"Config error: {exc}\n")
         return 1
@@ -128,6 +140,25 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
     subparsers.add_parser(
         "upwork-refresh-token",
         help="Refresh the configured Upwork access token and print token lines.",
+    )
+    inspect_parser = subparsers.add_parser(
+        "inspect-upwork-raw",
+        help="Fetch raw Upwork jobs, print a shape summary, and optionally write a local debug artifact.",
+    )
+    inspect_parser.add_argument(
+        "--no-write",
+        action="store_true",
+        help="Do not write the default inspection artifact.",
+    )
+    inspect_parser.add_argument(
+        "--output",
+        help="Optional JSON artifact path.",
+    )
+    inspect_parser.add_argument(
+        "--sample-limit",
+        type=int,
+        default=3,
+        help="Number of sample jobs to include in the rendered summary.",
     )
     return parser
 
@@ -182,6 +213,31 @@ def _run_upwork_refresh_token(*, stdout: TextIO) -> int:
     config = load_config()
     token_response = refresh_upwork_access_token(config)
     _print_token_lines(token_response, stdout=stdout)
+    return 0
+
+
+def _run_inspect_upwork_raw(
+    *,
+    no_write: bool,
+    output_path: str | None,
+    sample_limit: int,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    artifact_path: str | Path | None
+    if no_write:
+        artifact_path = None
+    elif output_path:
+        artifact_path = output_path
+    else:
+        artifact_path = DEFAULT_INSPECTION_ARTIFACT_PATH
+
+    summary = inspect_upwork_raw(
+        config,
+        artifact_path=artifact_path,
+        sample_limit=sample_limit,
+    )
+    print(render_raw_inspection_summary(summary), file=stdout)
     return 0
 
 

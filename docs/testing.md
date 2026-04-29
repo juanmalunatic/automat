@@ -94,6 +94,13 @@ Should verify:
 - `main(["upwork-exchange-code", ...])` prints secret `.env`-style token lines plus a warning comment
 - `main(["upwork-refresh-token"])` prints secret `.env`-style token lines plus a warning comment
 - helper CLI error output must not leak fake client-secret values
+- `main(["inspect-upwork-raw", "--no-write"])` returns `0` with fake fetching
+- `inspect-upwork-raw` prints fetched count and observed keys
+- `inspect-upwork-raw` does not require `OPENAI_API_KEY`
+- `inspect-upwork-raw` missing `UPWORK_ACCESS_TOKEN` returns a non-zero exit code with a helpful error
+- `inspect-upwork-raw --output PATH` writes the requested artifact
+- `inspect-upwork-raw --no-write` does not create the default artifact
+- inspect CLI error output must not leak fake token values
 - `main([])` or an unknown command returns a non-zero exit code and prints usage or a helpful error
 - `src/upwork_triage/__main__.py` delegates to the CLI module without requiring a subprocess
 
@@ -238,6 +245,22 @@ Should verify:
 - transport/network exceptions are wrapped clearly in `UpworkClientError`
 - tests do not require real Upwork credentials or network access
 
+### `tests/test_inspect_upwork.py`
+
+Should verify:
+
+- `inspect_upwork_raw()` calls the Upwork fetch boundary with the supplied config/transport
+- fetched-count summary matches returned jobs
+- observed keys combine top-level keys across returned jobs
+- first-job keys reflect only the first returned job
+- sample-limit behavior is respected
+- empty job lists produce a valid zero-count summary
+- `write_raw_inspection_artifact()` writes valid JSON
+- artifact JSON includes fetched metadata, source metadata, jobs, and key summary
+- artifact JSON does not include `UPWORK_ACCESS_TOKEN` or Authorization headers
+- parent artifact directories are created automatically
+- `render_raw_inspection_summary()` includes count, observed keys, first-job keys, and sample id/title/url-like values
+
 ### `tests/test_upwork_auth.py`
 
 Should verify:
@@ -321,6 +344,8 @@ Upwork client tests should use fake transports only. They should not require rea
 
 Upwork auth tests should use fake form transports only. They should not require real Upwork credentials, real network access, or a live OAuth endpoint.
 
+Upwork raw-inspection tests should use fake fetch boundaries only. They should not require real Upwork credentials, real network access, or OpenAI credentials.
+
 Do not require real AI calls for unit tests.
 
 AI tests should use fake model responses or stored fixture JSON.
@@ -342,6 +367,8 @@ CLI tests should use temp DB paths through env overrides or other isolated confi
 `ingest-once` CLI tests should monkeypatch the live fetch and/or AI boundaries rather than calling real Upwork or OpenAI services.
 
 Auth-helper CLI tests should monkeypatch token exchange/refresh helpers rather than calling real Upwork OAuth services. They should verify the secret warning comment and ensure fake secret values do not leak through normal error output.
+
+`inspect-upwork-raw` CLI tests should monkeypatch the Upwork fetch boundary rather than calling real Upwork. They should verify the command stays no-AI, can write a local debug artifact, and does not leak fake token values through normal error output.
 
 For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
 

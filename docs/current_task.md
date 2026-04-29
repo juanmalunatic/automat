@@ -2,219 +2,167 @@
 
 ## Task name
 
-Implement an Upwork OAuth/token-management boundary.
+Implement an Upwork raw-fetch inspection / live smoke-test command.
 
 ## Goal
 
-Add a local, testable OAuth/token layer that can:
+Add a safe, non-AI inspection path that can fetch raw Upwork job payloads through the existing GraphQL client boundary, print useful response-shape information, and optionally write a local pretty-JSON artifact for query/normalizer calibration.
 
-- build an Upwork authorization URL
-- exchange an authorization code for tokens
-- refresh an access token
-- expose small helper CLI commands for those workflows
-
-This task should unblock real local token acquisition for `ingest-once` without changing the staged pipeline, the DB schema, or the existing fake/local demo flow.
+This task should help validate real GraphQL access and schema shape before spending AI cost or running the full live pipeline.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/upwork_auth.py`
-- `tests/test_upwork_auth.py`
-- `src/upwork_triage/config.py`
-- `tests/test_config.py`
+- `src/upwork_triage/inspect_upwork.py` or an equivalent small module
 - `src/upwork_triage/cli.py`
+- `tests/test_inspect_upwork.py`
 - `tests/test_cli.py`
-- `.env.example`
 - `docs/current_task.md`
 - `docs/testing.md`
-- `docs/design.md`
-- `docs/decisions.md` if a durable auth decision is made
-- `README.md` if setup/run instructions change
+- `docs/design.md` if needed
+- `docs/decisions.md` if a durable inspection-artifact decision is made
+- `README.md` if command docs change
 
 Allowed supporting edits:
 
-- `src/upwork_triage/upwork_client.py` only if a tiny compatibility change is needed
+- `src/upwork_triage/upwork_client.py` only if a tiny client/extractor helper is clearly needed
+- `src/upwork_triage/config.py` only if a small config field is clearly needed
+- `.env.example` only if config changes
 - `pyproject.toml` only if needed for test/import configuration
-
-## Config requirements
-
-Extend `AppConfig` / `load_config()` with:
-
-- `upwork_authorize_url: str`
-- `upwork_token_url: str`
-- `upwork_redirect_uri: str | None`
-
-Supported env vars:
-
-- `UPWORK_AUTHORIZE_URL`
-- `UPWORK_TOKEN_URL`
-- `UPWORK_REDIRECT_URI`
-
-Use these defaults unless explicitly overridden:
-
-- `UPWORK_GRAPHQL_URL=https://api.upwork.com/graphql`
-- `UPWORK_AUTHORIZE_URL=https://www.upwork.com/ab/account-security/oauth2/authorize`
-- `UPWORK_TOKEN_URL=https://www.upwork.com/api/v3/oauth2/token`
-
-`UPWORK_REDIRECT_URI` may default to `None`.
-
-Do not require these auth fields in fake mode or at config-load time unless an auth/token function is actually called.
 
 ## Required public API
 
-Implement a focused auth module such as:
+Implement a small inspection module with responsibilities like:
 
-- `UpworkAuthError`
-- `MissingUpworkAuthConfigError`
-- `UpworkTokenError`
-- `TokenResponse`
-- `FormPostTransport`
-- `UrllibFormPostTransport`
-- `build_authorization_url(...)`
-- `exchange_authorization_code(...)`
-- `refresh_upwork_access_token(...)`
+- `RawInspectionSummary`
+- `inspect_upwork_raw(...)`
+- `render_raw_inspection_summary(...)`
+- `write_raw_inspection_artifact(...)`
 
-Equivalent clear names are acceptable if responsibilities remain obvious and typed.
+Equivalent clear names are acceptable if the boundaries stay obvious and typed.
 
-## Auth-layer behavior
+Suggested shape:
 
-### Authorization URL
+- `RawInspectionSummary`
+  - `fetched_count`
+  - `observed_keys`
+  - `first_job_keys`
+  - `sample_jobs`
+  - `artifact_path`
+- `inspect_upwork_raw(config, *, transport=None, artifact_path=None, sample_limit=3) -> RawInspectionSummary`
+- `render_raw_inspection_summary(summary) -> str`
+- `write_raw_inspection_artifact(path, *, config, jobs, summary) -> None`
 
-`build_authorization_url(config, *, state=None, response_type="code")` should:
+## Inspection behavior
 
-- require `UPWORK_CLIENT_ID`
-- require `UPWORK_REDIRECT_URI`
-- use `config.upwork_authorize_url`
-- include URL-encoded query params:
-  - `response_type=code`
-  - `client_id`
-  - `redirect_uri`
-  - `state` when provided
-- not require `UPWORK_CLIENT_SECRET`
-- make no network call
+The inspection path should:
 
-### Code exchange
+1. load config
+2. fetch raw jobs through `fetch_upwork_jobs(config, transport=...)`
+3. not call AI
+4. not run normalization, economics, triage, or the full pipeline
+5. not write staged DB rows by default
+6. summarize the fetched payload shape
+7. optionally write a local pretty-JSON artifact
 
-`exchange_authorization_code(config, code, *, transport=None)` should:
+The summary should include:
 
-- require `UPWORK_CLIENT_ID`
-- require `UPWORK_CLIENT_SECRET`
-- require `UPWORK_REDIRECT_URI`
-- require a non-empty `code`
-- POST form-encoded data to `config.upwork_token_url`:
-  - `grant_type=authorization_code`
-  - `client_id`
-  - `client_secret`
-  - `code`
-  - `redirect_uri`
-- parse the token response into `TokenResponse`
-- raise clear token/auth errors for malformed responses or transport failures
+- fetched job count
+- combined top-level keys observed across all returned jobs
+- first-job keys
+- a few sample values such as id / title / url when present
 
-### Token refresh
+Empty fetches should still produce a valid zero-count summary rather than crashing.
 
-`refresh_upwork_access_token(config, *, transport=None)` should:
+## Artifact behavior
 
-- require `UPWORK_CLIENT_ID`
-- require `UPWORK_CLIENT_SECRET`
-- require `UPWORK_REFRESH_TOKEN`
-- POST form-encoded data to `config.upwork_token_url`:
-  - `grant_type=refresh_token`
-  - `client_id`
-  - `client_secret`
-  - `refresh_token`
-- parse the token response into `TokenResponse`
+The artifact should be local-only debug output, not a source-controlled fixture by default.
 
-### Token response parsing
+If written, it should include:
 
-Implement a helper such as `parse_token_response(...)` that:
+- `fetched_at`
+- source metadata such as:
+  - `search_terms`
+  - `poll_limit`
+  - `graphql_url`
+- the raw `jobs` list returned by the Upwork client boundary
+- the observed-key summary
 
-- requires a non-empty `access_token` on success
-- allows missing `token_type`, `expires_in`, and `refresh_token`
-- parses `expires_in` as an integer when present
-- detects OAuth-style error responses such as `{ "error": "...", "error_description": "..." }`
-- preserves the raw response mapping on the typed result
+The artifact must:
 
-### Transport boundary
+- not include `UPWORK_ACCESS_TOKEN`
+- not include Authorization headers
+- create parent directories as needed
+- use pretty JSON for manual inspection
 
-`UrllibFormPostTransport` should:
+Default artifact path may be:
 
-- use standard-library form POSTs
-- send `application/x-www-form-urlencoded`
-- decode JSON response bodies
-- return mapping objects
-- wrap HTTP/network/JSON problems in clear auth/token errors
-- avoid logging or printing secrets
+- `data/debug/upwork_raw_latest.json`
+
+If a default path is used, it must stay local/ignored rather than becoming a checked-in fixture.
 
 ## CLI behavior
 
-Keep the existing commands intact:
+Add a command:
 
-- `py -m upwork_triage fake-demo`
-- `py -m upwork_triage ingest-once`
+- `py -m upwork_triage inspect-upwork-raw`
 
-Add these local helper commands:
+The command should:
 
-### `py -m upwork_triage upwork-auth-url`
+1. load config with `load_config()`
+2. fetch raw jobs through the Upwork client boundary
+3. print a compact shape summary to stdout
+4. optionally write a JSON artifact
+5. return `0` on success
+6. fail clearly if `UPWORK_ACCESS_TOKEN` is missing or the fetch fails
 
-- load config
-- build the authorization URL
-- print it to stdout
-- return `0`
-- fail clearly if `UPWORK_CLIENT_ID` or `UPWORK_REDIRECT_URI` is missing
+Suggested flags:
 
-### `py -m upwork_triage upwork-exchange-code CODE`
+- `--no-write`
+- `--output PATH`
+- `--sample-limit N`
 
-- load config
-- exchange the code for tokens
-- print `.env`-style secret lines such as:
-  - `UPWORK_ACCESS_TOKEN=...`
-  - `UPWORK_REFRESH_TOKEN=...` when present
-- include a warning comment that the values are secrets and must not be committed/shared
-- return `0`
+The command must not:
 
-### `py -m upwork_triage upwork-refresh-token`
+- call OpenAI
+- require `OPENAI_API_KEY`
+- run `ingest-once`
+- write DB rows by default
+- silently fall back to fake data
 
-- load config
-- refresh using `UPWORK_REFRESH_TOKEN`
-- print updated `.env`-style secret lines
-- include the same warning comment
-- return `0`
+## Security / privacy rules
 
-These helper commands must not:
-
-- write `.env` automatically
-- store tokens in SQLite
-- trigger `ingest-once`
-
-## Security rules
-
-- Never commit real secrets or tokens.
-- Do not echo secret values in normal errors, logs, or debug output.
-- The token helper commands may print token lines deliberately because that is their purpose.
-- When they do, the output must be clearly marked as secret local-only material.
+- Do not print `UPWORK_ACCESS_TOKEN` or other secrets.
+- Do not save Authorization headers in the artifact.
+- Raw job payloads may contain client/job text, so the artifact should be documented as a local/private debug file.
+- Error paths should stay helpful without echoing fake token values.
 
 ## Test requirements
 
 Add/update tests covering:
 
-1. authorization URL generation
-2. URL-encoding behavior
-3. missing config errors for auth-url / code exchange / token refresh
-4. correct form POST fields for authorization-code exchange
-5. correct form POST fields for refresh flow
-6. typed token-response parsing
-7. OAuth-style error-response parsing
-8. wrapped transport failures with no real network usage
-9. config defaults / overrides for the new Upwork auth URLs and redirect URI
-10. helper CLI command success paths using fake transports or monkeypatched functions
-11. helper CLI command failure paths with clear non-zero exits
-12. helper CLI output warning comments for secret token lines
-13. no fake secret values leaking through error output
-14. existing `fake-demo` behavior staying intact
-15. existing `ingest-once` behavior staying intact
+1. `inspect_upwork_raw()` calling the Upwork fetch boundary with the supplied config/transport
+2. fetched-count summary behavior
+3. observed-key aggregation across fetched jobs
+4. first-job key summary
+5. sample-limit behavior
+6. empty job-list behavior
+7. artifact JSON writing
+8. artifact metadata content
+9. absence of saved secrets / Authorization headers in artifacts
+10. parent-directory creation for artifact output
+11. rendered summary content
+12. `main(["inspect-upwork-raw", "--no-write"])` returning `0` with fake fetching
+13. inspect CLI output including fetched count and observed keys
+14. inspect CLI not requiring `OPENAI_API_KEY`
+15. inspect CLI missing-token failure path
+16. inspect CLI `--output PATH` writing the requested artifact
+17. inspect CLI `--no-write` not creating the default artifact
+18. inspect CLI not altering `fake-demo` or `ingest-once`
+19. no fake token values leaking through CLI error output
 
-All auth and CLI tests must stay fully mocked / fake-only. No real Upwork credentials or network calls are allowed in unit tests.
+All inspection tests must stay fake-only and make no real network calls.
 
 ## Out of scope
 
@@ -222,25 +170,24 @@ Do not implement:
 
 - recurring polling
 - background daemon behavior
-- storing tokens in SQLite
-- real Upwork or OpenAI network calls in unit tests
-- DB schema changes unless a real blocking issue is discovered
-- normalization, filter, AI, economics, or triage rule changes
-- queue-rendering semantic changes
-- TSV export
-- dashboard/web UI
+- DB schema changes
+- OpenAI / AI calls
+- economics or triage in the inspection path
+- normalization / filter / economics / triage rule changes
 - proposal generation or auto-apply
+- dashboard / web UI
+- token storage in SQLite
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- Upwork OAuth/token logic is isolated in `upwork_auth.py`
-- unit tests use fake transports only and make no network calls
-- helper CLI commands are implemented and tested
-- missing config fails clearly
-- token responses parse into a typed `TokenResponse`
-- normal error paths do not leak token/secret values
+- a user can run a no-AI raw Upwork inspection command
+- the command uses the existing Upwork client boundary
+- the command prints useful schema/shape information
+- the command can write a local JSON artifact for manual debugging
+- unit tests use fake boundaries only and require no network/secrets
+- no secrets are printed or saved
 - `fake-demo` and `ingest-once` still behave as before
-- docs are updated and honest about current token-storage and OAuth limitations
+- docs are updated and honest about the calibration/debug purpose
 - `py -m pytest` passes

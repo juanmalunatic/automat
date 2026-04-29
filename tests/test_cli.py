@@ -113,6 +113,128 @@ def test_main_ingest_once_returns_zero_and_writes_rendered_shortlist(
     assert "Angle:" in output
 
 
+def test_main_inspect_upwork_raw_no_write_returns_zero_and_prints_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "upwork_triage.inspect_upwork.fetch_upwork_jobs",
+        lambda config, *, transport=None: [
+            {
+                "id": "job-1",
+                "title": "First job",
+                "source_url": "https://example.test/jobs/1",
+            },
+            {
+                "id": "job-2",
+                "title": "Second job",
+                "url": "https://example.test/jobs/2",
+                "budget": "$500",
+            },
+        ],
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["inspect-upwork-raw", "--no-write"], stdout=stdout, stderr=stderr)
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert "Fetched jobs: 2" in output
+    assert "Observed keys:" in output
+    assert "id=job-1" in output
+
+
+def test_inspect_upwork_raw_output_path_writes_requested_artifact(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "inspect" / "raw.json"
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "upwork_triage.inspect_upwork.fetch_upwork_jobs",
+        lambda config, *, transport=None: [
+            {
+                "id": "job-1",
+                "title": "First job",
+                "source_url": "https://example.test/jobs/1",
+            }
+        ],
+    )
+
+    exit_code = main(
+        ["inspect-upwork-raw", "--output", str(artifact_path)],
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    assert exit_code == 0
+    assert artifact_path.exists()
+
+
+def test_inspect_upwork_raw_no_write_does_not_create_default_artifact(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_artifact = workspace_tmp_dir / "data" / "debug" / "upwork_raw_latest.json"
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
+    monkeypatch.setattr("upwork_triage.cli.DEFAULT_INSPECTION_ARTIFACT_PATH", default_artifact)
+    monkeypatch.setattr(
+        "upwork_triage.inspect_upwork.fetch_upwork_jobs",
+        lambda config, *, transport=None: [
+            {
+                "id": "job-1",
+                "title": "First job",
+                "source_url": "https://example.test/jobs/1",
+            }
+        ],
+    )
+
+    exit_code = main(["inspect-upwork-raw", "--no-write"], stdout=StringIO(), stderr=StringIO())
+
+    assert exit_code == 0
+    assert not default_artifact.exists()
+
+
+def test_inspect_upwork_raw_missing_token_returns_non_zero_and_helpful_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["inspect-upwork-raw", "--no-write"], stdout=stdout, stderr=stderr)
+
+    assert exit_code != 0
+    assert "UPWORK_ACCESS_TOKEN" in stderr.getvalue()
+
+
+def test_inspect_upwork_raw_cli_errors_do_not_print_fake_token_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_token = "fake-upwork-token-123"
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", fake_token)
+
+    def raise_token_error(config: object, *, transport: object | None = None) -> list[dict[str, object]]:
+        raise RuntimeError(f"transport exploded {fake_token}")
+
+    monkeypatch.setattr("upwork_triage.inspect_upwork.fetch_upwork_jobs", raise_token_error)
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["inspect-upwork-raw", "--no-write"], stdout=stdout, stderr=stderr)
+
+    assert exit_code != 0
+    assert fake_token not in stderr.getvalue()
+
+
 def test_main_upwork_auth_url_returns_zero_and_prints_authorization_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
