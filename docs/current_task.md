@@ -2,90 +2,227 @@
 
 ## Task name
 
-Improve local preview usability with URLs and a per-run limit flag.
+Implement the lean MVP direction: discovery memory plus enrichment packet generation.
 
-## Goal
+## MVP product definition
 
-Make the local no-AI preview flow easier to use by:
+The immediate MVP is:
 
-1. showing useful Upwork URLs in inspection and dry-run sample output when a URL can be derived safely, and
-2. adding a `--limit` override to `preview-upwork` so users do not have to edit `UPWORK_POLL_LIMIT` just to bound one preview run.
+```text
+discovery memory + enrichment packet generation
+```
 
-This task is additive only. It changes CLI/preview usability and summary rendering. It must not change extraction query shapes, exact hydration behavior, normalization mappings, filters, scoring, ingest wiring, DB schema, AI, economics, queue behavior, or live API behavior.
+The tool should help the user:
 
-## Files to modify
+1. fetch recent Upwork jobs through official API surfaces,
+2. apply a conservative official-data sanity filter,
+3. persist promising candidates,
+4. show an enrichment queue,
+5. accept manual UI-only client-quality data through a structured text bridge, and
+6. dump enriched prospect packets for manual or external-AI appraisal.
 
-Expected files:
+The MVP is not an autonomous apply engine.
 
-- `src/upwork_triage/cli.py`
-- `src/upwork_triage/inspect_upwork.py`
-- `src/upwork_triage/dry_run.py`
-- `tests/test_cli.py`
-- `tests/test_inspect_upwork.py`
-- `tests/test_dry_run.py`
-- `docs/current_task.md`
-- `docs/testing.md`
-- `README.md` only if a tiny command example is useful
+## Why this architecture is required
 
-## Required behavior
+Official API data is good enough for discovery and first-pass filtering, but not enough for final apply decisions.
 
-1. `render_raw_inspection_summary()` should show a real URL when one is already visible in `source_url`, `url`, or `jobUrl`.
+Important client-quality signals are UI-only or not confirmed through official API access:
 
-2. If no explicit URL is present but `ciphertext` is visible in `~...` form, the inspection summary may derive:
-   - `https://www.upwork.com/jobs/<ciphertext>`
+- Connects required
+- client recent review text / work-history comments
+- member since
+- active hires
+- average hourly paid
+- total hours hired
+- open jobs
 
-3. `render_raw_artifact_dry_run_summary()` should include each sample result's `source_url` when available.
+These signals are critical for avoiding wasted Connects, so the MVP must persist candidates and support manual enrichment before final appraisal.
 
-4. `preview-upwork` should support:
-   - `--limit`
-   - `--output`
-   - `--sample-limit`
-   - `--show-field-status`
-   - `--json-output`
+## Current agreed pipeline
 
-5. `--limit` should override the effective `poll_limit` for the preview command only and must validate as a positive integer.
+```text
+official discovery
+-> official-data sanity filter
+-> persistence / memory
+-> manual enrichment bridge
+-> enriched prospect dump
+```
 
-6. Omitting `--limit` should preserve existing config/env behavior.
+## Stage 1: official discovery and client-quality proxies
 
-## Test requirements
+Add all safe official client-quality fields that are confirmed available.
 
-Update tests so they verify:
+Use safe marketplace/public/exact sources only.
 
-- `preview-upwork --limit 30` passes an effective config with `poll_limit == 30` into `inspect_upwork_raw(...)`
-- `preview-upwork` without `--limit` preserves existing poll-limit config
-- `preview-upwork --limit 0` or a negative value fails clearly
-- inspection rendering shows URLs from `source_url`, `url`, or `jobUrl` when present
-- inspection rendering can derive a URL from `ciphertext` when explicit URL fields are absent
-- dry-run sample rendering includes `source_url` when available
-- the preview command still stays no-AI and no-DB-write
-- existing inspect/dry-run/CLI tests remain fake-data-only and secret-free
+Do not query `companyOrgUid` in production because live probing showed it can null-bubble and destroy search edges.
 
-## Out of scope
+Do not treat `memberSinceDateTime` as available until separately confirmed.
 
-Do not implement:
+Use official fields such as:
 
-- extraction query changes
-- exact hydration behavior changes
-- normalization mapping changes
-- filter / scoring changes
-- economics changes
-- ingest-once wiring
-- DB schema changes
-- OpenAI / AI calls
-- paid AI calls
-- queue / UI changes
-- Upwork mutations
-- broad refactors
-- polling / daemon behavior
-- real network calls in tests
-- committing `data/debug` artifacts or secrets
+- total spend
+- total hires
+- total posted jobs
+- total reviews
+- total feedback score
+- last contract title
+- financial privacy flag
+- payment verification
+- country/location
 
-## Acceptance criteria
+Derive:
 
-The task is complete when:
+```text
+hire_rate = totalHires / totalPostedJobs
+spend_per_hire = totalSpent / totalHires
+spend_per_post = totalSpent / totalPostedJobs
+review_rate = totalReviews / totalHires
+feedback_score = totalFeedback
+```
 
-- preview sample output shows useful URLs whenever they can be derived safely
-- `preview-upwork --limit` bounds one preview run without changing persistent config
-- the command stays no-AI and no-DB-write
-- committed tests stay network-free
-- the full test suite still passes
+These proxies should be used for first-stage sanity filtering and preview/queue display.
+
+## Stage 2: persist official-stage candidates
+
+After the first official-data sanity filter, persist survivors to SQLite.
+
+Persist:
+
+- job identity
+- source URL
+- raw snapshot
+- normalized snapshot
+- filter result
+- official score/flags
+- current user status
+
+Do not erase existing `jobs.user_status` on re-ingest.
+
+No OpenAI call is required for this path.
+
+## Stage 3: enrichment queue
+
+Add a terminal queue for persisted candidates that need manual enrichment.
+
+The queue should show:
+
+- title
+- URL
+- official bucket/score
+- pay
+- country
+- official client-quality data
+- derived client-quality proxies
+- activity/competition signals
+- missing enrichment fields
+
+It should hide or de-prioritize jobs marked applied/skipped/archived.
+
+## Stage 4: structured text manual enrichment bridge
+
+Do not build complex manual flags or an interactive UI yet.
+
+Use a structured plain-text import format.
+
+Example:
+
+```text
+job_key: upwork:2049588347231477717
+connects_required: 16
+member_since: 2021
+active_hires: 2
+avg_hourly_paid: 28
+hours_hired: 430
+open_jobs: 3
+
+client_recent_reviews:
+- Great client, clear instructions, paid promptly.
+- Good communication, reasonable expectations.
+
+manual_notes:
+Recent work history is mostly technical/WordPress-adjacent.
+```
+
+The bridge should store both structured fields and raw/freeform text.
+
+Manual enrichment is decision input and should not be stored only as `user_actions.notes`.
+
+## Stage 5: enriched prospect dump
+
+Add a command that dumps enriched prospects that are ready for manual or external-AI appraisal.
+
+The dump should include:
+
+- title
+- URL
+- description
+- skills / qualifications
+- contract type and pay
+- official bucket and score
+- official flags
+- official client history
+- derived client-quality proxies
+- manual Connects required
+- manual UI-only client fields
+- manual recent review text
+- manual notes
+
+This output is intended to be pasted into ChatGPT or another external AI.
+
+Internal AI appraisal is deferred.
+
+## Deferred
+
+Do not implement yet:
+
+- internal enriched AI appraisal
+- internal final apply/maybe/skip decision from enriched data
+- proposal generation
+- auto-apply
+- browser scraping
+- internal/session Upwork endpoint work
+- background polling
+- dashboard
+
+## Next implementation priority
+
+The next code work should proceed in this order:
+
+1. official client-quality fields + derived proxies
+2. persisted official-stage candidate intake
+3. enrichment queue
+4. structured text manual enrichment bridge
+5. enriched prospect dump
+
+Keep each step bounded and tested.
+
+## Current coding rules
+
+Each Codex task should be small and bounded.
+
+Prefer:
+
+- no AI calls unless explicitly requested
+- no DB schema change unless the task is specifically about persistence/enrichment
+- no browser scraping
+- no Upwork mutations
+- no auto-apply
+- no proposal submission
+- no committing debug artifacts or tokens
+- tests for every behavior changed
+- docs updates only where relevant
+
+## Acceptance criteria for the MVP
+
+The MVP is usable when this loop works:
+
+```text
+run persisted official intake 2x/3x per day
+-> candidates are remembered in SQLite
+-> enrichment queue shows only jobs worth opening manually
+-> user imports manual UI-only client data through structured text
+-> enriched prospect dump produces a compact packet
+-> user reviews packet manually or with external ChatGPT
+-> user records applied/skipped/saved actions
+```

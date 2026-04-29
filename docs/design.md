@@ -2,28 +2,34 @@
 
 ## 1. Product goal
 
-Automat is a local-first Upwork apply-triage system.
+Automat is a local-first Upwork discovery, enrichment, and apply-triage system.
 
-The goal is to reduce manual scraping and chair-glued monitoring while preserving the decision logic from the previous semi-manual workflow.
+The immediate MVP is not an autonomous apply engine. The immediate MVP is:
 
-The system should:
+```text
+discovery memory + enrichment packet generation
+```
 
-- ingest Upwork job data from GraphQL or a compatible source
-- store raw responses before transforming them
-- maintain a stable job identity layer for dedupe, user actions, and latest-snapshot lookup
-- normalize the full decision surface used in the old apply-triage sheet
-- reject obvious bad jobs deterministically before spending AI calls
-- ask AI only for semantic judgment: fit, client quality, scope quality, price/scope realism, duration, risk, and proposal angle
-- compute apply-stage economics deterministically
-- compute the final apply verdict and final one-line reason in code
-- present a final shortlist for manual application decisions
-- track user actions for future backtesting
+The system should first help the user:
 
-The first implementation is a data-complete staged MVP. It should have the same architecture shape as the future system, but simple behavior and terminal output.
+1. discover recent Upwork jobs through official API surfaces,
+2. apply a conservative official-data sanity filter,
+3. persist promising candidates so they are not reconsidered manually over and over,
+4. guide manual collection of UI-only client-quality signals,
+5. store that manual enrichment durably, and
+6. produce enriched prospect packets that can be reviewed manually or pasted into an external AI such as ChatGPT.
 
-## 2. Non-goals for MVP
+Internal AI appraisal, proposal generation, economics-based final verdicts, and apply automation remain later stages.
 
-Do not implement these in the first version:
+The immediate MVP should protect Connects by avoiding blind application decisions from official API data alone.
+
+Official Upwork API data is useful for discovery and first-pass filtering, but it is not sufficient for final apply decisions because important client-quality signals remain UI-only or unconfirmed through official API access.
+
+The long-term architecture can still support AI evaluation, deterministic economics, final triage, and backtesting. The near-term goal is narrower: build the smallest reliable loop that finds promising jobs, remembers them, captures the hidden manual client signals, and produces a useful enriched prospect dump.
+
+## 2. Non-goals for the immediate MVP
+
+Do not implement these in the immediate MVP:
 
 - dashboard
 - notifications
@@ -34,35 +40,380 @@ Do not implement these in the first version:
 - multi-model benchmarking
 - complex analytics
 - background daemon
+- browser scraping
+- internal/session Upwork endpoints
+- internal enriched AI appraisal
+- internal final apply/maybe/skip verdict from enriched data
+- automatic proposal submission
 
 The MVP should be runnable locally from the terminal.
 
-## 3. Core pipeline
+## 3. Lean MVP pipeline
 
-Pipeline stages:
+The lean MVP pipeline is:
 
-1. Fetch jobs from Upwork GraphQL or test fixture source.
-2. Create/update stable job identity rows.
-3. Store raw job snapshots.
-4. Normalize each raw job into the apply-triage schema.
-5. Apply deterministic pre-AI filters and lightweight scoring.
-6. Route jobs into `DISCARD`, `LOW_PRIORITY_REVIEW`, `MANUAL_EXCEPTION`, or `AI_EVAL`.
-7. Send routed jobs to AI when appropriate.
-8. Store AI semantic evaluations.
-9. Compute deterministic apply-stage economics.
-10. Compute final triage result, including final verdict, promotion trace, and final reason.
-11. Show terminal queue via `v_decision_shortlist`.
-12. Record user actions.
+```text
+official discovery
+-> official-data sanity filter
+-> persistence / memory
+-> manual enrichment bridge
+-> enriched prospect dump
+```
 
-The key architectural rule is that each stage stores its output separately.
+This is the first complete usable loop.
 
-The live-fetch boundary should return plain raw job-like dict payloads through a small local client interface. Upwork OAuth/token exchange should remain a separate boundary from GraphQL fetching so normalization and downstream stages do not depend directly on HTTP response objects, auth response payloads, or provider-specific SDK types.
+It deliberately does not include internal AI appraisal yet.
 
-The first live-compatible batch runner should keep that staged boundary intact instead of collapsing fetch, normalization, AI, economics, and triage into one opaque helper. It may orchestrate the stages in one command, but it should still persist each stage separately and fail fast on unexpected per-job errors after marking the ingestion run as failed.
+### Stage 1: official discovery and first sanity filter
 
-The stage-version labels in this runner should stay generic to the stage, such as `normalizer_v1`, `filter_v1`, `prompt_v1`, `economics_v1`, and `triage_v1`, rather than being named after the original local-fixture source.
+The official-data intake path should use the best confirmed official API sources:
 
-## 4. Main data stages
+- marketplace search
+- public marketplace search
+- exact marketplace job hydration
+- normalized field-status-aware job data
+- deterministic first-pass filters
+
+The first-pass filter answers only:
+
+```text
+Is this job worth opening manually?
+```
+
+It does not answer:
+
+```text
+Should I apply?
+```
+
+Official fields and derived proxies should be used as early signals, especially:
+
+- payment verification
+- country/location
+- total spend
+- total hires
+- total posted jobs
+- total reviews
+- total feedback score
+- last contract title
+- financial privacy flag
+- job activity counters
+- proposals/applicants when visible
+- contract type and pay fields
+- skills and qualification text
+
+Confirmed derived client-quality proxies:
+
+```text
+hire_rate = totalHires / totalPostedJobs
+spend_per_hire = totalSpent / totalHires
+spend_per_post = totalSpent / totalPostedJobs
+review_rate = totalReviews / totalHires
+feedback_score = totalFeedback
+```
+
+These are not true average hourly or true hours hired, but they are useful official-data substitutes for first-pass quality screening.
+
+The marketplace client field `companyOrgUid` should not be queried in production because live probing showed it can null-bubble and destroy otherwise useful search edges.
+
+`memberSinceDateTime` should not be treated as available until a future live schema/data probe confirms it.
+
+### Stage 2: persist official-stage candidates
+
+After the official-data sanity filter, survivors should be written to SQLite.
+
+Persisting candidates is part of the MVP because manual enrichment is too valuable to lose between runs.
+
+The persisted official-stage candidate should preserve:
+
+- stable `job_key`
+- Upwork id / source URL
+- raw snapshot
+- normalized snapshot
+- first-pass filter result
+- official-data score and flags
+- current `jobs.user_status`
+
+The persisted stage should preserve existing user state. Re-ingesting the same job must not erase whether the user marked it seen, skipped, applied, saved, or archived.
+
+The official persisted intake command should not call OpenAI by default.
+
+### Stage 3: enrichment queue
+
+The enrichment queue is a terminal view of persisted jobs that passed the first official-data sanity filter and still need manual UI-only information.
+
+It should answer:
+
+```text
+Which jobs should I open in Upwork and enrich manually?
+```
+
+It should hide or de-prioritize jobs already marked:
+
+- `applied`
+- `skipped`
+- `archived`
+
+It should show enough context to decide whether manual enrichment is worth doing:
+
+- bucket / score
+- title
+- URL
+- pay
+- country
+- official client history
+- derived client-quality proxies
+- activity/competition signals
+- missing manual enrichment fields
+
+### Stage 4: manual enrichment bridge
+
+Do not build a complex interactive UI for manual enrichment in the first MVP.
+
+Use a structured plain-text bridge.
+
+The user can copy data from the Upwork page, format it into a small local text file, and import it.
+
+Example format:
+
+```text
+job_key: upwork:2049588347231477717
+connects_required: 16
+member_since: 2021
+active_hires: 2
+avg_hourly_paid: 28
+hours_hired: 430
+open_jobs: 3
+
+client_recent_reviews:
+- Great client, clear instructions, paid promptly.
+- Good communication, reasonable expectations.
+
+manual_notes:
+Recent work history is mostly technical/WordPress-adjacent.
+```
+
+The parser should be permissive enough for practical use, but deterministic and testable.
+
+The manual enrichment record should preserve both structured fields and raw/freeform text.
+
+Suggested manual fields:
+
+- connects required
+- client recent review text / work-history comments
+- member since
+- active hires
+- average hourly paid
+- total hours hired
+- open jobs
+- manual notes
+- raw pasted text
+
+These fields should be stored separately from `user_actions.notes`, because they are decision inputs, not merely action history.
+
+### Stage 5: enriched prospect dump
+
+The final MVP output is an enriched prospect packet, not an internal final verdict.
+
+A command should dump jobs that:
+
+- passed the official sanity filter,
+- have manual enrichment,
+- are not already applied/skipped/archived,
+- and are ready for external/manual appraisal.
+
+The dump should be easy to paste into ChatGPT or another external AI.
+
+It should include both official and manual data:
+
+- title
+- URL
+- job description
+- skills / qualifications
+- contract type and pay
+- official bucket and score
+- official filter flags
+- country
+- payment verification
+- official total spend
+- official hires / posted jobs / reviews / feedback
+- derived hire rate
+- derived spend per hire
+- derived spend per post
+- derived review rate
+- manual Connects required
+- manual member-since observation
+- manual active hires
+- manual average hourly paid
+- manual hours hired
+- manual open jobs
+- manual recent review text
+- manual notes
+
+This output is the MVP decision handoff.
+
+The user may then ask an external AI to rank/appraise the prospects against their profile.
+
+## 4. Command architecture
+
+Keep command responsibilities separate.
+
+### `preview-upwork`
+
+Stateless quick peek.
+
+Purpose:
+
+```text
+What is live right now, and is anything worth opening?
+```
+
+Behavior:
+
+```text
+fetch
+-> exact hydrate
+-> normalize
+-> deterministic dry-run filter
+-> print terminal preview
+```
+
+Rules:
+
+- no DB writes
+- no user-status changes
+- no AI
+- no economics
+- no queue writes
+- useful for calibration and ad hoc checking
+- should not become the durable memory surface
+
+### Future official persisted intake command
+
+Likely command name:
+
+```powershell
+py -m upwork_triage ingest-upwork --limit 50
+```
+
+Purpose:
+
+```text
+Store official-stage candidates so manual enrichment is not wasted.
+```
+
+Behavior:
+
+```text
+fetch official jobs
+-> exact hydrate
+-> normalize
+-> derive official client-quality proxies
+-> first sanity filter
+-> persist survivors to SQLite
+```
+
+Rules:
+
+- write jobs/raw/normalized/filter rows
+- preserve existing `jobs.user_status`
+- no OpenAI by default
+- no internal final appraisal
+- no auto-apply
+- no browser scraping
+
+### Future enrichment queue command
+
+Likely command name:
+
+```powershell
+py -m upwork_triage queue-enrichment
+```
+
+Purpose:
+
+```text
+Tell the user which persisted jobs should be opened in Upwork and manually enriched.
+```
+
+Behavior:
+
+```text
+read persisted official-stage survivors
+-> hide applied/skipped/archived
+-> show missing manual enrichment fields
+-> show URL and official client-quality summary
+```
+
+### Future manual enrichment import command
+
+Likely command name:
+
+```powershell
+py -m upwork_triage enrich-from-file data/manual/upwork_2049588347231477717.txt
+```
+
+Purpose:
+
+```text
+Import structured manual UI-only client data into SQLite.
+```
+
+Rules:
+
+- parse structured text
+- store structured fields
+- preserve raw/freeform text
+- do not store this only in `user_actions.notes`
+- do not require a complex interactive UI
+
+### Future enriched prospect dump command
+
+Likely command name:
+
+```powershell
+py -m upwork_triage dump-prospects
+```
+
+Purpose:
+
+```text
+Generate enriched prospect packets for manual/external-AI appraisal.
+```
+
+Rules:
+
+- include official fields
+- include derived proxies
+- include manual enrichment
+- exclude applied/skipped/archived by default
+- no internal AI call required
+
+### Existing `queue`
+
+The existing queue remains the long-term persisted decision surface.
+
+For the lean MVP, an enrichment-specific queue may be introduced before the full final-decision queue becomes useful.
+
+### Existing `action` / `action-by-upwork-id`
+
+These commands should remain local user-action tracking commands.
+
+They record what the user actually did:
+
+- seen
+- applied
+- skipped
+- saved
+- archived / bad recommendation
+- good recommendation
+- client replied
+- interview
+- hired
+
+They must not call Upwork mutations, auto-apply, or alter historical recommendation rows.
+
+## 5. Main data stages
 
 ### Stable job identity
 
@@ -80,17 +431,15 @@ The exact generation logic belongs in the normalizer/ingestion code, but downstr
 
 ### Raw data
 
-Raw API/scrape payloads are stored untouched in `raw_job_snapshots`.
+Raw API payloads are stored untouched in `raw_job_snapshots`.
 
-This preserves replayability. If normalizers, filters, or AI prompts change later, old raw snapshots can be reprocessed.
+This preserves replayability. If normalizers, filters, or future AI prompts change later, old raw snapshots can be reprocessed.
 
-The first live-ingestion step may use a best-effort GraphQL query that still needs adjustment against the real Upwork schema. Keep the query text isolated in one function so live fixes do not leak through the rest of the pipeline.
+Before spending AI cost or relying on a persisted path, the app may run a raw-fetch inspection step that fetches Upwork payloads, prints response-shape information, and optionally writes a local debug artifact for schema/normalizer calibration.
 
-Before spending AI cost through `ingest-once`, the app may run a raw-fetch inspection step that fetches Upwork payloads, prints response-shape information, and optionally writes a local debug artifact for schema/normalizer calibration.
+When public-marketplace coverage is needed for decision fields such as contract type, budgets, and applicant counts, raw inspection may merge marketplace and public search surfaces into one enriched payload keyed by visible `id` and falling back to `ciphertext`.
 
-When public-marketplace coverage is needed for decision fields such as contract type, budgets, and applicant counts, raw inspection may merge marketplace and public search surfaces into one enriched payload keyed by visible `id` and falling back to `ciphertext`. Marketplace and public search should be fetched per narrow search term rather than through one giant combined public search expression, because the public search surface has proved sensitive to broad joined terms.
-
-The next calibration bridge after raw inspection is a no-AI dry run over a saved raw artifact. That step should reuse the real normalizer and deterministic filters, report field coverage and routing distribution, and avoid staged DB writes by default so query/normalizer adjustments can happen before AI cost is incurred.
+Marketplace and public search should be fetched per narrow search term rather than through one giant combined public search expression, because the public search surface has proved sensitive to broad joined terms.
 
 Calibration against live Upwork shape should happen through ignored local debug artifacts plus sanitized minimal regression fixtures. The raw artifacts themselves stay local/private and out of source control; committed tests should preserve only the key names, nesting, and representative formats needed to reproduce the mapping behavior safely.
 
@@ -98,16 +447,15 @@ Calibration against live Upwork shape should happen through ignored local debug 
 
 Normalized visible job data is stored in `job_snapshots_normalized`.
 
-This table contains all original decision variables from the manual schema that are observable before applying:
+This table contains observable official decision variables:
 
 - client history
+- derived official client-quality proxies
 - job core
 - activity/competition
 - market sanity
 - source URL
 - field visibility/status metadata
-
-Before real Upwork integration is wired, the normalizer may operate on local fake job-like payload fixtures as long as it emits the same normalized fields, stable `job_key`, and field-status semantics.
 
 Missing/unavailable fields should not be silently treated as zero.
 
@@ -119,63 +467,65 @@ Use nullable typed columns plus `field_status_json` to preserve these statuses:
 - `PARSE_FAILURE`
 - `MANUAL`
 
+Manual-only fields should remain unavailable in official normalization until manual enrichment is imported.
+
+### Manual enrichment data
+
+Manual UI-only decision inputs should live in their own enrichment table or equivalent explicit persisted structure.
+
+They should not be stored only as freeform action notes.
+
+The enrichment structure should preserve:
+
+- structured fields that can be filtered or displayed
+- raw pasted/manual text that can be included in prospect dumps or future AI appraisal
+- timestamps
+- stable `job_key`
+- optional source URL / Upwork id
+
+Manual enrichment is an input to the decision process, not merely an action log.
+
 ### Deterministic filter result
 
-`filter_results` stores hard-reject decisions, routing bucket, score, and flags.
+`filter_results` stores first-pass hard-reject decisions, routing bucket, score, and flags.
 
-A discarded job is not deleted. It is simply not shown or not sent to AI by default.
+In the lean MVP, this first-pass filter means:
 
-In the local fake pipeline runner, discarded jobs may still receive a final `triage_results` row with `NO / ARCHIVE` even when AI and economics rows are skipped.
+```text
+Worth opening manually?
+```
+
+It does not mean:
+
+```text
+Worth applying?
+```
+
+A discarded job is not deleted. It is simply not shown for enrichment or not shown by default.
 
 ### AI evaluation
 
-`ai_evaluations` stores semantic judgment only.
+`ai_evaluations` remains part of the long-term architecture, but it is deferred for the lean MVP.
 
-AI should evaluate:
+When reintroduced, AI should evaluate semantic fit and risk using official normalized data plus manual enrichment.
 
-- client quality
-- fit quality
-- scope quality
-- price/scope alignment
-- verdict bucket
-- likely duration
-- whether proposal can be written quickly
-- scope explosion risk
-- severe hidden risk
-- evidence arrays
-- semantic reason, trap, and proposal angle
+AI should not invent unavailable deterministic fields.
 
-AI should not compute deterministic economics.
-
-AI should not produce the final user-facing apply reason. It may produce an `ai_semantic_reason_short`, but the final reason shown to the user belongs to the triage stage because it depends on economics and promotion logic.
+AI should not run on the full firehose. It should run only on enriched survivors or exceptional official-data candidates.
 
 ### Economics
 
-`economics_results` stores formula-based calculations.
+`economics_results` remains part of the long-term architecture, but it is deferred for the lean MVP.
 
-These calculations use settings from `triage_settings_versions`, normalized job fields, and the AI bucket/duration fields.
+The immediate MVP can protect Connects by generating enriched prospect packets for manual/external-AI appraisal rather than computing internal final economics.
 
-Economics must stay deterministic and code-driven. If required inputs are missing, malformed, or would lead to invalid arithmetic such as division by zero, the economics stage should write a non-ok `calc_status` and `calc_error` instead of coercing values to zero.
+When economics is reintroduced, it should remain deterministic and code-driven.
 
 ### Final triage
 
-`triage_results` combines filter result, AI evaluation, and economics into the final queue verdict.
+`triage_results` remains part of the long-term architecture, but it is not required for the lean MVP prospect-dump loop.
 
-This stage owns:
-
-- `ai_verdict_apply`
-- `ai_apply_promote`
-- `ai_reason_apply_short`
-- `final_verdict`
-- `final_reason`
-- `queue_bucket`
-- `priority_score`
-
-`ai_reason_apply_short` is kept here for compatibility with the old manual TSV schema.
-
-Hard filter rejects may still be finalized here as `NO / ARCHIVE` even if no `ai_evaluations` or `economics_results` row was created for that snapshot.
-
-`ai_verdict_apply` should represent the base deterministic verdict before any promotion trace is applied. `ai_apply_promote` records whether the base verdict was promoted by the good-looking `Ok` override or low-cash mode.
+The first complete MVP loop stops at enriched prospect dump.
 
 ### User actions
 
@@ -185,58 +535,68 @@ This is future training/backtesting data.
 
 Action tracking should remain append-only in `user_actions` while `jobs.user_status` acts as the current user-facing summary for the stable job.
 
-Recording a user action should not mutate historical `filter_results`, `ai_evaluations`, `economics_results`, or `triage_results` rows. Those stages describe what the system recommended at the time; `user_actions` describes what the human actually did afterward.
+Recording a user action should not mutate historical `filter_results`, `ai_evaluations`, `economics_results`, or `triage_results` rows.
 
-## 5. Original manual schema mapping
+## 6. Official client-quality signals
 
-The original manual workflow had these field groups:
+Confirmed or target official fields for first-stage quality screening:
 
-- meta
-- client history
-- job core
-- activity/competition snapshot
-- market sanity
-- settings
-- AI qualitative fields
-- economic fields
-- final apply fields
+- `client.totalHires`
+- `client.totalPostedJobs`
+- `client.totalSpent`
+- `client.verificationStatus`
+- `client.location`
+- `client.totalReviews`
+- `client.totalFeedback`
+- `client.lastContractPlatform`
+- `client.lastContractRid`
+- `client.lastContractTitle`
+- `client.hasFinancialPrivacy`
 
-In Automat:
+Avoid in production unless future live probes prove safe:
 
-- stable job identity lives in `jobs`
-- meta/client/job/activity/market fields live in `job_snapshots_normalized`
-- settings live in `triage_settings_versions`
-- AI qualitative fields live in `ai_evaluations`
-- economic fields live in `economics_results`
-- final apply fields live in `triage_results`
-- actual user outcomes live in `user_actions`
+- `client.companyOrgUid`
+- `client.memberSinceDateTime`
 
-The old TSV row can be reconstructed by joining those tables.
+Official derived proxies:
 
-No decision variable from the original manual workflow should be dropped.
+```text
+c_hist_hire_rate = totalHires / totalPostedJobs
+c_hist_spend_per_hire = totalSpent / totalHires
+c_hist_spend_per_post = totalSpent / totalPostedJobs
+c_hist_review_rate = totalReviews / totalHires
+c_hist_feedback_score = totalFeedback
+```
 
-## 6. Initial settings
+Interpretation examples:
 
-Default settings:
+- high total spend plus high spend per hire is a strong quality signal
+- many posted jobs with very low hires is a noisy-client signal
+- many hires with very low spend per hire suggests low-value small contracts
+- high feedback with enough reviews is a positive trust signal
+- financial privacy should reduce confidence in spend-derived penalties
 
-- `target_rate_usd = 25`
-- `low_cash_mode = 1`
-- `connect_cost_usd = 0.15`
-- `p_strong = 0.01400`
-- `p_ok = 0.00189`
-- `p_weak = 0.00020`
-- `fbv_hours_defined_short_term = 10`
-- `fbv_hours_ongoing_or_vague = 8`
+These proxies are first-stage signals. They do not replace manual UI-only checks.
 
-These settings should be stored in `triage_settings_versions`.
+## 7. Manual final-check fields
 
-Do not hardcode them only inside formulas.
+Some important fields remain manual final-check inputs unless a safe official source is later confirmed:
 
-Only one row should have `is_default = 1`.
+- connects required
+- client recent review text / work-history comments
+- member since
+- active hires
+- average hourly paid
+- total hours hired
+- open jobs
 
-`initialize_db(conn)` should create the default settings row by calling `insert_default_settings(conn)` internally, so a freshly initialized database is ready for use.
+The system must not invent these fields.
 
-## 7. Fit context
+The enrichment queue should explicitly show which manual fields are still missing.
+
+The enriched prospect dump should include these fields when present.
+
+## 8. Fit context
 
 The user's strongest lane:
 
@@ -264,13 +624,13 @@ Weak fit examples:
 - data entry, AI training, graphic-design-only work
 - Shopify/Wix/Squarespace-only work
 
-## 8. Deterministic filter v1
+## 9. Deterministic official-data filter v1
 
-Initial hard rejects before AI:
+Initial first-pass hard rejects before manual enrichment:
 
 - payment explicitly unverified
-- fixed budget visible and below 100 on fixed-price jobs
-- hourly high visible and below 25 on hourly jobs
+- fixed budget visible and extremely low on fixed-price jobs
+- hourly high visible and below a viable floor on hourly jobs
 - interviewing count >= 3
 - invites sent >= 20
 - obvious wrong-platform or trash-only terms:
@@ -293,10 +653,13 @@ Do not hard-reject only because of:
 - proposals `20 to 50`
 - missing hourly range
 - missing client average hourly rate
+- missing manual-only fields
 
-These are ranking or warning fields, not MVP hard gates.
+These are ranking, warning, enrichment, or later-stage fields, not first-stage hard gates.
 
-## 9. Routing buckets
+Low fixed-budget urgent/rescue jobs should not be discarded too aggressively. A low fixed budget may still route to manual exception when the job has a strong rescue/exact-fit hook and fresh/low-competition context.
+
+## 10. Routing buckets
 
 Allowed deterministic routing buckets:
 
@@ -305,280 +668,173 @@ Allowed deterministic routing buckets:
 - `MANUAL_EXCEPTION`
 - `AI_EVAL`
 
-Suggested rule:
+For the lean MVP, interpret `AI_EVAL` as:
 
-- hard rejects -> `DISCARD`
-- score >= 4 -> `AI_EVAL`
-- score 1 to 3 -> `LOW_PRIORITY_REVIEW`
-- score <= 0 -> `DISCARD`
-- exact-fit but visibly/economically weird from pre-AI fields -> `MANUAL_EXCEPTION`
+```text
+worth manual enrichment / semantic appraisal
+```
 
-For the deterministic filters module, "economically/weirdly weak" should be interpreted only from visible pre-AI fields such as low-but-not-hard-reject budget/rate, high Connect cost, very low client average hourly, or similar non-formula weakness signals. Do not use post-AI or post-economics calculations at this stage.
+It does not mean internal AI has run.
 
-Exact-fit exception examples:
+Suggested first-pass meaning:
 
-- Brevo/CRM/form integration
-- WooCommerce checkout/shipping/payment issue
-- custom plugin update
-- RSS/XML/feed/plugin work
-- production rescue with clear technical hook
+- `DISCARD`: do not enrich by default
+- `LOW_PRIORITY_REVIEW`: maybe enrich only if time is available
+- `MANUAL_EXCEPTION`: weird economics or visibility, but exact-fit enough to inspect manually
+- `AI_EVAL`: strong enough official-data candidate to enrich manually
 
-## 10. AI contract
+A future rename to `NEEDS_ENRICHMENT` may be considered, but is not required immediately.
 
-AI receives a compact JSON payload with:
+## 11. Enriched prospect packet
 
-- normalized job/client/activity fields
+The enriched prospect packet is the main output artifact for the lean MVP.
+
+It should be compact enough to paste into ChatGPT, but complete enough for decision support.
+
+Suggested structure per job:
+
+```text
+JOB
+- job_key:
+- title:
+- url:
+- official_bucket:
+- official_score:
+- official_flags:
+
+SCOPE
+- contract_type:
+- pay:
+- posted_at / age:
+- description:
+- skills:
+- qualifications:
+
+OFFICIAL CLIENT SIGNALS
+- country:
+- payment_verified:
+- total_spent:
+- total_hires:
+- total_posted_jobs:
+- total_reviews:
+- feedback_score:
+- hire_rate:
+- spend_per_hire:
+- spend_per_post:
+- review_rate:
+- last_contract_title:
+- has_financial_privacy:
+
+ACTIVITY / COMPETITION
+- proposals/applicants:
+- hires:
+- interviewing:
+- invites_sent:
+- unanswered_invites:
+
+MANUAL ENRICHMENT
+- connects_required:
+- member_since:
+- active_hires:
+- avg_hourly_paid:
+- hours_hired:
+- open_jobs:
+- client_recent_reviews:
+- manual_notes:
+```
+
+## 12. Long-term AI contract
+
+AI remains a future stage.
+
+When internal AI appraisal is reintroduced, AI should receive a compact JSON payload with:
+
+- official normalized job/client/activity fields
+- derived official client-quality proxies
+- manual enrichment fields
 - deterministic filter summary and flags
 - fit context
 
-AI must return strict JSON with these fields:
+AI should evaluate:
 
-- `ai_quality_client`: `Strong`, `Ok`, or `Weak`
-- `ai_quality_fit`: `Strong`, `Ok`, or `Weak`
-- `ai_quality_scope`: `Strong`, `Ok`, or `Weak`
-- `ai_price_scope_align`: `aligned`, `underposted`, `overpriced`, or `unclear`
-- `ai_verdict_bucket`: `Strong`, `Ok`, `Weak`, or `No`
-- `ai_likely_duration`: `defined_short_term` or `ongoing_or_vague`
-- `proposal_can_be_written_quickly`: boolean
-- `scope_explosion_risk`: boolean
-- `severe_hidden_risk`: boolean
-- `ai_semantic_reason_short`: one sentence, preferably under 140 characters
-- `ai_best_reason_to_apply`: short sentence
-- `ai_why_trap`: short sentence
-- `ai_proposal_angle`: short sentence
-- `fit_evidence`: list of visible evidence strings
-- `client_evidence`: list of visible evidence strings
-- `scope_evidence`: list of visible evidence strings
-- `risk_flags`: list of visible risk strings
-
-AI should be blunt and commercially conservative.
-
-The AI contract layer should validate this output strictly before it is treated as an `ai_evaluations` row:
-
-- required fields must be present
-- enum values must match the documented contract exactly
-- boolean fields must be real booleans
-- evidence/risk fields must be lists of strings
-- text fields may be whitespace-trimmed but not semantically rewritten
-
-The raw AI contract uses plain list field names such as `fit_evidence`. When the validated result is stored in `ai_evaluations`, the serializer should convert those lists into the DB-oriented JSON text fields such as `fit_evidence_json`.
-
-Do not let the AI contract layer invent unavailable deterministic fields. If a normalized field such as Connect cost, client spend, proposal count, or payment verification is unavailable upstream, it should remain unavailable in the payload rather than being guessed.
-
-Real model access should sit behind a small local provider interface. The rest of the app should build messages and depend on validated `AiEvaluation` results, not on OpenAI SDK response objects. OpenAI may be the first concrete provider, but the integration boundary should preserve future provider flexibility.
-
-## 11. Bucket meaning
-
-- `Strong`: strong real-lane fit plus acceptable/good client plus understandable scope
-- `Ok`: adjacent or mixed but still credible
-- `Weak`: generic overlap, weak differentiation, or weak scope/client profile
-- `No`: hard disqualifier or obviously bad combined picture
-
-## 12. First believable value rule
-
-For fixed-price jobs:
-
-`b_first_believ_value_usd = j_pay_fixed`
-
-For hourly jobs with `defined_short_term`:
-
-`b_first_believ_value_usd = fbv_hours_defined_short_term * min(target_rate_usd, c_hist_avg_hourly_rate if visible else target_rate_usd)`
-
-For hourly jobs with `ongoing_or_vague`:
-
-`b_first_believ_value_usd = fbv_hours_ongoing_or_vague * min(target_rate_usd, c_hist_avg_hourly_rate if visible else target_rate_usd)`
-
-Do not use market averages as a substitute for believable first value.
-
-Do not use fantasy lifetime value.
-
-## 13. Apply-stage economics formulas
-
-- `b_apply_cost_usd = connect_cost_usd * j_apply_cost_connects`
-- `b_apply_prob`:
-  - `Strong -> p_strong`
-  - `Ok -> p_ok`
-  - `Weak -> p_weak`
-  - `No -> 0`
-- `b_required_apply_prob = b_apply_cost_usd / b_first_believ_value_usd`
-- `b_calc_max_rac_usd = b_apply_prob * b_first_believ_value_usd`
-- `b_margin_usd = b_calc_max_rac_usd - b_apply_cost_usd`
-- `b_calc_max_rac_connects = floor(b_calc_max_rac_usd / connect_cost_usd)`
-- `b_margin_connects = b_calc_max_rac_connects - j_apply_cost_connects`
-
-Positive margin means the base apply cost clears the deterministic economic bar.
-
-## 14. Apply verdict logic
-
-Allowed final apply verdicts:
-
-- `APPLY`
-- `MAYBE`
-- `NO`
-
-Allowed promotion traces:
-
-- `none`
-- `ok_override_to_maybe`
-- `ok_override_to_apply`
-- `low_cash_maybe_to_apply`
-
-Default rules:
-
-- failed filter / routing bucket `DISCARD` -> `NO`
-- bucket `No` -> `NO`
-- bucket `Strong` and `b_margin_usd >= 0` -> `APPLY` unless severe hidden risk
-- bucket `Ok` and `b_margin_usd >= 0` -> `MAYBE` by default
-- bucket `Weak` -> `NO` by default
-- negative margin -> `NO` by default
-- non-ok economics `calc_status` -> `NO`
-
-Good-looking Ok override:
-
-If all are true:
-
-- bucket is `Ok`
-- client, fit, and scope are each `Ok` or `Strong`
-- no quality field is `Weak`
-- no hard disqualifier
-- no severe hidden risk
-- `b_required_apply_prob <= p_strong`
-
-Then minimum verdict becomes `MAYBE`.
-
-If low cash mode is on, proposal can be written quickly, no obvious scope-explosion risk, and client quality is not weak, `MAYBE` may become `APPLY`.
-
-The final triage stage should write a concise `ai_reason_apply_short` / `final_reason` that reflects both qualitative judgment and deterministic economics.
-
-## 15. Decision shortlist view
-
-The main user-facing database view is `v_decision_shortlist`.
-
-It must show:
-
-- final verdict
-- final reason
-- queue bucket
-- priority score
-- AI bucket
-- AI fit/client/scope
+- client quality
+- fit quality
+- scope quality
 - price/scope alignment
+- verdict bucket
 - likely duration
-- promotion trace
-- economics
-- key upstream job/client/activity fields
-- semantic AI reason
+- whether proposal can be written quickly
+- scope explosion risk
+- severe hidden risk
 - evidence arrays
-- risk/trap
-- proposal angle
-- flags and field statuses
+- semantic reason, trap, and proposal angle
 
-The terminal queue should mirror this view.
+AI should not compute deterministic economics.
 
-The terminal queue is the re-openable local decision surface. It should render the stable `job_key` plus the current local `jobs.user_status` summary so the user can move directly from a shortlisted row to local action tracking without re-ingesting.
+AI should not invent unavailable deterministic fields.
 
-The view must select the latest triage result per `job_key` using a deterministic tie-breaker. In the MVP, use `MAX(triage_results.id)` per `job_key`.
+The raw AI contract should be validated strictly before being treated as an `ai_evaluations` row.
 
-## 16. MVP command behavior
+## 13. Long-term economics
 
-Stable local demo command target:
+Economics remains a future stage.
 
-`py -m upwork_triage fake-demo`
+Default settings may include:
 
-This command should stay fake/local only for the MVP. It should load config, use SQLite, run one local WooCommerce/plugin/API fixture through the existing staged pipeline, and print the rendered shortlist.
+- `target_rate_usd = 25`
+- `low_cash_mode = 1`
+- `connect_cost_usd = 0.15`
+- `p_strong = 0.01400`
+- `p_ok = 0.00189`
+- `p_weak = 0.00020`
+- `fbv_hours_defined_short_term = 10`
+- `fbv_hours_ongoing_or_vague = 8`
 
-Even after a real AI client wrapper exists, `fake-demo` should remain fake-mode only and continue using local fake AI output instead of calling a live provider.
+When reintroduced, economics must stay deterministic and code-driven. If required inputs are missing, malformed, or would lead to invalid arithmetic such as division by zero, the economics stage should write a non-ok `calc_status` and `calc_error` instead of coercing values to zero.
 
-The lower-level `run_pipeline` module may still exist as an internal orchestration helper, but the user-facing local demo entry point should be the package CLI.
+## 14. Decision shortlist view
 
-First live-compatible one-shot command target:
+The long-term user-facing database view is `v_decision_shortlist`.
 
-`py -m upwork_triage ingest-once`
+For the lean MVP, an enrichment queue and enriched prospect dump may be more important than the final decision shortlist.
 
-This command is the first live-compatible batch path. It should load config, open SQLite, fetch raw job payload dicts through the Upwork client boundary, evaluate routed jobs through the AI client boundary, persist the staged outputs, and print the rendered shortlist.
+Eventually, the terminal queue should mirror persisted decision/enrichment state and render:
 
-`ingest-once` should not silently fall back to fake data. If the Upwork or OpenAI live boundaries are not configured, it should fail clearly.
+- stable `job_key`
+- local `jobs.user_status`
+- title
+- URL
+- verdict/bucket/stage
+- official-data summary
+- manual enrichment status
+- action hints
 
-`ingest-once` should use the normal SQLite connection behavior from `connect_db()`. Demo-only SQLite tweaks such as forcing `PRAGMA journal_mode = MEMORY` may remain limited to `fake-demo`.
+The view must select the latest relevant result per `job_key` using a deterministic tie-breaker.
 
-`ingest-once` depends on configured access tokens but does not own the OAuth flow. Authorization URL building, code exchange, and token refresh should live in a separate local auth helper boundary.
-
-Even in this live-compatible path, recurring polling remains deferred. The command is a one-shot ingest/evaluate run, not a background daemon.
-
-Local auth helper commands may expose:
-
-- `py -m upwork_triage upwork-auth-url`
-- `py -m upwork_triage upwork-exchange-code CODE`
-- `py -m upwork_triage upwork-refresh-token`
-
-These helper commands may print secret token lines for local copy/paste into `.env`, but they should not write `.env` automatically or store tokens in SQLite in this MVP step.
-
-Calibration/debug command target:
-
-`py -m upwork_triage inspect-upwork-raw`
-
-This command should fetch raw jobs through the Upwork client boundary, avoid OpenAI entirely, avoid staged DB writes by default, and print just enough shape information to refine the GraphQL query and normalizer safely.
-
-For live calibration, `inspect-upwork-raw` may use a hybrid marketplace+public fetch by default so the saved raw artifact contains both descriptive marketplace fields and public contract/pay/activity fields before AI is turned on. A marketplace-only escape hatch is acceptable for debugging individual surfaces.
-
-If it writes a raw inspection artifact, that artifact should be treated as a local/private debug file rather than a checked-in fixture unless it is manually curated later.
-
-Calibration dry-run command target:
-
-`py -m upwork_triage dry-run-raw-artifact`
-
-This command should read a previously saved raw inspection artifact, run only normalization plus deterministic filtering, and print field-coverage, parse-failure, and routing-bucket summaries. It should not call Upwork live, should not call OpenAI, and should not persist staged DB rows by default.
-
-Local user-action helper command targets:
-
-- `py -m upwork_triage action JOB_KEY ACTION [--notes TEXT]`
-- `py -m upwork_triage action-by-upwork-id UPWORK_JOB_ID ACTION [--notes TEXT]`
-
-These commands should record local tracking state only. They must not call Upwork mutations, auto-apply, or alter the historical recommendation pipeline.
-
-Re-openable local queue command target:
-
-- `py -m upwork_triage queue`
-
-This command should read the existing local shortlist from SQLite, render the current `v_decision_shortlist`, and avoid live fetch or AI work. It is the bridge between a prior `fake-demo` or `ingest-once` run and later local action commands.
-
-The first coding task should implement database initialization, schema, default settings, view, and tests.
-
-## 17. Data integrity requirements
+## 15. Data integrity requirements
 
 SQLite connections created by project code must enable:
 
-`PRAGMA foreign_keys = ON`
+```sql
+PRAGMA foreign_keys = ON
+```
 
 The DB schema should use `CHECK` constraints for enum-like fields where practical.
 
 Only one settings row should be default.
 
-The decision shortlist should select the latest triage result per `job_key`, not per nullable `upwork_job_id`.
-
-The following uniqueness constraints are mandatory for the first DB task:
+The following uniqueness constraints are important for staged replayability:
 
 - `UNIQUE(job_key, raw_hash)` on `raw_job_snapshots`
 - `UNIQUE(raw_snapshot_id, normalizer_version)` on `job_snapshots_normalized`
 - `UNIQUE(job_snapshot_id, filter_version)` on `filter_results`
 - partial unique index allowing only one `triage_settings_versions` row with `is_default = 1`
 
-Economics uniqueness can be revisited later because NULL handling around `ai_evaluation_id` can be subtle in SQLite.
+Manual enrichment should be versioned or update-safe enough that the latest enrichment for a job can be selected deterministically.
 
-## 18. Deferred future features
+Re-ingestion must not erase local user status or manual enrichment.
 
-Future extensions:
-
-- recurring token-refresh policy and persistence workflow
-- recurring polling
-- notification channel
-- lightweight web dashboard
-- proposal drafting assist
-- historical backtesting of filter/prompt versions
-- portfolio demo mode with fake data
-- Postgres migration
-
-## 19. Runtime configuration
+## 16. Runtime configuration
 
 Runtime configuration should be loaded centrally from environment variables through `src/upwork_triage/config.py`.
 
@@ -588,12 +844,29 @@ Expected runtime config areas:
 
 - app environment and DB path
 - fake versus live run mode
-- placeholder OpenAI credentials/model selection
-- placeholder Upwork credentials/tokens
+- placeholder OpenAI credentials/model selection for future use
+- Upwork credentials/tokens
 - Upwork GraphQL endpoint URL
 - Upwork OAuth authorization/token endpoint URLs
 - Upwork redirect URI for authorization-code flow
 - search terms and poll limits
-- optional runtime economics knobs such as target rate and Connect cost
+- optional runtime economics knobs for future use
 
-These env-provided economics knobs should not become a second source of truth for the seeded defaults in `triage_settings_versions`. The DB settings row remains the authoritative default settings source until later work explicitly adds settings synchronization or override behavior.
+Env-provided economics knobs should not become a second source of truth for the seeded defaults in `triage_settings_versions`.
+
+## 17. Deferred future features
+
+Future extensions:
+
+- recurring token-refresh policy and persistence workflow
+- recurring polling
+- notification channel
+- lightweight web dashboard
+- internal enriched AI appraisal
+- deterministic apply economics
+- final apply/maybe/skip verdicts
+- proposal drafting assist
+- historical backtesting of filter/prompt versions
+- browser-visible-page enrichment helper, if safe and explicitly chosen later
+- portfolio demo mode with fake data
+- Postgres migration
