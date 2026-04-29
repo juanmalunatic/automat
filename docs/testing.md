@@ -101,6 +101,11 @@ Should verify:
 - `inspect-upwork-raw --output PATH` writes the requested artifact
 - `inspect-upwork-raw --no-write` does not create the default artifact
 - inspect CLI error output must not leak fake token values
+- `main(["queue"])` returns `0` and prints the current shortlist from the configured DB
+- `queue` uses the configured `AUTOMAT_DB_PATH` and creates parent directories when needed
+- `queue` on an empty initialized DB prints the empty-queue message
+- `queue` output includes `job_key`, local `user_status` when present, and a compact action hint
+- `queue` does not call fake-demo, ingest-once, raw inspection, Upwork fetch, OpenAI evaluation, or action recording
 - `main(["action", JOB_KEY, "seen"])` returns `0` and prints a confirmation
 - `main(["action", JOB_KEY, "applied", "--notes", "..."])` stores notes
 - `main(["action-by-upwork-id", UPWORK_JOB_ID, "skipped"])` resolves the correct job
@@ -345,13 +350,13 @@ Should verify:
 
 - `fetch_decision_shortlist()` returns rows from `v_decision_shortlist`
 - rendered output groups `HOT` before `MANUAL_EXCEPTION` before `REVIEW`
-- rendered output includes title, URL, verdict, bucket, AI summary, economics summary, final reason, trap, and proposal angle
-- missing / `None` values render as `—` and do not crash
+- rendered output includes `job_key`, `upwork_job_id` when present, `user_status` when present, and a compact action hint
+- rendered output still includes title, URL, verdict, bucket, AI summary, economics summary, final reason, trap, and proposal angle
+- missing / `None` values render as `â€”` and do not crash
 - empty shortlist input renders a clear empty-queue message
 - rendering works with a shortlist row produced by `run_fake_pipeline()`
 
 ## Test data
-
 Use small local fixtures.
 
 Fixture numeric percentages must use percent values such as `75.0`, not fractions such as `0.75`.
@@ -417,3 +422,5 @@ pytest -m integration
 Every future Codex task should add or update tests for the behavior it changes.
 
 If tests cannot be run, the implementation report must say why.
+
+

@@ -474,6 +474,7 @@ It should include:
 - `field_status_json`
 - `triaged_at`
 - `job_key`
+- `user_status`
 - `upwork_job_id`
 
 Filter the view to queue buckets useful to the user by default:

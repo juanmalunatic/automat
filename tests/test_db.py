@@ -397,6 +397,8 @@ def test_minimal_pipeline_fixture_appears_in_decision_shortlist(
         """
         SELECT
             job_key,
+            upwork_job_id,
+            user_status,
             final_verdict,
             final_reason,
             ai_verdict_bucket,
@@ -412,6 +414,8 @@ def test_minimal_pipeline_fixture_appears_in_decision_shortlist(
 
     assert row is not None
     assert row["job_key"] == job_key
+    assert row["upwork_job_id"] == "shortlist"
+    assert row["user_status"] == "new"
     assert row["final_verdict"] == "APPLY"
     assert row["final_reason"] == "Strong fit with positive margin."
     assert row["ai_verdict_bucket"] == "Strong"
@@ -419,6 +423,39 @@ def test_minimal_pipeline_fixture_appears_in_decision_shortlist(
     assert row["b_margin_usd"] == pytest.approx(4.6)
     assert row["j_title"] == "WooCommerce checkout rescue"
     assert row["source_url"] == "https://www.upwork.com/jobs/~shortlist"
+
+
+def test_decision_shortlist_includes_user_status_from_jobs(
+    conn: sqlite3.Connection,
+) -> None:
+    job_key = "upwork:user-status"
+    _insert_job(conn, job_key=job_key, upwork_job_id="user-status")
+    conn.execute(
+        "UPDATE jobs SET user_status = ? WHERE job_key = ?",
+        ("saved", job_key),
+    )
+    _insert_pipeline_snapshot(
+        conn,
+        job_key=job_key,
+        snapshot_suffix="saved",
+        queue_bucket="HOT",
+        final_verdict="APPLY",
+        final_reason="Saved locally after review.",
+        ai_verdict_bucket="Strong",
+        ai_quality_fit="Strong",
+        b_margin_usd=2.2,
+        j_title="Saved WooCommerce job",
+        source_url="https://www.upwork.com/jobs/~user-status",
+    )
+
+    row = conn.execute(
+        "SELECT job_key, user_status FROM v_decision_shortlist WHERE job_key = ?",
+        (job_key,),
+    ).fetchone()
+
+    assert row is not None
+    assert row["job_key"] == job_key
+    assert row["user_status"] == "saved"
 
 
 def test_decision_shortlist_uses_highest_triage_result_id_per_job_key(

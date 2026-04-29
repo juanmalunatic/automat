@@ -2,178 +2,140 @@
 
 ## Task name
 
-Implement user action tracking for shortlist decisions.
+Implement an actionable, re-openable terminal queue.
 
 ## Goal
 
-Add a focused local action-tracking boundary so the user can record what they actually did with a lead after seeing a recommendation.
+Add a standalone queue command and render the identifiers/status needed for local action tracking directly in the terminal shortlist.
 
-This task should use the existing `user_actions` table plus `jobs.user_status` summary field. It should not change recommendation logic, AI behavior, or any historical pipeline-stage rows.
+This task should make the current workflow practical:
+
+1. run `ingest-once`
+2. run `queue`
+3. copy `job_key` from the queue
+4. run `action <job_key> applied|skipped|saved`
+5. run `queue` again and still see the local status if the row remains shortlisted
+
+The task should not change recommendation logic, AI behavior, or shortlist selection semantics beyond exposing the local status/identifier fields needed for action tracking.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/actions.py`
-- `tests/test_actions.py`
+- `src/upwork_triage/queue_view.py`
 - `src/upwork_triage/cli.py`
+- `tests/test_queue_view.py`
 - `tests/test_cli.py`
 - `docs/current_task.md`
 - `docs/testing.md`
+- `README.md`
 - `docs/design.md` if needed
-- `docs/decisions.md` if a durable action-status decision is made
-- `README.md` if command docs change
+- `docs/schema.md` if the view contract changes
+- `docs/decisions.md` if a durable queue/action UX decision is made
 
 Allowed supporting edits:
 
-- `src/upwork_triage/db.py` only if a tiny helper or view adjustment is clearly needed and remains consistent with `docs/schema.md`
-- `src/upwork_triage/queue_view.py` only if rendering user action info is needed and documented
-- `docs/schema.md` only if the existing schema is wrong or incomplete
+- `src/upwork_triage/db.py` if `v_decision_shortlist` needs to expose `jobs.user_status`
+- `tests/test_db.py` if the view contract changes
+- `docs/schema.md` if `v_decision_shortlist` adds `user_status`
 - `pyproject.toml` only if needed for test/import configuration
 
-## Public API
+## Queue command behavior
 
-Implement a small action module with responsibilities like:
+Add a standalone package CLI command:
 
-- `ActionError`
-- `UnknownJobError`
-- `InvalidActionError`
-- `UserActionResult`
-- `record_user_action(...)`
-- `fetch_user_actions_for_job(...)`
+- `py -m upwork_triage queue`
 
-Equivalent clear names are acceptable if the boundaries stay explicit and typed.
-
-Suggested shape:
-
-- `UserActionResult`
-  - `action_id`
-  - `job_key`
-  - `upwork_job_id`
-  - `job_snapshot_id`
-  - `action`
-  - `user_status`
-  - `notes`
-- `record_user_action(conn, *, job_key=None, upwork_job_id=None, action, notes=None) -> UserActionResult`
-- `fetch_user_actions_for_job(conn, *, job_key) -> list[dict[str, object]]`
-
-## Allowed action and status values
-
-Use the existing schema-defined action values:
-
-- `seen`
-- `applied`
-- `skipped`
-- `saved`
-- `bad_recommendation`
-- `good_recommendation`
-- `client_replied`
-- `interview`
-- `hired`
-
-Use the existing schema-defined `jobs.user_status` values:
-
-- `new`
-- `seen`
-- `applied`
-- `skipped`
-- `saved`
-- `archived`
-
-## Action-to-status mapping
-
-Implement an explicit deterministic mapping from action to updated `jobs.user_status`:
-
-- `seen -> seen`
-- `applied -> applied`
-- `skipped -> skipped`
-- `saved -> saved`
-- `bad_recommendation -> archived`
-- `good_recommendation -> seen`
-- `client_replied -> applied`
-- `interview -> applied`
-- `hired -> applied`
-
-If implementation reveals a better durable mapping, document it in `docs/decisions.md` and test it explicitly.
-
-## Action behavior
-
-`record_user_action()` should:
-
-1. require exactly one resolvable job identifier:
-   - `job_key`, or
-   - `upwork_job_id` when `job_key` is not provided
-2. allow both identifiers only when they resolve to the same job
-3. raise a clear error if the identifiers disagree
-4. raise `UnknownJobError` when the target job does not exist
-5. validate the action against the allowed action values
-6. insert one append-only row into `user_actions`
-7. copy `jobs.latest_normalized_snapshot_id` into `user_actions.job_snapshot_id` when available
-8. copy `jobs.upwork_job_id` into `user_actions.upwork_job_id` when available
-9. update `jobs.user_status` using the deterministic mapping
-10. return a typed result object
-11. keep the operation transactional
-12. not modify historical `filter_results`, `ai_evaluations`, `economics_results`, or `triage_results`
-
-`fetch_user_actions_for_job()` should return action history ordered deterministically by `created_at` and `id`.
-
-## CLI behavior
-
-Add local-only helper commands under the existing package CLI:
-
-- `py -m upwork_triage action JOB_KEY ACTION [--notes TEXT]`
-- `py -m upwork_triage action-by-upwork-id UPWORK_JOB_ID ACTION [--notes TEXT]`
-
-The action commands should:
+The queue command should:
 
 1. load config with `load_config()`
 2. open SQLite with `connect_db(config.db_path)`
-3. create the DB parent directory only if needed for the configured local DB path
-4. call `initialize_db(conn)` so local DB ownership stays simple and idempotent
-5. record the action through the new action module
-6. print a short confirmation including:
-   - job key
-   - action
-   - resulting user status
-7. return `0` on success
-8. fail with a non-zero exit code and a helpful error on invalid action or unknown job
+3. create the DB parent directory if needed for the configured local DB path
+4. call `initialize_db(conn)` safely/idempotently
+5. fetch rows through `fetch_decision_shortlist(conn)`
+6. render rows through `render_decision_shortlist(rows)`
+7. print the rendered output to stdout
+8. close the DB connection
+9. return `0` on success
 
-These commands must not:
+The queue command must not:
 
-- call Upwork APIs
+- call Upwork
 - call OpenAI or any AI provider
 - run `fake-demo`
 - run `ingest-once`
-- run `inspect-upwork-raw`
-- mutate historical pipeline-stage tables
+- mutate `user_actions`
+- mutate `jobs.user_status`
 
-An action-listing command is optional and is not required for this bounded task.
+Read-only DB initialization is acceptable because the project already owns the local SQLite schema.
+
+## Queue rendering requirements
+
+Rendered shortlist rows should include:
+
+- `job_key`
+- `upwork_job_id` when available
+- `user_status` when available
+- final verdict
+- queue bucket
+- title
+- source URL
+- existing AI summary fields
+- existing economics summary fields
+- existing client/activity summary fields
+- final reason / trap / proposal angle
+
+The renderer should also include a short compact action hint, for example:
+
+- `Action: py -m upwork_triage action <job_key> applied|skipped|saved`
+
+Missing values should render as `—` and must not crash rendering, including rows that do not include `user_status` or `upwork_job_id`.
+
+Keep queue grouping and ordering unchanged:
+
+1. `HOT`
+2. `MANUAL_EXCEPTION`
+3. `REVIEW`
+
+## View contract change
+
+If needed, extend `v_decision_shortlist` to expose:
+
+- `jobs.user_status AS user_status`
+
+This is a view-only contract update, not a new table/schema concept.
+
+The view must still:
+
+- expose `job_key` and `upwork_job_id`
+- filter to `HOT`, `REVIEW`, and `MANUAL_EXCEPTION`
+- select the latest triage row per `job_key` with `MAX(triage_results.id)`
+
+Do not change shortlist filtering by `user_status` in this task. Rows should continue to appear or not appear based on the existing triage/queue logic, not local action status.
 
 ## Test requirements
 
 Add or update tests covering:
 
-1. recording an action by `job_key`
-2. recording an action by `upwork_job_id`
-3. deterministic `action -> user_status` updates
-4. notes persistence
-5. copying `latest_normalized_snapshot_id` into `user_actions.job_snapshot_id`
-6. copying `upwork_job_id` from the `jobs` table
-7. invalid action failure
-8. unknown `job_key` failure
-9. unknown `upwork_job_id` failure
-10. mismatched `job_key` and `upwork_job_id` failure
-11. deterministic ordering from `fetch_user_actions_for_job()`
-12. transaction behavior when validation fails
-13. `main(["action", JOB_KEY, "seen"])` success
-14. `main(["action-by-upwork-id", UPWORK_JOB_ID, "skipped"])` success
-15. CLI note persistence
-16. CLI invalid-action and unknown-job failures
-17. CLI use of `AUTOMAT_DB_PATH`
-18. proof that the action CLI path does not call Upwork fetch/auth, OpenAI, raw inspection, fake demo, or live ingest boundaries
-19. existing fake-demo, ingest-once, inspect-upwork-raw, and auth-helper tests staying green
+1. `render_decision_shortlist()` includes `job_key`
+2. rendering includes `upwork_job_id` when present
+3. rendering includes `user_status` when present
+4. rendering includes a compact action hint
+5. missing `job_key` / `upwork_job_id` / `user_status` render as `—` without crashing
+6. existing bucket grouping and high-signal row content still render
+7. empty rows still render the clear empty-queue message
+8. if the view changes, `v_decision_shortlist` includes `user_status`
+9. if the view changes, `v_decision_shortlist` still includes `job_key` and `upwork_job_id`
+10. if the view changes, `v_decision_shortlist` still filters to `HOT`, `REVIEW`, and `MANUAL_EXCEPTION`
+11. if the view changes, `v_decision_shortlist` still selects the latest triage row per `job_key`
+12. `main(["queue"])` returns `0` and prints the current shortlist from the configured DB
+13. the queue command uses `AUTOMAT_DB_PATH` and creates parent directories if needed
+14. the queue command on an empty initialized DB prints the empty-queue message
+15. the queue command does not call fake-demo, ingest-once, raw inspection, Upwork fetch, OpenAI evaluation, or action recording
+16. queue CLI output includes `job_key` and the action hint for a seeded shortlist row
+17. existing fake-demo, ingest-once, inspect-upwork-raw, auth-helper, and action tests remain passing
 
-All action tests must stay local-only and make no network or AI calls.
+All queue tests must stay local-only and make no network or AI calls.
 
 ## Out of scope
 
@@ -181,24 +143,21 @@ Do not implement:
 
 - Upwork API mutations
 - auto-apply
-- proposal generation
 - OpenAI or other AI calls
+- queue-triggered ingest/fetch/evaluation
 - normalization / filter / economics / triage rule changes
-- Upwork auth or GraphQL client behavior changes
-- recurring polling or background jobs
 - dashboard / web UI
-- analytics / backtesting logic
-- DB schema changes unless a real blocking issue is discovered
+- analytics / backtesting
+- polling / daemon behavior
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- local user actions can be recorded for existing jobs
-- `jobs.user_status` updates deterministically from the action mapping
-- `user_actions` keeps append-only history
-- historical pipeline-stage rows are unchanged
-- CLI action commands are available and tested
-- the action commands do not call Upwork or OpenAI paths
-- docs are updated and honest about local-only tracking
+- a user can re-open the current local shortlist without ingesting again
+- rendered queue rows include the `job_key` needed by action commands
+- rendered queue rows include `user_status` when available
+- the queue command is effectively read-only aside from idempotent DB initialization
+- the queue command makes no Upwork or OpenAI calls
+- docs are updated and honest about the local queue/action flow
 - `py -m pytest` passes

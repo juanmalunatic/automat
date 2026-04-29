@@ -355,6 +355,7 @@ SELECT
     normalized.field_status_json AS field_status_json,
     triage.created_at AS triaged_at,
     jobs.job_key AS job_key,
+    jobs.user_status AS user_status,
     COALESCE(normalized.upwork_job_id, jobs.upwork_job_id) AS upwork_job_id
 FROM latest_triage
 JOIN triage_results AS triage

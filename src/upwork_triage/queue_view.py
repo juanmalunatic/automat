@@ -4,7 +4,7 @@ import sqlite3
 from typing import Any, Mapping
 
 QUEUE_ORDER = ("HOT", "MANUAL_EXCEPTION", "REVIEW")
-MISSING = "—"
+MISSING = "\N{EM DASH}"
 
 __all__ = ["fetch_decision_shortlist", "render_decision_shortlist"]
 
@@ -54,6 +54,9 @@ def _group_rows(rows: list[Mapping[str, object]]) -> dict[str, list[Mapping[str,
 
 
 def _render_row(index: int, row: Mapping[str, object]) -> list[str]:
+    job_key = _string_value(_get(row, "job_key"))
+    upwork_job_id = _string_value(_get(row, "upwork_job_id"))
+    user_status = _string_value(_get(row, "user_status"))
     final_verdict = _string_value(_get(row, "final_verdict"))
     queue_bucket = _string_value(_get(row, "queue_bucket"))
     title = _string_value(_get(row, "j_title"))
@@ -86,9 +89,11 @@ def _render_row(index: int, row: Mapping[str, object]) -> list[str]:
     final_reason = _string_value(_get(row, "final_reason"))
     why_trap = _string_value(_get(row, "ai_why_trap"))
     proposal_angle = _string_value(_get(row, "ai_proposal_angle"))
+    action_target = job_key if job_key != MISSING else "<job_key>"
 
     return [
         f"{index}. {final_verdict} | {title}",
+        f"   Job: {job_key} | Upwork ID: {upwork_job_id} | Status: {user_status}",
         f"   Bucket: {queue_bucket} | URL: {source_url}",
         (
             "   AI: "
@@ -113,6 +118,7 @@ def _render_row(index: int, row: Mapping[str, object]) -> list[str]:
         f"   Reason: {final_reason}",
         f"   Trap: {why_trap}",
         f"   Angle: {proposal_angle}",
+        f"   Action: py -m upwork_triage action {action_target} applied|skipped|saved",
     ]
 
 

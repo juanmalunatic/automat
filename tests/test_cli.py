@@ -148,6 +148,131 @@ def test_main_inspect_upwork_raw_no_write_returns_zero_and_prints_summary(
     assert "id=job-1" in output
 
 
+def test_main_queue_returns_zero_and_prints_current_shortlist(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "queue" / "automat.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_queue_shortlist(shared_conn, user_status="saved")
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = main(["queue"], stdout=stdout, stderr=stderr)
+
+        output = stdout.getvalue()
+        assert exit_code == 0
+        assert stderr.getvalue() == ""
+        assert "WooCommerce order sync plugin bug fix" in output
+        assert "upwork:987654321" in output
+        assert "saved" in output
+        assert "Action: py -m upwork_triage action upwork:987654321 applied|skipped|saved" in output
+    finally:
+        shared_conn.close()
+
+
+def test_queue_uses_configured_db_path_and_creates_parent_directory(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_dir = workspace_tmp_dir / "nested" / "queue" / "data"
+    db_path = db_dir / "queue.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_queue_shortlist(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    recorded_paths = install_in_memory_cli_connection(
+        monkeypatch,
+        db_path,
+        shared_connection=shared_conn,
+    )
+
+    assert not db_dir.exists()
+
+    try:
+        exit_code = main(["queue"], stdout=StringIO(), stderr=StringIO())
+
+        assert exit_code == 0
+        assert db_dir.exists()
+        assert recorded_paths == [db_path]
+    finally:
+        shared_conn.close()
+
+
+def test_queue_on_empty_initialized_db_prints_empty_queue_message(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "queue" / "empty.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+
+    try:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = main(["queue"], stdout=stdout, stderr=stderr)
+
+        assert exit_code == 0
+        assert stderr.getvalue() == ""
+        assert stdout.getvalue().strip() == "Decision shortlist is empty."
+    finally:
+        shared_conn.close()
+
+
+def test_queue_command_does_not_call_pipeline_network_or_action_boundaries(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "queue" / "readonly.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_queue_shortlist(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_fake_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fake demo should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_live_ingest_once",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live ingest should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.inspect_upwork_raw",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw inspection should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.record_user_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("action recording should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "fetch_upwork_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("upwork fetch should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "evaluate_with_openai",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("openai eval should not run")),
+    )
+
+    try:
+        exit_code = main(["queue"], stdout=StringIO(), stderr=StringIO())
+
+        assert exit_code == 0
+    finally:
+        shared_conn.close()
+
+
 def test_main_action_returns_zero_and_prints_confirmation(
     workspace_tmp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -834,6 +959,37 @@ def make_strong_raw_payload() -> dict[str, object]:
             "low": "$25/hr",
         },
     }
+
+
+def make_fake_ai_output() -> dict[str, object]:
+    return {
+        "ai_quality_client": "Strong",
+        "ai_quality_fit": "Strong",
+        "ai_quality_scope": "Ok",
+        "ai_price_scope_align": "aligned",
+        "ai_verdict_bucket": "Strong",
+        "ai_likely_duration": "defined_short_term",
+        "proposal_can_be_written_quickly": True,
+        "scope_explosion_risk": False,
+        "severe_hidden_risk": False,
+        "ai_semantic_reason_short": "Strong WooCommerce/plugin overlap with a clear bugfix scope.",
+        "ai_best_reason_to_apply": "This is live-store plugin rescue work in the core lane.",
+        "ai_why_trap": "Stakeholders may still widen expectations after the fix.",
+        "ai_proposal_angle": "Lead with WooCommerce checkout rescue and plugin debugging examples.",
+        "fit_evidence": ["WooCommerce checkout issue", "Custom plugin context", "API hooks mentioned"],
+        "client_evidence": ["Payment verified", "Established spend", "Good hire rate"],
+        "scope_evidence": ["Specific payment bug", "Live production store", "Clearly technical deliverable"],
+        "risk_flags": ["Possible post-fix follow-up requests"],
+    }
+
+
+def seed_queue_shortlist(conn: sqlite3.Connection, *, user_status: str = "new") -> None:
+    run_pipeline_module.run_fake_pipeline(conn, make_strong_raw_payload(), make_fake_ai_output())
+    conn.execute(
+        "UPDATE jobs SET user_status = ? WHERE job_key = ?",
+        (user_status, "upwork:987654321"),
+    )
+    conn.commit()
 
 
 def seed_cli_job(conn: sqlite3.Connection, *, job_key: str, upwork_job_id: str) -> None:

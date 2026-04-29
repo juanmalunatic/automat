@@ -63,6 +63,9 @@ def test_rendered_output_includes_high_signal_fields() -> None:
     rendered = render_decision_shortlist([make_shortlist_row()])
 
     assert "WooCommerce order sync plugin bug fix" in rendered
+    assert "upwork:987654321" in rendered
+    assert "987654321" in rendered
+    assert "new" in rendered
     assert "https://www.upwork.com/jobs/~987654321" in rendered
     assert "APPLY" in rendered
     assert "HOT" in rendered
@@ -71,10 +74,14 @@ def test_rendered_output_includes_high_signal_fields() -> None:
     assert "Strong fit with non-negative margin" in rendered
     assert "Stakeholders may still widen expectations" in rendered
     assert "Lead with WooCommerce checkout rescue" in rendered
+    assert "Action: py -m upwork_triage action upwork:987654321 applied|skipped|saved" in rendered
 
 
 def test_missing_values_render_as_em_dash_and_do_not_crash() -> None:
     row = make_shortlist_row(
+        job_key=None,
+        upwork_job_id=None,
+        user_status=None,
         source_url=None,
         ai_quality_fit=None,
         ai_quality_client=None,
@@ -101,11 +108,11 @@ def test_missing_values_render_as_em_dash_and_do_not_crash() -> None:
     )
 
     rendered = render_decision_shortlist([row])
-
-    assert "—" in rendered
-    assert "Reason: —" in rendered
-    assert "Trap: —" in rendered
-    assert "Angle: —" in rendered
+    assert "\N{EM DASH}" in rendered
+    assert "Job: \N{EM DASH} | Upwork ID: \N{EM DASH} | Status: \N{EM DASH}" in rendered
+    assert "Reason: \N{EM DASH}" in rendered
+    assert "Trap: \N{EM DASH}" in rendered
+    assert "Angle: \N{EM DASH}" in rendered
 
 
 def test_empty_rows_render_clear_empty_queue_message() -> None:
@@ -130,6 +137,8 @@ def test_rendering_works_with_row_produced_by_run_fake_pipeline(conn: sqlite3.Co
 def make_shortlist_row(**overrides: object) -> dict[str, object]:
     row: dict[str, object] = {
         "job_key": "upwork:987654321",
+        "upwork_job_id": "987654321",
+        "user_status": "new",
         "final_verdict": "APPLY",
         "queue_bucket": "HOT",
         "j_title": "WooCommerce order sync plugin bug fix",
@@ -238,3 +247,5 @@ def _merge_payload(
         else:
             cloned[key] = value
     return cloned
+
+

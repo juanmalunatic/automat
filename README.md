@@ -151,6 +151,31 @@ Unit tests do not use those live services. They monkeypatch fake fetch/AI bounda
 
 Recurring polling, background refresh policy, and token persistence beyond local `.env` copy/paste are still not implemented.
 
+## Re-open the local queue
+
+You can re-open the current local shortlist at any time without fetching from Upwork or calling OpenAI again:
+
+```powershell
+py -m upwork_triage queue
+```
+
+This command:
+
+- reads the existing local `v_decision_shortlist` from SQLite
+- prints the current terminal shortlist with `job_key`, Upwork id, and local `user_status`
+- shows the local action command hint for each row
+- does not fetch from Upwork
+- does not call AI
+
+Example workflow:
+
+```powershell
+py -m upwork_triage ingest-once
+py -m upwork_triage queue
+py -m upwork_triage action upwork:12345 applied --notes "Applied with WooCommerce hook angle"
+py -m upwork_triage queue
+```
+
 ## Local action tracking
 
 You can record what you actually did with a shortlisted lead without changing any historical recommendation rows on Upwork or in the staged pipeline:

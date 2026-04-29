@@ -94,6 +94,8 @@ def main(
                 sample_limit=args.sample_limit,
                 stdout=out,
             )
+        if args.command == "queue":
+            return _run_queue(stdout=out)
         if args.command == "action":
             return _run_action_command(
                 job_key=args.job_key,
@@ -147,6 +149,10 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
     subparsers.add_parser(
         "ingest-once",
         help="Run one live-compatible ingest/evaluate batch and print the shortlist.",
+    )
+    subparsers.add_parser(
+        "queue",
+        help="Render the current local decision shortlist without fetching again.",
     )
     subparsers.add_parser(
         "upwork-auth-url",
@@ -222,6 +228,22 @@ def _run_ingest_once(*, stdout: TextIO) -> int:
     conn = connect_db(db_path)
     try:
         run_live_ingest_once(conn, config)
+        rows = fetch_decision_shortlist(conn)
+        print(render_decision_shortlist(rows), file=stdout)
+    finally:
+        conn.close()
+
+    return 0
+
+
+def _run_queue(*, stdout: TextIO) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
         rows = fetch_decision_shortlist(conn)
         print(render_decision_shortlist(rows), file=stdout)
     finally:

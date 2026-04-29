@@ -469,6 +469,8 @@ It must show:
 
 The terminal queue should mirror this view.
 
+The terminal queue is the re-openable local decision surface. It should render the stable `job_key` plus the current local `jobs.user_status` summary so the user can move directly from a shortlisted row to local action tracking without re-ingesting.
+
 The view must select the latest triage result per `job_key` using a deterministic tie-breaker. In the MVP, use `MAX(triage_results.id)` per `job_key`.
 
 ## 16. MVP command behavior
@@ -519,6 +521,12 @@ Local user-action helper command targets:
 - `py -m upwork_triage action-by-upwork-id UPWORK_JOB_ID ACTION [--notes TEXT]`
 
 These commands should record local tracking state only. They must not call Upwork mutations, auto-apply, or alter the historical recommendation pipeline.
+
+Re-openable local queue command target:
+
+- `py -m upwork_triage queue`
+
+This command should read the existing local shortlist from SQLite, render the current `v_decision_shortlist`, and avoid live fetch or AI work. It is the bridge between a prior `fake-demo` or `ingest-once` run and later local action commands.
 
 The first coding task should implement database initialization, schema, default settings, view, and tests.
 

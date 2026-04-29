@@ -328,3 +328,19 @@ The staged recommendation pipeline needs a clean feedback loop for later backtes
 Tradeoff:
 
 There are now two related sources of user-decision state: full history in `user_actions` and the current summary in `jobs.user_status`. That duplication is intentional and small, and it avoids expensive history reconstruction for simple status lookups.
+
+## 2026-04-29 - The terminal queue is the bridge to local action tracking
+
+Decision:
+
+The re-openable terminal queue should render the stable `job_key`, the current local `jobs.user_status`, and a compact action hint for each shortlisted row.
+
+`v_decision_shortlist` should include `jobs.user_status` so the queue can show the local status summary without changing shortlist selection semantics.
+
+Reason:
+
+The local action commands already operate on stable job identifiers, but the queue is the main user-facing decision surface. Showing `job_key` and the current local status directly in the shortlist lets the user move from review to local tracking without re-ingesting or querying the database manually.
+
+Tradeoff:
+
+The shortlist view now exposes one more local-state field, but it remains read-only and keeps its existing HOT / MANUAL_EXCEPTION / REVIEW selection policy. Filtering rows by `user_status` is intentionally deferred to a later policy decision.
