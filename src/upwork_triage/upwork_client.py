@@ -89,9 +89,9 @@ class UpworkGraphQlClient:
     def fetch_jobs(self, search_terms: tuple[str, ...], limit: int) -> list[dict[str, object]]:
         query, variables = build_job_search_query(search_terms, limit)
         headers = {
-			"Authorization": f"bearer {self._access_token}",
-			"User-Agent": "Automat/0.1 personal-internal-upwork-api-client",
-		}
+            "Authorization": f"bearer {self._access_token}",
+            "User-Agent": "Automat/0.1 personal-internal-upwork-api-client",
+        }
         payload = {
             "query": query,
             "variables": variables,
@@ -128,28 +128,88 @@ def build_job_search_query(
     search_terms: tuple[str, ...],
     limit: int,
 ) -> tuple[str, dict[str, object]]:
+    _ = limit
+    query_text = " ".join(term.strip() for term in search_terms if term.strip())
     query = """
-query SearchJobs($searchTerms: [String!]!, $limit: Int!) {
-  search(searchTerms: $searchTerms, limit: $limit) {
+query marketplaceJobPostingsSearch(
+  $marketPlaceJobFilter: MarketplaceJobPostingsSearchFilter,
+  $searchType: MarketplaceJobPostingSearchType,
+  $sortAttributes: [MarketplaceJobPostingSearchSortAttribute]
+) {
+  marketplaceJobPostingsSearch(
+    marketPlaceJobFilter: $marketPlaceJobFilter,
+    searchType: $searchType,
+    sortAttributes: $sortAttributes
+  ) {
+    totalCount
     edges {
       node {
         id
         title
         description
-        source_url
-        url
-        contract_type
-        budget
-        hourly_low
-        hourly_high
+        ciphertext
+        createdDateTime
+        publishedOn
+        type
+        jobType
+        jobUrl
+        amount {
+          rawValue
+          currency
+          displayValue
+        }
+        hourlyBudget {
+          min {
+            rawValue
+            currency
+            displayValue
+          }
+          max {
+            rawValue
+            currency
+            displayValue
+          }
+        }
+        client {
+          totalHires
+          totalPostedJobs
+          totalSpent {
+            rawValue
+            currency
+            displayValue
+          }
+          verificationStatus
+          location {
+            country
+            city
+            timezone
+          }
+          totalReviews
+          totalFeedback
+        }
+        skills {
+          name
+          prettyName
+        }
       }
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
     }
   }
 }
 """.strip()
     variables: dict[str, object] = {
-        "searchTerms": list(search_terms),
-        "limit": limit,
+        "marketPlaceJobFilter": {
+            "q": query_text,
+        },
+        "searchType": "USER_JOBS_SEARCH",
+        "sortAttributes": [
+            {
+                "field": "RECENCY",
+            }
+        ],
     }
     return query, variables
 

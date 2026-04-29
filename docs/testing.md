@@ -272,9 +272,9 @@ Should verify:
 Should verify:
 
 - missing `UPWORK_ACCESS_TOKEN` fails before any transport call
-- `fetch_upwork_jobs()` sends a bearer Authorization header to the transport
+- `fetch_upwork_jobs()` sends a lowercase `bearer` Authorization header plus the required `User-Agent` to the transport
 - `fetch_upwork_jobs()` sends a GraphQL query string plus variables payload
-- query construction uses `search_terms` and `poll_limit`
+- query construction uses `marketplaceJobPostingsSearch` with compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables derived from `search_terms`
 - `extract_job_payloads()` supports `data.jobs.edges[].node`
 - `extract_job_payloads()` supports `data.search.edges[].node`
 - `extract_job_payloads()` supports `data.jobs` as a list

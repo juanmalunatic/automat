@@ -729,8 +729,10 @@ def test_inspect_upwork_raw_no_write_does_not_create_default_artifact(
 
 
 def test_inspect_upwork_raw_missing_token_returns_non_zero_and_helpful_error(
+    workspace_tmp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("upwork_triage.config.DOTENV_PATH", workspace_tmp_dir / ".env-missing")
     monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
@@ -1034,6 +1036,7 @@ def test_ingest_once_missing_credentials_returns_non_zero_and_helpful_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db_path = workspace_tmp_dir / "live" / "automat.sqlite3"
+    monkeypatch.setattr("upwork_triage.config.DOTENV_PATH", workspace_tmp_dir / ".env-missing")
     monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
     monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

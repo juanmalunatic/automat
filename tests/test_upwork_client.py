@@ -47,21 +47,41 @@ def test_fetch_upwork_jobs_sends_bearer_header_query_and_variables() -> None:
     assert len(transport.calls) == 1
     call = transport.calls[0]
     assert call["url"] == "https://placeholder.invalid/custom-upwork-graphql"
-    assert call["headers"]["Authorization"] == "Bearer token-123"
-    assert "query SearchJobs" in str(call["payload"]["query"])
+    assert call["headers"]["Authorization"] == "bearer token-123"
+    assert call["headers"]["User-Agent"] == "Automat/0.1 personal-internal-upwork-api-client"
+    assert "query marketplaceJobPostingsSearch" in str(call["payload"]["query"])
     assert call["payload"]["variables"] == {
-        "searchTerms": ["WooCommerce", "API"],
-        "limit": 25,
+        "marketPlaceJobFilter": {
+            "q": "WooCommerce API",
+        },
+        "searchType": "USER_JOBS_SEARCH",
+        "sortAttributes": [
+            {
+                "field": "RECENCY",
+            }
+        ],
     }
 
 
-def test_build_job_search_query_uses_search_terms_and_limit() -> None:
+def test_build_job_search_query_uses_marketplace_job_postings_search_shape() -> None:
     query, variables = build_job_search_query(("WordPress", "PHP"), 10)
 
-    assert "query SearchJobs" in query
-    assert "$searchTerms" in query
-    assert "$limit" in query
-    assert variables == {"searchTerms": ["WordPress", "PHP"], "limit": 10}
+    assert "query marketplaceJobPostingsSearch" in query
+    assert "marketplaceJobPostingsSearch(" in query
+    assert "$marketPlaceJobFilter" in query
+    assert "$searchType" in query
+    assert "$sortAttributes" in query
+    assert variables == {
+        "marketPlaceJobFilter": {
+            "q": "WordPress PHP",
+        },
+        "searchType": "USER_JOBS_SEARCH",
+        "sortAttributes": [
+            {
+                "field": "RECENCY",
+            }
+        ],
+    }
 
 
 def test_extract_job_payloads_handles_data_jobs_edges_node_shape() -> None:
