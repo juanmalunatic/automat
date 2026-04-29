@@ -57,7 +57,7 @@ def test_fetch_upwork_jobs_sends_bearer_header_query_and_variables() -> None:
     assert "hourlyBudget" not in str(call["payload"]["query"])
     assert call["payload"]["variables"] == {
         "marketPlaceJobFilter": {
-            "q": "WooCommerce API",
+            "searchExpression_eq": "WooCommerce API",
         },
         "searchType": "USER_JOBS_SEARCH",
         "sortAttributes": [
@@ -83,7 +83,7 @@ def test_build_job_search_query_uses_marketplace_job_postings_search_shape() -> 
     assert "hourlyBudget" not in query
     assert variables == {
         "marketPlaceJobFilter": {
-            "q": "WordPress PHP",
+            "searchExpression_eq": "WordPress PHP",
         },
         "searchType": "USER_JOBS_SEARCH",
         "sortAttributes": [

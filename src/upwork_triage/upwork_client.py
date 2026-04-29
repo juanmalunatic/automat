@@ -186,7 +186,7 @@ query marketplaceJobPostingsSearch(
 """.strip()
     variables: dict[str, object] = {
         "marketPlaceJobFilter": {
-            "q": query_text,
+            "searchExpression_eq": query_text,
         },
         "searchType": "USER_JOBS_SEARCH",
         "sortAttributes": [
