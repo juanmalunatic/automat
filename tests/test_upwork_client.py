@@ -184,7 +184,7 @@ def test_probe_upwork_fields_supports_public_marketplace_source() -> None:
 
     payloads = probe_upwork_fields(
         config,
-        ("ciphertext", "createdDateTime", "type", "client"),
+        ("ciphertext", "createdDateTime", "type", "engagement"),
         source="public",
         transport=transport,
     )
@@ -196,22 +196,19 @@ def test_probe_upwork_fields_supports_public_marketplace_source() -> None:
     assert "publicMarketplaceJobPostingsSearch(" in str(call["payload"]["query"])
     assert "    jobs {" in str(call["payload"]["query"])
     assert "      node {" not in str(call["payload"]["query"])
+    assert "$searchType" not in str(call["payload"]["query"])
+    assert "$sortAttributes" not in str(call["payload"]["query"])
+    assert "totalCount" not in str(call["payload"]["query"])
     assert "        id\n" in str(call["payload"]["query"])
     assert "        title\n" in str(call["payload"]["query"])
     assert "        ciphertext\n" in str(call["payload"]["query"])
     assert "        createdDateTime\n" in str(call["payload"]["query"])
     assert "        type\n" in str(call["payload"]["query"])
-    assert "        client\n" in str(call["payload"]["query"])
+    assert "        engagement\n" in str(call["payload"]["query"])
     assert call["payload"]["variables"] == {
         "marketPlaceJobFilter": {
             "searchExpression_eq": "WooCommerce API",
         },
-        "searchType": "USER_JOBS_SEARCH",
-        "sortAttributes": [
-            {
-                "field": "RECENCY",
-            }
-        ],
     }
 
 
@@ -219,38 +216,43 @@ def test_build_probe_job_search_query_supports_public_marketplace_shape() -> Non
     query, variables = build_probe_job_search_query(
         ("WordPress", "PHP"),
         10,
-        ("ciphertext", "type", "client"),
+        ("ciphertext", "type", "engagement"),
         source="public",
     )
 
     assert "query publicMarketplaceJobPostingsSearch" in query
     assert "publicMarketplaceJobPostingsSearch(" in query
     assert "$marketPlaceJobFilter" in query
-    assert "$searchType" in query
-    assert "$sortAttributes" in query
+    assert "$searchType" not in query
+    assert "$sortAttributes" not in query
     assert "    jobs {" in query
     assert "      node {" not in query
+    assert "totalCount" not in query
     assert "        id\n" in query
     assert "        title\n" in query
     assert "        ciphertext\n" in query
     assert "        type\n" in query
-    assert "        client\n" in query
+    assert "        engagement\n" in query
     assert variables == {
         "marketPlaceJobFilter": {
             "searchExpression_eq": "WordPress PHP",
         },
-        "searchType": "USER_JOBS_SEARCH",
-        "sortAttributes": [
-            {
-                "field": "RECENCY",
-            }
-        ],
     }
 
 
 def test_build_probe_job_search_query_rejects_unsupported_fields() -> None:
     with pytest.raises(UpworkClientError, match="Unsupported probe fields"):
         build_probe_job_search_query(("WordPress",), 10, ("totallyNotRealField",))
+
+
+def test_build_probe_job_search_query_rejects_public_nested_only_fields() -> None:
+    with pytest.raises(UpworkClientError, match="Unsupported probe fields"):
+        build_probe_job_search_query(
+            ("WordPress",),
+            10,
+            ("amount", "client"),
+            source="public",
+        )
 
 
 def test_extract_job_payloads_handles_data_jobs_edges_node_shape() -> None:

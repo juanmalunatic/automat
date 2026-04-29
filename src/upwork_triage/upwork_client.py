@@ -182,9 +182,7 @@ MARKETPLACE_PROBE_FIELD_ALLOWLIST = frozenset(
 )
 PUBLIC_PROBE_FIELD_ALLOWLIST = frozenset(
     {
-        "amount",
         "ciphertext",
-        "client",
         "contractorTier",
         "createdDateTime",
         "description",
@@ -192,7 +190,6 @@ PUBLIC_PROBE_FIELD_ALLOWLIST = frozenset(
         "id",
         "jobStatus",
         "recno",
-        "skills",
         "title",
         "type",
     }
@@ -294,16 +291,11 @@ query marketplaceJobPostingsSearch(
     elif source == "public":
         query = f"""
 query publicMarketplaceJobPostingsSearch(
-  $marketPlaceJobFilter: PublicMarketplaceJobPostingsSearchFilter,
-  $searchType: MarketplaceJobPostingSearchType,
-  $sortAttributes: [MarketplaceJobPostingSearchSortAttribute]
+  $marketPlaceJobFilter: PublicMarketplaceJobPostingsSearchFilter!
 ) {{
   publicMarketplaceJobPostingsSearch(
-    marketPlaceJobFilter: $marketPlaceJobFilter,
-    searchType: $searchType,
-    sortAttributes: $sortAttributes
+    marketPlaceJobFilter: $marketPlaceJobFilter
   ) {{
-    totalCount
     jobs {{
 {field_lines}
     }}
@@ -314,17 +306,24 @@ query publicMarketplaceJobPostingsSearch(
         raise UpworkClientError(
             f"Unsupported probe source: {source}. Allowed sources: marketplace, public"
         )
-    variables: dict[str, object] = {
-        "marketPlaceJobFilter": {
-            "searchExpression_eq": query_text,
-        },
-        "searchType": "USER_JOBS_SEARCH",
-        "sortAttributes": [
-            {
-                "field": "RECENCY",
-            }
-        ],
-    }
+    if source == "marketplace":
+        variables: dict[str, object] = {
+            "marketPlaceJobFilter": {
+                "searchExpression_eq": query_text,
+            },
+            "searchType": "USER_JOBS_SEARCH",
+            "sortAttributes": [
+                {
+                    "field": "RECENCY",
+                }
+            ],
+        }
+    else:
+        variables = {
+            "marketPlaceJobFilter": {
+                "searchExpression_eq": query_text,
+            },
+        }
     return query, variables
 
 
@@ -510,4 +509,6 @@ def _normalize_probe_fields(fields: tuple[str, ...], *, source: str) -> tuple[st
             continue
         ordered_fields.append(field_name)
         seen.add(field_name)
-    return tuple(ordered_fields)
+
+    variables = tuple(ordered_fields)
+    return variables

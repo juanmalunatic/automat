@@ -211,7 +211,7 @@ def test_main_probe_upwork_fields_supports_public_source(
             "--source",
             "public",
             "--fields",
-            "ciphertext,createdDateTime,type,client",
+            "ciphertext,createdDateTime,type,engagement",
         ],
         stdout=stdout,
         stderr=stderr,
