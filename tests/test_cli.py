@@ -149,6 +149,107 @@ def test_main_inspect_upwork_raw_no_write_returns_zero_and_prints_summary(
     assert "id=job-1" in output
 
 
+def test_main_probe_upwork_fields_returns_zero_and_prints_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "upwork_triage.cli.probe_upwork_fields",
+        lambda config, fields: [
+            {
+                "id": "job-1",
+                "title": "First job",
+                "ciphertext": "~0123456789",
+                "createdDateTime": "2026-04-29T12:00:00Z",
+            }
+        ],
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        ["probe-upwork-fields", "--fields", "ciphertext,createdDateTime"],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert "Probe succeeded." in output
+    assert "Fetched jobs: 1" in output
+    assert "Observed keys:" in output
+    assert '"ciphertext": "~0123456789"' in output
+
+
+def test_probe_upwork_fields_missing_token_returns_non_zero_and_helpful_error(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("upwork_triage.config.DOTENV_PATH", workspace_tmp_dir / ".env-missing")
+    monkeypatch.delenv("UPWORK_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        ["probe-upwork-fields", "--fields", "ciphertext,createdDateTime"],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code != 0
+    assert "UPWORK_ACCESS_TOKEN" in stderr.getvalue()
+
+
+def test_probe_upwork_fields_does_not_call_pipeline_or_action_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "upwork_triage.cli.probe_upwork_fields",
+        lambda config, fields: [{"id": "job-1", "title": "First job"}],
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_fake_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fake demo should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_live_ingest_once",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live ingest should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.inspect_upwork_raw",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw inspection should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.record_user_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("action recording should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "fetch_upwork_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("upwork fetch should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "evaluate_with_openai",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("openai eval should not run")),
+    )
+
+    exit_code = main(
+        ["probe-upwork-fields", "--fields", "ciphertext"],
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    assert exit_code == 0
+
+
 def test_main_dry_run_raw_artifact_returns_zero_and_prints_summary(
     workspace_tmp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,

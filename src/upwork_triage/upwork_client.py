@@ -88,9 +88,25 @@ class UpworkGraphQlClient:
 
     def fetch_jobs(self, search_terms: tuple[str, ...], limit: int) -> list[dict[str, object]]:
         query, variables = build_job_search_query(search_terms, limit)
+        return self._execute_and_extract(query, variables)
+
+    def probe_fields(
+        self,
+        search_terms: tuple[str, ...],
+        limit: int,
+        fields: tuple[str, ...],
+    ) -> list[dict[str, object]]:
+        query, variables = build_probe_job_search_query(search_terms, limit, fields)
+        return self._execute_and_extract(query, variables)
+
+    def _execute_and_extract(
+        self,
+        query: str,
+        variables: Mapping[str, object],
+    ) -> list[dict[str, object]]:
         headers = {
             "Authorization": f"bearer {self._access_token}",
-            "User-Agent": "Automat/0.1 personal-internal-upwork-api-client",
+            "User-Agent": UPWORK_GRAPHQL_USER_AGENT,
         }
         payload = {
             "query": query,
@@ -118,10 +134,45 @@ __all__ = [
     "UpworkGraphQlClient",
     "UpworkGraphQlError",
     "UrllibHttpJsonTransport",
+    "build_probe_job_search_query",
     "build_job_search_query",
     "extract_job_payloads",
     "fetch_upwork_jobs",
+    "probe_upwork_fields",
 ]
+
+
+UPWORK_GRAPHQL_USER_AGENT = "Automat/0.1 personal-internal-upwork-api-client"
+
+PROBE_FIELD_ALLOWLIST = frozenset(
+    {
+        "amount",
+        "budget",
+        "ciphertext",
+        "client",
+        "connectsRequired",
+        "createdDateTime",
+        "createdOn",
+        "description",
+        "hourlyBudget",
+        "id",
+        "interviewCount",
+        "interviewing",
+        "invitesCount",
+        "invitesSent",
+        "jobActivity",
+        "jobType",
+        "jobUrl",
+        "postedOn",
+        "proposalCount",
+        "proposals",
+        "publishedOn",
+        "skills",
+        "title",
+        "type",
+        "url",
+    }
+)
 
 
 def build_job_search_query(
@@ -184,6 +235,49 @@ query marketplaceJobPostingsSearch(
     return query, variables
 
 
+def build_probe_job_search_query(
+    search_terms: tuple[str, ...],
+    limit: int,
+    fields: tuple[str, ...],
+) -> tuple[str, dict[str, object]]:
+    _ = limit
+    selected_fields = _normalize_probe_fields(fields)
+    field_lines = "\n".join(f"        {field_name}" for field_name in selected_fields)
+    query_text = " ".join(term.strip() for term in search_terms if term.strip())
+    query = f"""
+query marketplaceJobPostingsSearch(
+  $marketPlaceJobFilter: MarketplaceJobPostingsSearchFilter,
+  $searchType: MarketplaceJobPostingSearchType,
+  $sortAttributes: [MarketplaceJobPostingSearchSortAttribute]
+) {{
+  marketplaceJobPostingsSearch(
+    marketPlaceJobFilter: $marketPlaceJobFilter,
+    searchType: $searchType,
+    sortAttributes: $sortAttributes
+  ) {{
+    totalCount
+    edges {{
+      node {{
+{field_lines}
+      }}
+    }}
+  }}
+}}
+""".strip()
+    variables: dict[str, object] = {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": query_text,
+        },
+        "searchType": "USER_JOBS_SEARCH",
+        "sortAttributes": [
+            {
+                "field": "RECENCY",
+            }
+        ],
+    }
+    return query, variables
+
+
 def extract_job_payloads(response_json: Mapping[str, object]) -> list[dict[str, object]]:
     errors_value = response_json.get("errors")
     if errors_value:
@@ -225,6 +319,20 @@ def fetch_upwork_jobs(
         transport=transport,
     )
     return client.fetch_jobs(config.search_terms, config.poll_limit)
+
+
+def probe_upwork_fields(
+    config: AppConfig,
+    fields: tuple[str, ...],
+    *,
+    transport: HttpJsonTransport | None = None,
+) -> list[dict[str, object]]:
+    client = UpworkGraphQlClient(
+        config.upwork_graphql_url,
+        config.upwork_access_token,
+        transport=transport,
+    )
+    return client.probe_fields(config.search_terms, config.poll_limit, fields)
 
 
 def _extract_from_edge_list(
@@ -311,3 +419,30 @@ def _format_graphql_errors(errors_value: object) -> str:
         return f"Upwork GraphQL returned errors: {joined}"
 
     return f"Upwork GraphQL returned errors: {errors_value}"
+
+
+def _normalize_probe_fields(fields: tuple[str, ...]) -> tuple[str, ...]:
+    requested = [field.strip() for field in fields if field.strip()]
+    unsupported = sorted(
+        {
+            field
+            for field in requested
+            if field not in PROBE_FIELD_ALLOWLIST
+        }
+    )
+    if unsupported:
+        allowed = ", ".join(sorted(PROBE_FIELD_ALLOWLIST))
+        unsupported_fields = ", ".join(unsupported)
+        raise UpworkClientError(
+            f"Unsupported probe fields: {unsupported_fields}. "
+            f"Allowed fields: {allowed}"
+        )
+
+    ordered_fields: list[str] = []
+    seen: set[str] = set()
+    for field_name in ("id", "title", *requested):
+        if field_name in seen:
+            continue
+        ordered_fields.append(field_name)
+        seen.add(field_name)
+    return tuple(ordered_fields)

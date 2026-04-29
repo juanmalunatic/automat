@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from functools import partial
 from pathlib import Path
 import sqlite3
@@ -31,6 +32,7 @@ from upwork_triage.upwork_auth import (
     exchange_authorization_code,
     refresh_upwork_access_token,
 )
+from upwork_triage.upwork_client import probe_upwork_fields
 
 __all__ = ["main"]
 
@@ -99,6 +101,11 @@ def main(
                 no_write=args.no_write,
                 output_path=args.output,
                 sample_limit=args.sample_limit,
+                stdout=out,
+            )
+        if args.command == "probe-upwork-fields":
+            return _run_probe_upwork_fields(
+                fields_text=args.fields,
                 stdout=out,
             )
         if args.command == "dry-run-raw-artifact":
@@ -203,6 +210,15 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         type=int,
         default=3,
         help="Number of sample jobs to include in the rendered summary.",
+    )
+    probe_parser = subparsers.add_parser(
+        "probe-upwork-fields",
+        help="Temporary calibration helper for probing marketplaceJobPostingsSearch node fields.",
+    )
+    probe_parser.add_argument(
+        "--fields",
+        required=True,
+        help="Comma-separated top-level node fields to probe, such as id,title,ciphertext,createdDateTime.",
     )
     dry_run_parser = subparsers.add_parser(
         "dry-run-raw-artifact",
@@ -359,6 +375,26 @@ def _run_dry_run_raw_artifact(
         ),
         file=stdout,
     )
+    return 0
+
+
+def _run_probe_upwork_fields(
+    *,
+    fields_text: str,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    fields = tuple(field.strip() for field in fields_text.split(","))
+    jobs = probe_upwork_fields(config, fields)
+    observed_keys = sorted({key for job in jobs for key in job.keys()})
+    first_job_json = "—"
+    if jobs:
+        first_job_json = json.dumps(jobs[0], indent=2, sort_keys=True)
+    print("Probe succeeded.", file=stdout)
+    print(f"Fetched jobs: {len(jobs)}", file=stdout)
+    print(f"Observed keys: {', '.join(observed_keys) if observed_keys else '—'}", file=stdout)
+    print("First node:", file=stdout)
+    print(first_job_json, file=stdout)
     return 0
 
 

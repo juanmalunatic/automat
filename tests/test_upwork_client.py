@@ -14,9 +14,11 @@ from upwork_triage.upwork_client import (
     MissingUpworkCredentialsError,
     UpworkClientError,
     UpworkGraphQlError,
+    build_probe_job_search_query,
     build_job_search_query,
     extract_job_payloads,
     fetch_upwork_jobs,
+    probe_upwork_fields,
 )
 
 
@@ -104,6 +106,74 @@ def test_build_job_search_query_uses_marketplace_job_postings_search_shape() -> 
             }
         ],
     }
+
+
+def test_probe_upwork_fields_sends_bearer_header_user_agent_and_probe_query() -> None:
+    transport = FakeTransport(response_json=jobs_edges_response())
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+            "UPWORK_SEARCH_TERMS": "WooCommerce, API",
+            "UPWORK_POLL_LIMIT": "25",
+        }
+    )
+
+    payloads = probe_upwork_fields(
+        config,
+        ("ciphertext", "createdDateTime"),
+        transport=transport,
+    )
+
+    assert payloads == [{"id": "job-1", "title": "First job"}]
+    assert len(transport.calls) == 1
+    call = transport.calls[0]
+    assert call["url"] == "https://placeholder.invalid/custom-upwork-graphql"
+    assert call["headers"]["Authorization"] == "bearer token-123"
+    assert call["headers"]["User-Agent"] == "Automat/0.1 personal-internal-upwork-api-client"
+    assert "query marketplaceJobPostingsSearch" in str(call["payload"]["query"])
+    assert "        id\n" in str(call["payload"]["query"])
+    assert "        title\n" in str(call["payload"]["query"])
+    assert "        ciphertext\n" in str(call["payload"]["query"])
+    assert "        createdDateTime\n" in str(call["payload"]["query"])
+    assert call["payload"]["variables"] == {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": "WooCommerce API",
+        },
+        "searchType": "USER_JOBS_SEARCH",
+        "sortAttributes": [
+            {
+                "field": "RECENCY",
+            }
+        ],
+    }
+
+
+def test_build_probe_job_search_query_uses_marketplace_shape_and_auto_includes_id_and_title() -> None:
+    query, variables = build_probe_job_search_query(("WordPress", "PHP"), 10, ("ciphertext",))
+
+    assert "query marketplaceJobPostingsSearch" in query
+    assert "marketplaceJobPostingsSearch(" in query
+    assert "      node {" in query
+    assert "        id\n" in query
+    assert "        title\n" in query
+    assert "        ciphertext\n" in query
+    assert variables == {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": "WordPress PHP",
+        },
+        "searchType": "USER_JOBS_SEARCH",
+        "sortAttributes": [
+            {
+                "field": "RECENCY",
+            }
+        ],
+    }
+
+
+def test_build_probe_job_search_query_rejects_unsupported_fields() -> None:
+    with pytest.raises(UpworkClientError, match="Unsupported probe fields"):
+        build_probe_job_search_query(("WordPress",), 10, ("totallyNotRealField",))
 
 
 def test_extract_job_payloads_handles_data_jobs_edges_node_shape() -> None:

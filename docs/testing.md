@@ -101,6 +101,11 @@ Should verify:
 - `inspect-upwork-raw --output PATH` writes the requested artifact
 - `inspect-upwork-raw --no-write` does not create the default artifact
 - inspect CLI error output must not leak fake token values
+- `main(["probe-upwork-fields", "--fields", "ciphertext,createdDateTime"])` returns `0` with a fake probe boundary
+- `probe-upwork-fields` prints fetched count, observed keys, and first-node JSON
+- `probe-upwork-fields` does not require `OPENAI_API_KEY`
+- missing `UPWORK_ACCESS_TOKEN` makes `probe-upwork-fields` return a non-zero exit code with a helpful error
+- the probe CLI path does not call fake demo, live ingest, raw inspection, dry-run, queue, or action-recording boundaries
 - `main(["dry-run-raw-artifact", "--input", PATH])` returns `0` for a valid raw inspection artifact
 - `dry-run-raw-artifact` prints total jobs loaded, routing bucket counts, and sample normalized/filter lines
 - `dry-run-raw-artifact` does not require `UPWORK_ACCESS_TOKEN` or `OPENAI_API_KEY`
@@ -275,6 +280,8 @@ Should verify:
 - `fetch_upwork_jobs()` sends a lowercase `bearer` Authorization header plus the required `User-Agent` to the transport
 - `fetch_upwork_jobs()` sends a GraphQL query string plus variables payload
 - query construction uses `marketplaceJobPostingsSearch` with compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables derived from `search_terms`
+- probe query construction uses `marketplaceJobPostingsSearch` with the same compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables
+- probe requests auto-include `id` and `title` and reject unsupported field names clearly
 - `extract_job_payloads()` supports `data.jobs.edges[].node`
 - `extract_job_payloads()` supports `data.search.edges[].node`
 - `extract_job_payloads()` supports `data.jobs` as a list

@@ -97,6 +97,24 @@ py -m upwork_triage inspect-upwork-raw --output data/debug/my_upwork_sample.json
 
 Important: raw inspection artifacts are local/private debug files that may contain real job and client text. Do not commit them. Their purpose is to help refine the GraphQL query and the normalizer before using `ingest-once`.
 
+## Temporary field probe
+
+If raw inspection shows poor coverage and you want to test candidate GraphQL node fields without changing the production query yet, use the temporary calibration helper:
+
+```powershell
+py -m upwork_triage probe-upwork-fields --fields "id,title,ciphertext,createdDateTime"
+```
+
+This command:
+
+- requires `UPWORK_ACCESS_TOKEN`
+- does not require `OPENAI_API_KEY`
+- uses the same marketplace search filter/sort shape as the current live query
+- does not write DB rows or artifacts by default
+- prints observed keys plus the first returned node or clear GraphQL validation errors
+
+It is a local schema/debug helper only. Use it to test candidate field names before patching the production raw-inspection query.
+
 ## Raw artifact dry run
 
 After saving a raw inspection artifact, you can run the current normalizer and deterministic filters against it without calling Upwork again and without spending AI cost:
