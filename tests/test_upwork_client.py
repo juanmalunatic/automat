@@ -14,9 +14,11 @@ from upwork_triage.upwork_client import (
     MissingUpworkCredentialsError,
     UpworkClientError,
     UpworkGraphQlError,
+    build_public_job_search_query,
     build_probe_job_search_query,
     build_job_search_query,
     extract_job_payloads,
+    fetch_public_upwork_jobs_for_term,
     fetch_upwork_jobs,
     probe_upwork_fields,
 )
@@ -105,6 +107,79 @@ def test_build_job_search_query_uses_marketplace_job_postings_search_shape() -> 
                 "field": "RECENCY",
             }
         ],
+    }
+
+
+def test_fetch_public_upwork_jobs_for_term_sends_public_query_and_variables() -> None:
+    transport = FakeTransport(response_json=public_jobs_with_amount_response())
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+            "UPWORK_POLL_LIMIT": "25",
+        }
+    )
+
+    payloads = fetch_public_upwork_jobs_for_term(
+        config,
+        "WordPress",
+        transport=transport,
+    )
+
+    assert payloads == [
+        {
+            "id": "job-public-1",
+            "title": "Public job",
+            "amount": {
+                "rawValue": "500",
+                "currency": "USD",
+                "displayValue": "$500",
+            },
+        }
+    ]
+    assert len(transport.calls) == 1
+    call = transport.calls[0]
+    assert call["url"] == "https://placeholder.invalid/custom-upwork-graphql"
+    assert call["headers"]["Authorization"] == "bearer token-123"
+    assert call["headers"]["User-Agent"] == "Automat/0.1 personal-internal-upwork-api-client"
+    assert "query publicMarketplaceJobPostingsSearch" in str(call["payload"]["query"])
+    assert "searchType" not in str(call["payload"]["query"])
+    assert "sortAttributes" not in str(call["payload"]["query"])
+    assert "totalCount" not in str(call["payload"]["query"])
+    assert call["payload"]["variables"] == {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": "WordPress",
+        },
+    }
+
+
+def test_build_public_job_search_query_uses_public_marketplace_shape() -> None:
+    query, variables = build_public_job_search_query("WooCommerce", 10)
+
+    assert "query publicMarketplaceJobPostingsSearch" in query
+    assert "publicMarketplaceJobPostingsSearch(" in query
+    assert "$marketPlaceJobFilter" in query
+    assert "$searchType" not in query
+    assert "$sortAttributes" not in query
+    assert "totalCount" not in query
+    assert "    jobs {" in query
+    assert "      id\n" in query
+    assert "      title\n" in query
+    assert "      ciphertext\n" in query
+    assert "      createdDateTime\n" in query
+    assert "      type\n" in query
+    assert "      engagement\n" in query
+    assert "      contractorTier\n" in query
+    assert "      jobStatus\n" in query
+    assert "      recno\n" in query
+    assert "      amount {\n" in query
+    assert "        rawValue\n" in query
+    assert "        currency\n" in query
+    assert "        displayValue\n" in query
+    assert variables == {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": "WooCommerce",
+        },
     }
 
 
@@ -471,6 +546,26 @@ def public_jobs_response() -> dict[str, object]:
             "publicMarketplaceJobPostingsSearch": {
                 "jobs": [
                     {"id": "job-public-1", "title": "Public job"},
+                ]
+            }
+        }
+    }
+
+
+def public_jobs_with_amount_response() -> dict[str, object]:
+    return {
+        "data": {
+            "publicMarketplaceJobPostingsSearch": {
+                "jobs": [
+                    {
+                        "id": "job-public-1",
+                        "title": "Public job",
+                        "amount": {
+                            "rawValue": "500",
+                            "currency": "USD",
+                            "displayValue": "$500",
+                        },
+                    }
                 ]
             }
         }

@@ -86,8 +86,20 @@ class UpworkGraphQlClient:
         self._access_token = access_token
         self._transport = transport or UrllibHttpJsonTransport()
 
-    def fetch_jobs(self, search_terms: tuple[str, ...], limit: int) -> list[dict[str, object]]:
+    def fetch_jobs(
+        self,
+        search_terms: tuple[str, ...],
+        limit: int,
+    ) -> list[dict[str, object]]:
         query, variables = build_job_search_query(search_terms, limit)
+        return self._execute_and_extract(query, variables)
+
+    def fetch_public_jobs_for_term(
+        self,
+        search_term: str,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        query, variables = build_public_job_search_query(search_term, limit)
         return self._execute_and_extract(query, variables)
 
     def probe_fields(
@@ -141,9 +153,11 @@ __all__ = [
     "UpworkGraphQlClient",
     "UpworkGraphQlError",
     "UrllibHttpJsonTransport",
+    "build_public_job_search_query",
     "build_probe_job_search_query",
     "build_job_search_query",
     "extract_job_payloads",
+    "fetch_public_upwork_jobs_for_term",
     "fetch_upwork_jobs",
     "probe_upwork_fields",
 ]
@@ -279,6 +293,46 @@ query marketplaceJobPostingsSearch(
     return query, variables
 
 
+def build_public_job_search_query(
+    search_term: str,
+    limit: int,
+) -> tuple[str, dict[str, object]]:
+    _ = limit
+    query_text = search_term.strip()
+    query = """
+query publicMarketplaceJobPostingsSearch(
+  $marketPlaceJobFilter: PublicMarketplaceJobPostingsSearchFilter!
+) {
+  publicMarketplaceJobPostingsSearch(
+    marketPlaceJobFilter: $marketPlaceJobFilter
+  ) {
+    jobs {
+      id
+      title
+      ciphertext
+      createdDateTime
+      type
+      engagement
+      contractorTier
+      jobStatus
+      recno
+      amount {
+        rawValue
+        currency
+        displayValue
+      }
+    }
+  }
+}
+""".strip()
+    variables: dict[str, object] = {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": query_text,
+        },
+    }
+    return query, variables
+
+
 def build_probe_job_search_query(
     search_terms: tuple[str, ...],
     limit: int,
@@ -392,6 +446,20 @@ def fetch_upwork_jobs(
         transport=transport,
     )
     return client.fetch_jobs(config.search_terms, config.poll_limit)
+
+
+def fetch_public_upwork_jobs_for_term(
+    config: AppConfig,
+    search_term: str,
+    *,
+    transport: HttpJsonTransport | None = None,
+) -> list[dict[str, object]]:
+    client = UpworkGraphQlClient(
+        config.upwork_graphql_url,
+        config.upwork_access_token,
+        transport=transport,
+    )
+    return client.fetch_public_jobs_for_term(search_term, config.poll_limit)
 
 
 def probe_upwork_fields(

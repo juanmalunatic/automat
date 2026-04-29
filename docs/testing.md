@@ -284,8 +284,11 @@ Should verify:
 
 - missing `UPWORK_ACCESS_TOKEN` fails before any transport call
 - `fetch_upwork_jobs()` sends a lowercase `bearer` Authorization header plus the required `User-Agent` to the transport
+- `fetch_public_upwork_jobs_for_term()` sends the same lowercase `bearer` Authorization header plus the required `User-Agent`
 - `fetch_upwork_jobs()` sends a GraphQL query string plus variables payload
 - query construction uses `marketplaceJobPostingsSearch` with compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables derived from `search_terms`
+- public-job helper query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter!`, one narrow `searchExpression_eq` term, and no `searchType`, `sortAttributes`, or `totalCount`
+- the public-job helper query includes `amount { rawValue currency displayValue }`
 - probe query construction uses `marketplaceJobPostingsSearch` with the same compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables
 - public probe query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter!`, `jobs { ... }`, and only `marketPlaceJobFilter.searchExpression_eq`
 - explicit public nested probe tokens such as `amountMoney` and `clientBasic` render the expected nested selections

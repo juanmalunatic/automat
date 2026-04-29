@@ -2,13 +2,13 @@
 
 ## Task name
 
-Extend the temporary public Upwork probe with a few explicit nested field tokens.
+Add a dedicated public Upwork job-search helper.
 
 ## Goal
 
-Keep `probe-upwork-fields` as a temporary calibration helper, but let the public-source probe request a couple of small nested selections without opening the door to arbitrary GraphQL.
+Implement a small helper in `src/upwork_triage/upwork_client.py` for the confirmed `publicMarketplaceJobPostingsSearch` shape, using one narrow search term at a time.
 
-This task is still debug-only. It must not change the production marketplace fetch query, staged pipeline, AI path, DB path, or dry-run path.
+This task must not wire the helper into production ingestion yet. It is only preparing the client boundary for later live experimentation.
 
 ## Files to modify
 
@@ -18,87 +18,63 @@ Expected files:
 - `tests/test_upwork_client.py`
 - `docs/current_task.md`
 - `docs/testing.md`
-- `README.md`
 
 ## Required behavior
 
-1. Keep the default probe source as marketplace:
+1. Add `build_public_job_search_query(search_term: str, limit: int)`.
 
-   - `py -m upwork_triage probe-upwork-fields --fields "id,title,ciphertext,createdDateTime"`
+2. The public helper query must use:
 
-2. Keep the temporary public-source probe mode:
+   - `publicMarketplaceJobPostingsSearch`
+   - `PublicMarketplaceJobPostingsSearchFilter!`
+   - `marketPlaceJobFilter.searchExpression_eq = <single narrow term>`
+   - no `searchType`
+   - no `sortAttributes`
+   - no `totalCount`
 
-   - `py -m upwork_triage probe-upwork-fields --source public --fields "ciphertext,createdDateTime,type,engagement,contractorTier,jobStatus,recno"`
+3. The public helper query should request:
 
-3. Add explicit nested public probe tokens:
+   - `id`
+   - `title`
+   - `ciphertext`
+   - `createdDateTime`
+   - `type`
+   - `engagement`
+   - `contractorTier`
+   - `jobStatus`
+   - `recno`
+   - `amount { rawValue currency displayValue }`
 
-   - `amountMoney`
-   - `clientBasic`
+4. Add `fetch_public_upwork_jobs_for_term(...)` using the existing Upwork token, `Authorization: bearer`, `User-Agent`, transport, and extraction path.
 
-4. For `source == "public"`:
-
-   - `amountMoney` must render:
-
-     ```graphql
-     amount {
-       rawValue
-       currency
-       displayValue
-     }
-     ```
-
-   - `clientBasic` must render:
-
-     ```graphql
-     client {
-       country
-       paymentVerificationStatus
-       totalSpent
-       totalHires
-       totalPostedJobs
-       totalFeedback
-       totalReviews
-     }
-     ```
-
-5. The public probe must continue to:
-
-   - use `publicMarketplaceJobPostingsSearch`
-   - use `PublicMarketplaceJobPostingsSearchFilter!`
-   - use only `marketPlaceJobFilter.searchExpression_eq` variables
-   - query through `jobs { ... }`
-   - reuse `Authorization: bearer <token>`
-   - reuse `User-Agent: Automat/0.1 personal-internal-upwork-api-client`
-   - auto-include `id` and `title`
-
-6. Plain public `amount` and `client` tokens should still fail locally with a clear unsupported-fields error, because the temporary builder only supports the explicit nested aliases above.
+5. Reuse `extract_job_payloads()` and the current `data.publicMarketplaceJobPostingsSearch.jobs` handling if possible.
 
 ## Test requirements
 
 Update tests so they verify:
 
-- marketplace probe behavior still works by default
-- public probe query still uses `publicMarketplaceJobPostingsSearch` with `jobs { ... }`
-- public probe variables still use only `marketPlaceJobFilter.searchExpression_eq`
-- `amountMoney` renders the expected nested `amount { ... }` selection
-- `clientBasic` renders the expected nested `client { ... }` selection
-- plain public `amount` / `client` remain rejected locally
+- the public query shape uses `publicMarketplaceJobPostingsSearch`
+- the public query variables use one narrow search term through `searchExpression_eq`
+- the public query includes `amount { rawValue currency displayValue }`
+- the public query does not include `searchType`, `sortAttributes`, or `totalCount`
+- a fake transport returns public jobs correctly through `fetch_public_upwork_jobs_for_term()`
 
 ## Out of scope
 
 Do not implement:
 
-- production query changes
+- production ingestion wiring
+- `fetch_upwork_jobs()` changes
+- `inspect-upwork-raw` changes
+- `ingest-once` changes
+- normalizer, dry-run, DB, economics, triage, queue, or action changes
 - AI / OpenAI changes
-- DB/schema changes
-- normalizer, dry-run, economics, triage, queue, or action changes
-- arbitrary nested GraphQL probing
+- hybrid merge logic
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- `probe-upwork-fields --source public` supports `amountMoney` and `clientBasic`
-- unsupported plain public nested fields still fail locally
+- a dedicated public job-search helper exists in `upwork_client.py`
 - focused Upwork client tests pass
 - the full test suite still passes
