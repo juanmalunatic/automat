@@ -559,6 +559,224 @@ def test_dry_run_raw_artifact_does_not_call_live_or_action_boundaries(
     assert exit_code == 0
 
 
+def test_main_preview_upwork_runs_inspection_then_dry_run_and_prints_summaries(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_hydrated_latest.json"
+    json_output_path = workspace_tmp_dir / "debug" / "dry_run_hydrated_latest.json"
+    recorded: dict[str, object] = {}
+    dry_run_summary = object()
+
+    monkeypatch.setattr("upwork_triage.cli.load_config", lambda: object())
+
+    def fake_inspect(
+        config: object,
+        *,
+        transport: object | None = None,
+        artifact_path: object | None = None,
+        sample_limit: int = 3,
+        marketplace_only: bool = False,
+        hydrate_exact: bool = False,
+    ) -> object:
+        recorded["inspect_artifact_path"] = artifact_path
+        recorded["inspect_sample_limit"] = sample_limit
+        recorded["inspect_hydrate_exact"] = hydrate_exact
+        from upwork_triage.inspect_upwork import RawInspectionSummary
+
+        return RawInspectionSummary(
+            fetched_count=1,
+            observed_keys=("id", "title"),
+            first_job_keys=("id", "title"),
+            sample_jobs=({"id": "job-1", "title": "Preview job"},),
+            artifact_path=str(artifact_path),
+            exact_hydration_success_count=1,
+            exact_hydration_failed_count=0,
+            exact_hydration_skipped_count=0,
+        )
+
+    monkeypatch.setattr("upwork_triage.cli.inspect_upwork_raw", fake_inspect)
+
+    def fake_load_artifact(path: str) -> list[dict[str, object]]:
+        recorded["loaded_artifact_path"] = path
+        return [{"id": "job-1", "title": "Preview job"}]
+
+    monkeypatch.setattr("upwork_triage.cli.load_raw_inspection_artifact", fake_load_artifact)
+
+    def fake_dry_run(
+        raw_jobs: list[dict[str, object]],
+        *,
+        artifact_path: str | Path | None = None,
+    ) -> object:
+        recorded["dry_run_jobs"] = raw_jobs
+        recorded["dry_run_artifact_path"] = artifact_path
+        return dry_run_summary
+
+    monkeypatch.setattr("upwork_triage.cli.dry_run_raw_jobs", fake_dry_run)
+    monkeypatch.setattr(
+        "upwork_triage.cli.render_raw_inspection_summary",
+        lambda summary: "Inspection summary",
+    )
+
+    def fake_render_dry_run(
+        summary: object,
+        *,
+        sample_limit: int = 10,
+        show_field_status: bool = False,
+    ) -> str:
+        recorded["render_dry_run_sample_limit"] = sample_limit
+        recorded["render_dry_run_show_field_status"] = show_field_status
+        return "MVP readiness:\n  - automated core ready: 1/1"
+
+    monkeypatch.setattr("upwork_triage.cli.render_raw_artifact_dry_run_summary", fake_render_dry_run)
+
+    def fake_write_json(path: str | Path, summary: object) -> None:
+        recorded["json_output_path"] = path
+        recorded["json_output_summary"] = summary
+
+    monkeypatch.setattr("upwork_triage.cli.write_dry_run_summary_json", fake_write_json)
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        [
+            "preview-upwork",
+            "--output",
+            str(artifact_path),
+            "--sample-limit",
+            "5",
+            "--show-field-status",
+            "--json-output",
+            str(json_output_path),
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert recorded["inspect_artifact_path"] == str(artifact_path)
+    assert recorded["inspect_sample_limit"] == 5
+    assert recorded["inspect_hydrate_exact"] is True
+    assert recorded["loaded_artifact_path"] == str(artifact_path)
+    assert recorded["dry_run_jobs"] == [{"id": "job-1", "title": "Preview job"}]
+    assert recorded["dry_run_artifact_path"] == str(artifact_path)
+    assert recorded["render_dry_run_sample_limit"] == 5
+    assert recorded["render_dry_run_show_field_status"] is True
+    assert recorded["json_output_path"] == str(json_output_path)
+    assert recorded["json_output_summary"] is dry_run_summary
+    assert "Inspection summary" in output
+    assert "MVP readiness:" in output
+
+
+def test_main_preview_upwork_uses_default_output_path_and_writes_no_json_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: dict[str, object] = {}
+
+    monkeypatch.setattr("upwork_triage.cli.load_config", lambda: object())
+
+    def fake_inspect(
+        config: object,
+        *,
+        transport: object | None = None,
+        artifact_path: object | None = None,
+        sample_limit: int = 3,
+        marketplace_only: bool = False,
+        hydrate_exact: bool = False,
+    ) -> object:
+        recorded["inspect_artifact_path"] = artifact_path
+        from upwork_triage.inspect_upwork import RawInspectionSummary
+
+        return RawInspectionSummary(
+            fetched_count=0,
+            observed_keys=(),
+            first_job_keys=(),
+            sample_jobs=(),
+            artifact_path=str(artifact_path),
+            exact_hydration_success_count=0,
+            exact_hydration_failed_count=0,
+            exact_hydration_skipped_count=0,
+        )
+
+    monkeypatch.setattr("upwork_triage.cli.inspect_upwork_raw", fake_inspect)
+    monkeypatch.setattr("upwork_triage.cli.load_raw_inspection_artifact", lambda path: [])
+    monkeypatch.setattr("upwork_triage.cli.dry_run_raw_jobs", lambda raw_jobs, *, artifact_path=None: object())
+    monkeypatch.setattr("upwork_triage.cli.render_raw_inspection_summary", lambda summary: "Inspection summary")
+    monkeypatch.setattr(
+        "upwork_triage.cli.render_raw_artifact_dry_run_summary",
+        lambda summary, *, sample_limit=10, show_field_status=False: "MVP readiness:\n  - automated core ready: 0/0",
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.write_dry_run_summary_json",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("json output should not be written")),
+    )
+
+    exit_code = main(["preview-upwork"], stdout=StringIO(), stderr=StringIO())
+
+    assert exit_code == 0
+    assert recorded["inspect_artifact_path"] == str(
+        Path("data/debug/upwork_raw_hydrated_latest.json")
+    )
+
+
+def test_preview_upwork_does_not_call_db_ingest_queue_or_action_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("upwork_triage.cli.load_config", lambda: object())
+    monkeypatch.setattr(
+        "upwork_triage.cli.inspect_upwork_raw",
+        lambda *args, **kwargs: __import__("upwork_triage.inspect_upwork", fromlist=["RawInspectionSummary"]).RawInspectionSummary(
+            fetched_count=0,
+            observed_keys=(),
+            first_job_keys=(),
+            sample_jobs=(),
+            artifact_path="data/debug/upwork_raw_hydrated_latest.json",
+            exact_hydration_success_count=0,
+            exact_hydration_failed_count=0,
+            exact_hydration_skipped_count=0,
+        ),
+    )
+    monkeypatch.setattr("upwork_triage.cli.load_raw_inspection_artifact", lambda path: [])
+    monkeypatch.setattr("upwork_triage.cli.dry_run_raw_jobs", lambda raw_jobs, *, artifact_path=None: object())
+    monkeypatch.setattr("upwork_triage.cli.render_raw_inspection_summary", lambda summary: "Inspection summary")
+    monkeypatch.setattr(
+        "upwork_triage.cli.render_raw_artifact_dry_run_summary",
+        lambda summary, *, sample_limit=10, show_field_status=False: "MVP readiness:\n  - automated core ready: 0/0",
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.connect_db",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("db connection should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_fake_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fake demo should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_live_ingest_once",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live ingest should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.fetch_decision_shortlist",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("queue should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.record_user_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("action recording should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "evaluate_with_openai",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("openai eval should not run")),
+    )
+
+    exit_code = main(["preview-upwork"], stdout=StringIO(), stderr=StringIO())
+
+    assert exit_code == 0
+
+
 def test_main_queue_returns_zero_and_prints_current_shortlist(
     workspace_tmp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,

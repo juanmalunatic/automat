@@ -102,6 +102,15 @@ Should verify:
 - `inspect-upwork-raw --no-write` does not create the default artifact
 - `inspect-upwork-raw --hydrate-exact` forwards the explicit exact-hydration flag into the inspection helper
 - inspect CLI error output must not leak fake token values
+- `main(["preview-upwork"])` returns `0` with monkeypatched local inspect/dry-run boundaries
+- `preview-upwork` forwards the configured raw artifact path into `inspect_upwork_raw(...)`
+- `preview-upwork` forces `hydrate_exact=True`
+- `preview-upwork` reloads the written raw artifact through `load_raw_inspection_artifact(...)`
+- `preview-upwork` runs `dry_run_raw_jobs(...)` on the loaded jobs
+- `preview-upwork` prints the dry-run summary, including the `MVP readiness` section
+- `preview-upwork` forwards `--sample-limit` and `--show-field-status` to the relevant inspection/rendering calls
+- `preview-upwork --json-output PATH` writes a dry-run JSON summary when requested
+- `preview-upwork` does not call DB, queue, action, fake-demo, live-ingest, or OpenAI boundaries
 - `main(["probe-upwork-fields", "--fields", "ciphertext,createdDateTime"])` returns `0` with a fake probe boundary
 - `main(["probe-upwork-fields", "--source", "public", "--fields", ...])` returns `0` with a fake public probe boundary
 - `probe-upwork-fields` prints fetched count, observed keys, and first-node JSON
@@ -489,6 +498,8 @@ Auth-helper CLI tests should monkeypatch token exchange/refresh helpers rather t
 `inspect-upwork-raw` CLI tests should monkeypatch the Upwork fetch boundary rather than calling real Upwork. They should verify the command stays no-AI, defaults to the hybrid fetch path, can still force marketplace-only mode if that flag exists, can write a local debug artifact, and does not leak fake token values through normal error output.
 
 `dry-run-raw-artifact` CLI tests should read local raw-inspection artifacts, stay no-AI and no-network, avoid staged DB writes by default, and ensure missing or malformed artifacts fail clearly.
+
+`preview-upwork` CLI tests should monkeypatch the existing inspection and dry-run helpers rather than calling real Upwork, OpenAI, or SQLite. They should verify the command writes or reloads a local hydrated raw artifact, stays no-AI and no-DB-write, and preserves the explicit preview-only workflow boundary.
 
 No committed test should depend on the private contents of `data/debug/upwork_raw_latest.json` or `data/debug/upwork_dry_run_latest.json`. Those ignored artifacts are for local calibration only; committed regression coverage must stay sanitized and secret-free.
 

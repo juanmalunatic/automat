@@ -36,6 +36,8 @@ from upwork_triage.upwork_client import probe_upwork_fields
 
 __all__ = ["main"]
 
+DEFAULT_PREVIEW_UPWORK_ARTIFACT_PATH = Path("data/debug/upwork_raw_hydrated_latest.json")
+
 
 class _ParserExit(Exception):
     def __init__(self, status: int, message: str | None = None) -> None:
@@ -103,6 +105,14 @@ def main(
                 sample_limit=args.sample_limit,
                 marketplace_only=args.marketplace_only,
                 hydrate_exact=args.hydrate_exact,
+                stdout=out,
+            )
+        if args.command == "preview-upwork":
+            return _run_preview_upwork(
+                output_path=args.output,
+                sample_limit=args.sample_limit,
+                json_output=args.json_output,
+                show_field_status=args.show_field_status,
                 stdout=out,
             )
         if args.command == "probe-upwork-fields":
@@ -223,6 +233,30 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "--hydrate-exact",
         action="store_true",
         help="Best-effort exact marketplace hydration for numeric ids in the saved raw artifact.",
+    )
+    preview_parser = subparsers.add_parser(
+        "preview-upwork",
+        help="Run a local exact-hydrated Upwork inspection plus dry-run preview without AI or DB writes.",
+    )
+    preview_parser.add_argument(
+        "--output",
+        default=str(DEFAULT_PREVIEW_UPWORK_ARTIFACT_PATH),
+        help="Raw hydrated inspection artifact path.",
+    )
+    preview_parser.add_argument(
+        "--sample-limit",
+        type=int,
+        default=10,
+        help="Number of sample jobs to include in the inspection and dry-run output.",
+    )
+    preview_parser.add_argument(
+        "--json-output",
+        help="Optional JSON path for a machine-readable dry-run summary.",
+    )
+    preview_parser.add_argument(
+        "--show-field-status",
+        action="store_true",
+        help="Include per-field status distribution details in the dry-run output.",
     )
     probe_parser = subparsers.add_parser(
         "probe-upwork-fields",
@@ -393,6 +427,41 @@ def _run_dry_run_raw_artifact(
     print(
         render_raw_artifact_dry_run_summary(
             summary,
+            sample_limit=sample_limit,
+            show_field_status=show_field_status,
+        ),
+        file=stdout,
+    )
+    return 0
+
+
+def _run_preview_upwork(
+    *,
+    output_path: str,
+    sample_limit: int,
+    json_output: str | None,
+    show_field_status: bool,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    inspection_summary = inspect_upwork_raw(
+        config,
+        artifact_path=output_path,
+        sample_limit=sample_limit,
+        hydrate_exact=True,
+    )
+    raw_jobs = load_raw_inspection_artifact(inspection_summary.artifact_path or output_path)
+    dry_run_summary = dry_run_raw_jobs(
+        raw_jobs,
+        artifact_path=inspection_summary.artifact_path or output_path,
+    )
+    if json_output:
+        write_dry_run_summary_json(json_output, dry_run_summary)
+    print(render_raw_inspection_summary(inspection_summary), file=stdout)
+    print(file=stdout)
+    print(
+        render_raw_artifact_dry_run_summary(
+            dry_run_summary,
             sample_limit=sample_limit,
             show_field_status=show_field_status,
         ),

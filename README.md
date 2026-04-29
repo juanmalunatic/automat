@@ -165,6 +165,14 @@ py -m upwork_triage ingest-once
 
 If the dry-run coverage looks poor, do a local calibration pass against the ignored `data/debug/upwork_raw_latest.json` and `data/debug/upwork_dry_run_latest.json` artifacts before relying on `ingest-once`. Those files are private debug artifacts and should never be committed.
 
+If you want the same local preview in one command, use:
+
+```powershell
+py -m upwork_triage preview-upwork --show-field-status
+```
+
+This wrapper runs bounded exact-hydrated raw inspection first, writes `data/debug/upwork_raw_hydrated_latest.json` by default, then immediately runs the existing no-AI dry-run diagnostics against that artifact. It does not call OpenAI and does not write to SQLite.
+
 ## Upwork auth helpers
 
 The repository now includes local helper commands for obtaining or refreshing Upwork tokens:
