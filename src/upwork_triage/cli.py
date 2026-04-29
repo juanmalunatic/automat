@@ -101,6 +101,7 @@ def main(
                 no_write=args.no_write,
                 output_path=args.output,
                 sample_limit=args.sample_limit,
+                marketplace_only=args.marketplace_only,
                 stdout=out,
             )
         if args.command == "probe-upwork-fields":
@@ -211,6 +212,11 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         type=int,
         default=3,
         help="Number of sample jobs to include in the rendered summary.",
+    )
+    inspect_parser.add_argument(
+        "--marketplace-only",
+        action="store_true",
+        help="Use only the marketplace search surface instead of the default hybrid marketplace+public fetch.",
     )
     probe_parser = subparsers.add_parser(
         "probe-upwork-fields",
@@ -342,6 +348,7 @@ def _run_inspect_upwork_raw(
     no_write: bool,
     output_path: str | None,
     sample_limit: int,
+    marketplace_only: bool,
     stdout: TextIO,
 ) -> int:
     config = load_config()
@@ -357,6 +364,7 @@ def _run_inspect_upwork_raw(
         config,
         artifact_path=artifact_path,
         sample_limit=sample_limit,
+        marketplace_only=marketplace_only,
     )
     print(render_raw_inspection_summary(summary), file=stdout)
     return 0

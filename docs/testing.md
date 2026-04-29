@@ -220,7 +220,8 @@ Should verify:
 - sanitized real-like Upwork payload fixtures preserve `NOT_VISIBLE` and `PARSE_FAILURE` for unavailable or malformed visible fields
 - sanitized marketplace-search payload fixtures derive `source_url` from `ciphertext`
 - sanitized marketplace-search payload fixtures map `createdDateTime` to `j_posted_at` and can derive `j_mins_since_posted` with a deterministic test clock
-- sanitized marketplace-search payload fixtures map `client.verificationStatus`, `client.totalHires`, and `client.totalPostedJobs`
+- sanitized marketplace-search payload fixtures map `client.verificationStatus`, `client.totalSpent`, `client.totalHires`, and `client.totalPostedJobs`
+- sanitized public-marketplace payload fixtures map `publishedDateTime`, top-level `type`, fixed/hourly pay fields, and `totalApplicants`
 - mixed valid/malformed marketplace skill objects still yield a usable `j_skills`
 - normalized output can build `FilterInput`
 - normalized output can build `AiPayloadInput`
@@ -287,8 +288,11 @@ Should verify:
 - `fetch_public_upwork_jobs_for_term()` sends the same lowercase `bearer` Authorization header plus the required `User-Agent`
 - `fetch_upwork_jobs()` sends a GraphQL query string plus variables payload
 - query construction uses `marketplaceJobPostingsSearch` with compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables derived from `search_terms`
+- the marketplace query includes `client.totalSpent { rawValue currency displayValue }`
 - public-job helper query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter!`, one narrow `searchExpression_eq` term, and no `searchType`, `sortAttributes`, or `totalCount`
-- the public-job helper query includes `amount { rawValue currency displayValue }`
+- the public-job helper query includes the confirmed live public fields including `publishedDateTime`, `duration`, `durationLabel`, `totalApplicants`, `hourlyBudgetType`, `hourlyBudgetMin`, `hourlyBudgetMax`, `amount { rawValue currency displayValue }`, and `weeklyBudget { rawValue currency displayValue }`
+- marketplace-per-term and public-per-term helpers each use one narrow search term at a time
+- `fetch_hybrid_upwork_jobs()` fetches marketplace and public jobs per normalized term, dedupes by `id` with `ciphertext` fallback, preserves marketplace descriptive/client fields, prefers public pay/activity fields, and keeps simple source metadata for debugging
 - probe query construction uses `marketplaceJobPostingsSearch` with the same compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables
 - public probe query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter!`, `jobs { ... }`, and only `marketPlaceJobFilter.searchExpression_eq`
 - explicit public nested probe tokens such as `amountMoney` and `clientBasic` render the expected nested selections
@@ -310,7 +314,8 @@ Should verify:
 
 Should verify:
 
-- `inspect_upwork_raw()` calls the Upwork fetch boundary with the supplied config/transport
+- `inspect_upwork_raw()` calls the hybrid Upwork fetch boundary with the supplied config/transport by default
+- `inspect_upwork_raw()` can still force the marketplace-only fetch path if that escape hatch exists
 - fetched-count summary matches returned jobs
 - observed keys combine top-level keys across returned jobs
 - first-job keys reflect only the first returned job
@@ -336,6 +341,7 @@ Should verify:
 - key field visible-count coverage is recorded
 - sanitized real-like raw payload fixtures produce useful field-coverage counts
 - sanitized marketplace-search raw payload fixtures produce useful coverage for derived `source_url`, verification status, and posted-time fields
+- sanitized hybrid raw payload fixtures produce useful coverage for contract type, fixed/hourly pay visibility, proposals from applicant counts, and client spend when those values are present
 - parse-failure counts are recorded
 - empty job lists still produce a valid summary
 - unexpected per-job normalization/filter failures are recorded per job while the overall summary continues
@@ -453,7 +459,7 @@ CLI tests should use temp DB paths through env overrides or other isolated confi
 
 Auth-helper CLI tests should monkeypatch token exchange/refresh helpers rather than calling real Upwork OAuth services. They should verify the secret warning comment and ensure fake secret values do not leak through normal error output.
 
-`inspect-upwork-raw` CLI tests should monkeypatch the Upwork fetch boundary rather than calling real Upwork. They should verify the command stays no-AI, can write a local debug artifact, and does not leak fake token values through normal error output.
+`inspect-upwork-raw` CLI tests should monkeypatch the Upwork fetch boundary rather than calling real Upwork. They should verify the command stays no-AI, defaults to the hybrid fetch path, can still force marketplace-only mode if that flag exists, can write a local debug artifact, and does not leak fake token values through normal error output.
 
 `dry-run-raw-artifact` CLI tests should read local raw-inspection artifacts, stay no-AI and no-network, avoid staged DB writes by default, and ensure missing or malformed artifacts fail clearly.
 

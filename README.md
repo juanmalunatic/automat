@@ -85,6 +85,7 @@ This command:
 - requires `UPWORK_ACCESS_TOKEN`
 - does not require `OPENAI_API_KEY`
 - fetches raw jobs through the existing Upwork GraphQL client boundary
+- defaults to a hybrid marketplace+public merge so the artifact includes both descriptive marketplace fields and public contract/pay/activity fields
 - prints a compact key/shape summary to stdout
 - writes a local debug artifact to `data/debug/upwork_raw_latest.json` by default
 
@@ -93,9 +94,12 @@ Optional examples:
 ```powershell
 py -m upwork_triage inspect-upwork-raw --no-write
 py -m upwork_triage inspect-upwork-raw --output data/debug/my_upwork_sample.json
+py -m upwork_triage inspect-upwork-raw --marketplace-only
 ```
 
 Important: raw inspection artifacts are local/private debug files that may contain real job and client text. Do not commit them. Their purpose is to help refine the GraphQL query and the normalizer before using `ingest-once`.
+
+The public search surface has worked best with narrow search terms such as `WordPress` or `WooCommerce`, not one giant combined expression. The hybrid inspection path handles that by fetching both surfaces per configured term and merging the results locally by visible `id` or `ciphertext`.
 
 ## Temporary field probe
 

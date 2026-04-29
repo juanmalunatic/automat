@@ -120,7 +120,7 @@ def test_main_inspect_upwork_raw_no_write_returns_zero_and_prints_summary(
     monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
-        "upwork_triage.inspect_upwork.fetch_upwork_jobs",
+        "upwork_triage.inspect_upwork.fetch_hybrid_upwork_jobs",
         lambda config, *, transport=None: [
             {
                 "id": "job-1",
@@ -147,6 +147,43 @@ def test_main_inspect_upwork_raw_no_write_returns_zero_and_prints_summary(
     assert "Fetched jobs: 2" in output
     assert "Observed keys:" in output
     assert "id=job-1" in output
+
+
+def test_main_inspect_upwork_raw_marketplace_only_forwards_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
+    recorded_marketplace_only: list[bool] = []
+
+    def fake_inspect(
+        config: object,
+        *,
+        transport: object | None = None,
+        artifact_path: object | None = None,
+        sample_limit: int = 3,
+        marketplace_only: bool = False,
+    ) -> object:
+        recorded_marketplace_only.append(marketplace_only)
+        from upwork_triage.inspect_upwork import RawInspectionSummary
+
+        return RawInspectionSummary(
+            fetched_count=0,
+            observed_keys=(),
+            first_job_keys=(),
+            sample_jobs=(),
+            artifact_path=None,
+        )
+
+    monkeypatch.setattr("upwork_triage.cli.inspect_upwork_raw", fake_inspect)
+
+    exit_code = main(
+        ["inspect-upwork-raw", "--no-write", "--marketplace-only"],
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    assert exit_code == 0
+    assert recorded_marketplace_only == [True]
 
 
 def test_main_probe_upwork_fields_returns_zero_and_prints_summary(
@@ -826,7 +863,7 @@ def test_inspect_upwork_raw_output_path_writes_requested_artifact(
     monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
-        "upwork_triage.inspect_upwork.fetch_upwork_jobs",
+        "upwork_triage.inspect_upwork.fetch_hybrid_upwork_jobs",
         lambda config, *, transport=None: [
             {
                 "id": "job-1",
@@ -854,7 +891,7 @@ def test_inspect_upwork_raw_no_write_does_not_create_default_artifact(
     monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
     monkeypatch.setattr("upwork_triage.cli.DEFAULT_INSPECTION_ARTIFACT_PATH", default_artifact)
     monkeypatch.setattr(
-        "upwork_triage.inspect_upwork.fetch_upwork_jobs",
+        "upwork_triage.inspect_upwork.fetch_hybrid_upwork_jobs",
         lambda config, *, transport=None: [
             {
                 "id": "job-1",
@@ -896,7 +933,7 @@ def test_inspect_upwork_raw_cli_errors_do_not_print_fake_token_values(
     def raise_token_error(config: object, *, transport: object | None = None) -> list[dict[str, object]]:
         raise RuntimeError(f"transport exploded {fake_token}")
 
-    monkeypatch.setattr("upwork_triage.inspect_upwork.fetch_upwork_jobs", raise_token_error)
+    monkeypatch.setattr("upwork_triage.inspect_upwork.fetch_hybrid_upwork_jobs", raise_token_error)
 
     stdout = StringIO()
     stderr = StringIO()

@@ -358,3 +358,27 @@ The main remaining live risk before `ingest-once` is GraphQL and normalization m
 Tradeoff:
 
 There is another calibration command and another local-only artifact flow to document. The dry run intentionally stops before DB persistence and final triage, so anyone who wants full staged history still needs `ingest-once` after calibration looks healthy.
+
+## 2026-04-29 - Hybrid raw inspection merges marketplace and public Upwork surfaces before AI
+
+Decision:
+
+Raw inspection and no-AI dry-run calibration may merge `marketplaceJobPostingsSearch` and `publicMarketplaceJobPostingsSearch` payloads into one enriched raw job dict before normalization.
+
+The merge policy is:
+
+- fetch each surface per narrow non-empty search term
+- dedupe by visible `id`, falling back to `ciphertext`
+- prefer marketplace `title`, `description`, `skills`, and `client`
+- prefer public contract/pay/activity fields such as `type`, `publishedDateTime`, `amount`, hourly-budget fields, `totalApplicants`, `contractorTier`, `jobStatus`, `duration`, `durationLabel`, `engagement`, and `recno`
+- keep simple source metadata so the merged artifact remains debuggable
+
+`ingest-once` may remain marketplace-only until dry-run coverage from the hybrid artifact looks healthy enough to justify paid AI calls.
+
+Reason:
+
+Marketplace search returns the strongest descriptive and client fields, while public search returns core decision fields such as contract type, applicant counts, and budget ranges. Merging them locally gives the normalizer and dry-run a decision-quality calibration artifact without turning on AI yet.
+
+Tradeoff:
+
+The raw inspection path becomes slightly more opinionated than a single-surface fetch, and the merged artifact is no longer a literal API response from one endpoint. That is acceptable for calibration as long as the artifact stays local/private and the merge policy remains deterministic and documented.

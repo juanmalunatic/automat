@@ -43,7 +43,7 @@ def test_inspect_upwork_raw_calls_fetch_boundary_with_config_and_transport(
         calls.append({"config": config_arg, "transport": transport})
         return sample_jobs()
 
-    monkeypatch.setattr(inspect_module, "fetch_upwork_jobs", fake_fetch)
+    monkeypatch.setattr(inspect_module, "fetch_hybrid_upwork_jobs", fake_fetch)
 
     summary = inspect_upwork_raw(config, transport=fake_transport, sample_limit=2)
 
@@ -57,7 +57,11 @@ def test_inspect_upwork_raw_summarizes_observed_keys_first_job_keys_and_sample_l
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = load_config({"UPWORK_ACCESS_TOKEN": "token-123"})
-    monkeypatch.setattr(inspect_module, "fetch_upwork_jobs", lambda config, *, transport=None: sample_jobs())
+    monkeypatch.setattr(
+        inspect_module,
+        "fetch_hybrid_upwork_jobs",
+        lambda config, *, transport=None: sample_jobs(),
+    )
 
     summary = inspect_upwork_raw(config, sample_limit=1)
 
@@ -71,7 +75,7 @@ def test_inspect_upwork_raw_handles_empty_job_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = load_config({"UPWORK_ACCESS_TOKEN": "token-123"})
-    monkeypatch.setattr(inspect_module, "fetch_upwork_jobs", lambda config, *, transport=None: [])
+    monkeypatch.setattr(inspect_module, "fetch_hybrid_upwork_jobs", lambda config, *, transport=None: [])
 
     summary = inspect_upwork_raw(config)
 
@@ -80,6 +84,37 @@ def test_inspect_upwork_raw_handles_empty_job_list(
     assert summary.first_job_keys == ()
     assert summary.sample_jobs == ()
     assert summary.artifact_path is None
+
+
+def test_inspect_upwork_raw_can_use_marketplace_only_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    config = load_config({"UPWORK_ACCESS_TOKEN": "token-123"})
+
+    monkeypatch.setattr(
+        inspect_module,
+        "fetch_hybrid_upwork_jobs",
+        lambda config, *, transport=None: (_ for _ in ()).throw(
+            AssertionError("hybrid fetch should not run")
+        ),
+    )
+
+    def fake_marketplace_fetch(
+        config_arg: object,
+        *,
+        transport: object | None = None,
+    ) -> list[dict[str, object]]:
+        calls.append("marketplace")
+        assert config_arg is config
+        return sample_jobs()
+
+    monkeypatch.setattr(inspect_module, "fetch_upwork_jobs", fake_marketplace_fetch)
+
+    summary = inspect_upwork_raw(config, marketplace_only=True)
+
+    assert summary.fetched_count == 2
+    assert calls == ["marketplace"]
 
 
 def test_write_raw_inspection_artifact_writes_valid_json_and_creates_parent_dirs(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Mapping
 from typing import Protocol
@@ -94,6 +95,14 @@ class UpworkGraphQlClient:
         query, variables = build_job_search_query(search_terms, limit)
         return self._execute_and_extract(query, variables)
 
+    def fetch_jobs_for_term(
+        self,
+        search_term: str,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        query, variables = build_job_search_query((search_term,), limit)
+        return self._execute_and_extract(query, variables)
+
     def fetch_public_jobs_for_term(
         self,
         search_term: str,
@@ -153,10 +162,13 @@ __all__ = [
     "UpworkGraphQlClient",
     "UpworkGraphQlError",
     "UrllibHttpJsonTransport",
+    "build_hybrid_source_query_text",
     "build_public_job_search_query",
     "build_probe_job_search_query",
     "build_job_search_query",
     "extract_job_payloads",
+    "fetch_hybrid_upwork_jobs",
+    "fetch_marketplace_upwork_jobs_for_term",
     "fetch_public_upwork_jobs_for_term",
     "fetch_upwork_jobs",
     "probe_upwork_fields",
@@ -262,6 +274,11 @@ query marketplaceJobPostingsSearch(
           totalHires
           totalPostedJobs
           verificationStatus
+          totalSpent {
+            rawValue
+            currency
+            displayValue
+          }
           location {
             country
             city
@@ -311,12 +328,24 @@ query publicMarketplaceJobPostingsSearch(
       title
       ciphertext
       createdDateTime
+      publishedDateTime
       type
       engagement
+      duration
+      durationLabel
       contractorTier
       jobStatus
       recno
+      totalApplicants
+      hourlyBudgetType
+      hourlyBudgetMin
+      hourlyBudgetMax
       amount {
+        rawValue
+        currency
+        displayValue
+      }
+      weeklyBudget {
         rawValue
         currency
         displayValue
@@ -448,6 +477,20 @@ def fetch_upwork_jobs(
     return client.fetch_jobs(config.search_terms, config.poll_limit)
 
 
+def fetch_marketplace_upwork_jobs_for_term(
+    config: AppConfig,
+    search_term: str,
+    *,
+    transport: HttpJsonTransport | None = None,
+) -> list[dict[str, object]]:
+    client = UpworkGraphQlClient(
+        config.upwork_graphql_url,
+        config.upwork_access_token,
+        transport=transport,
+    )
+    return client.fetch_jobs_for_term(search_term, config.poll_limit)
+
+
 def fetch_public_upwork_jobs_for_term(
     config: AppConfig,
     search_term: str,
@@ -460,6 +503,51 @@ def fetch_public_upwork_jobs_for_term(
         transport=transport,
     )
     return client.fetch_public_jobs_for_term(search_term, config.poll_limit)
+
+
+def fetch_hybrid_upwork_jobs(
+    config: AppConfig,
+    *,
+    transport: HttpJsonTransport | None = None,
+) -> list[dict[str, object]]:
+    merged_jobs: list[dict[str, object]] = []
+    job_indexes_by_identity: dict[str, int] = {}
+
+    for search_term in _normalized_search_terms(config.search_terms):
+        marketplace_jobs = fetch_marketplace_upwork_jobs_for_term(
+            config,
+            search_term,
+            transport=transport,
+        )
+        public_jobs = fetch_public_upwork_jobs_for_term(
+            config,
+            search_term,
+            transport=transport,
+        )
+
+        for job in marketplace_jobs:
+            _merge_hybrid_job_payload(
+                merged_jobs,
+                job_indexes_by_identity,
+                job,
+                surface="marketplace",
+                search_term=search_term,
+            )
+        for job in public_jobs:
+            _merge_hybrid_job_payload(
+                merged_jobs,
+                job_indexes_by_identity,
+                job,
+                surface="public",
+                search_term=search_term,
+            )
+
+    return merged_jobs
+
+
+def build_hybrid_source_query_text(search_terms: tuple[str, ...]) -> str:
+    normalized_terms = _normalized_search_terms(search_terms)
+    return ", ".join(normalized_terms)
 
 
 def probe_upwork_fields(
@@ -619,3 +707,162 @@ def _render_probe_field_lines(
         rendered_fields = list(selected_fields)
 
     return "\n".join(f"        {field_value}" for field_value in rendered_fields)
+
+
+PUBLIC_PREFERRED_FIELDS = frozenset(
+    {
+        "type",
+        "publishedDateTime",
+        "amount",
+        "hourlyBudgetType",
+        "hourlyBudgetMin",
+        "hourlyBudgetMax",
+        "weeklyBudget",
+        "totalApplicants",
+        "contractorTier",
+        "jobStatus",
+        "duration",
+        "durationLabel",
+        "engagement",
+        "recno",
+    }
+)
+
+MARKETPLACE_PREFERRED_FIELDS = frozenset({"title", "description", "skills", "client"})
+
+
+def _normalized_search_terms(search_terms: tuple[str, ...]) -> tuple[str, ...]:
+    normalized_terms: list[str] = []
+    seen_terms: set[str] = set()
+    for search_term in search_terms:
+        trimmed = search_term.strip()
+        if not trimmed or trimmed in seen_terms:
+            continue
+        normalized_terms.append(trimmed)
+        seen_terms.add(trimmed)
+    return tuple(normalized_terms)
+
+
+def _merge_hybrid_job_payload(
+    merged_jobs: list[dict[str, object]],
+    job_indexes_by_identity: dict[str, int],
+    raw_job: Mapping[str, object],
+    *,
+    surface: str,
+    search_term: str,
+) -> None:
+    normalized_job = dict(copy.deepcopy(raw_job))
+    identity_keys = _job_identity_keys(normalized_job)
+    existing_index = next(
+        (job_indexes_by_identity[key] for key in identity_keys if key in job_indexes_by_identity),
+        None,
+    )
+
+    if existing_index is None:
+        merged_job = normalized_job
+        merged_job["_source_terms"] = [search_term]
+        merged_job["_source_surfaces"] = [surface]
+        _store_surface_raw_fragment(merged_job, raw_job, surface=surface)
+        merged_jobs.append(merged_job)
+        existing_index = len(merged_jobs) - 1
+    else:
+        merged_job = merged_jobs[existing_index]
+        _merge_source_metadata(merged_job, search_term=search_term, surface=surface)
+        _store_surface_raw_fragment(merged_job, raw_job, surface=surface)
+        _apply_surface_merge_preferences(merged_job, normalized_job, surface=surface)
+
+    for identity_key in _job_identity_keys(merged_jobs[existing_index]):
+        job_indexes_by_identity[identity_key] = existing_index
+
+
+def _job_identity_keys(job: Mapping[str, object]) -> tuple[str, ...]:
+    keys: list[str] = []
+
+    job_id = _coerce_identity_value(job.get("id"))
+    if job_id:
+        keys.append(f"id:{job_id}")
+
+    ciphertext = _coerce_identity_value(job.get("ciphertext"))
+    if ciphertext:
+        keys.append(f"ciphertext:{ciphertext}")
+
+    if not keys:
+        fallback = json.dumps(job, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        keys.append(f"raw:{fallback}")
+
+    return tuple(keys)
+
+
+def _coerce_identity_value(value: object) -> str | None:
+    if isinstance(value, str):
+        trimmed = value.strip()
+        return trimmed or None
+    if isinstance(value, int):
+        return str(value)
+    return None
+
+
+def _merge_source_metadata(
+    merged_job: dict[str, object],
+    *,
+    search_term: str,
+    surface: str,
+) -> None:
+    source_terms = list(merged_job.get("_source_terms", []))
+    if search_term not in source_terms:
+        source_terms.append(search_term)
+    merged_job["_source_terms"] = source_terms
+
+    source_surfaces = list(merged_job.get("_source_surfaces", []))
+    if surface not in source_surfaces:
+        source_surfaces.append(surface)
+    merged_job["_source_surfaces"] = source_surfaces
+
+
+def _store_surface_raw_fragment(
+    merged_job: dict[str, object],
+    raw_job: Mapping[str, object],
+    *,
+    surface: str,
+) -> None:
+    fragment_key = f"_{surface}_raw"
+    if fragment_key not in merged_job:
+        merged_job[fragment_key] = copy.deepcopy(dict(raw_job))
+
+
+def _apply_surface_merge_preferences(
+    merged_job: dict[str, object],
+    incoming_job: Mapping[str, object],
+    *,
+    surface: str,
+) -> None:
+    for field_name, field_value in incoming_job.items():
+        if field_name in {"_source_terms", "_source_surfaces"}:
+            continue
+        if not _has_meaningful_payload_value(field_value):
+            continue
+
+        existing_value = merged_job.get(field_name)
+        if not _has_meaningful_payload_value(existing_value):
+            merged_job[field_name] = copy.deepcopy(field_value)
+            continue
+
+        if surface == "public" and field_name in PUBLIC_PREFERRED_FIELDS:
+            merged_job[field_name] = copy.deepcopy(field_value)
+            continue
+
+        if surface == "marketplace" and field_name in MARKETPLACE_PREFERRED_FIELDS:
+            merged_job[field_name] = copy.deepcopy(field_value)
+            continue
+
+
+def _has_meaningful_payload_value(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list | tuple | set):
+        return bool(value)
+    if isinstance(value, Mapping):
+        return bool(value)
+    return True

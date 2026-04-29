@@ -1,0 +1,14 @@
+﻿{
+  "query": "query marketplaceJobPostingsSearch($marketPlaceJobFilter: MarketplaceJobPostingsSearchFilter, $searchType: MarketplaceJobPostingSearchType, $sortAttributes: [MarketplaceJobPostingSearchSortAttribute]) { marketplaceJobPostingsSearch(marketPlaceJobFilter: $marketPlaceJobFilter, searchType: $searchType, sortAttributes: $sortAttributes) { edges { node { id title ciphertext client { verificationStatus totalHires totalPostedJobs totalReviews totalFeedback location { country city timezone } totalSpent { rawValue currency displayValue } } } } } }",
+  "variables": {
+    "marketPlaceJobFilter": {
+      "searchExpression_eq": "WooCommerce"
+    },
+    "searchType": "USER_JOBS_SEARCH",
+    "sortAttributes": [
+      {
+        "field": "RECENCY"
+      }
+    ]
+  }
+}

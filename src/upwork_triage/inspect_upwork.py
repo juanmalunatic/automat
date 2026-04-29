@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import AppConfig
-from .upwork_client import HttpJsonTransport, MissingUpworkCredentialsError, fetch_upwork_jobs
+from .upwork_client import (
+    HttpJsonTransport,
+    MissingUpworkCredentialsError,
+    fetch_hybrid_upwork_jobs,
+    fetch_upwork_jobs,
+)
 
 DEFAULT_INSPECTION_ARTIFACT_PATH = Path("data/debug/upwork_raw_latest.json")
 
@@ -41,11 +46,13 @@ def inspect_upwork_raw(
     transport: HttpJsonTransport | None = None,
     artifact_path: str | Path | None = None,
     sample_limit: int = 3,
+    marketplace_only: bool = False,
 ) -> RawInspectionSummary:
     bounded_sample_limit = max(sample_limit, 0)
 
     try:
-        jobs = fetch_upwork_jobs(config, transport=transport)
+        fetch_function = fetch_upwork_jobs if marketplace_only else fetch_hybrid_upwork_jobs
+        jobs = fetch_function(config, transport=transport)
     except MissingUpworkCredentialsError:
         raise
     except Exception as exc:

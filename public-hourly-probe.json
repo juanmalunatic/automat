@@ -1,0 +1,8 @@
+﻿{
+  "query": "query publicMarketplaceJobPostingsSearch($marketPlaceJobFilter: PublicMarketplaceJobPostingsSearchFilter!) { publicMarketplaceJobPostingsSearch(marketPlaceJobFilter: $marketPlaceJobFilter) { jobs { id title ciphertext createdDateTime publishedDateTime type engagement duration durationLabel contractorTier jobStatus recno totalApplicants hourlyBudgetType hourlyBudgetMin hourlyBudgetMax amount { rawValue currency displayValue } weeklyBudget { rawValue currency displayValue } } } }",
+  "variables": {
+    "marketPlaceJobFilter": {
+      "searchExpression_eq": "WooCommerce"
+    }
+  }
+}

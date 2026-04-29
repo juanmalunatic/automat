@@ -572,6 +572,8 @@ def normalize_job_payload(
                 ("activity", "proposals_label"),
                 ("jobActivity", "proposals"),
                 ("jobActivity", "proposalsTier"),
+                "totalApplicants",
+                ("job", "totalApplicants"),
                 "a_proposals",
                 "proposals",
                 "proposalRange",
@@ -705,6 +707,11 @@ def _apply_contract_specific_pay_fields(
             "j_pay_fixed",
             statuses,
         )
+        j_pay_fixed = _coerce_positive_money_field(
+            j_pay_fixed,
+            "j_pay_fixed",
+            statuses,
+        )
         statuses["j_pay_hourly_low"] = "NOT_APPLICABLE"
         statuses["j_pay_hourly_high"] = "NOT_APPLICABLE"
         return _replace_fields(
@@ -715,6 +722,17 @@ def _apply_contract_specific_pay_fields(
         )
 
     if contract_type == "hourly":
+        hourly_budget_type = _normalize_text(
+            raw_payload,
+            (
+                "hourlyBudgetType",
+                "hourly_budget_type",
+                ("job", "hourlyBudgetType"),
+                ("job", "hourly_budget_type"),
+            ),
+            "hourly_budget_type",
+            statuses,
+        )
         j_pay_hourly_low = _normalize_money(
             raw_payload,
             (
@@ -749,6 +767,22 @@ def _apply_contract_specific_pay_fields(
             "j_pay_hourly_high",
             statuses,
         )
+        if _is_hourly_budget_not_provided(hourly_budget_type):
+            j_pay_hourly_low = None
+            j_pay_hourly_high = None
+            statuses["j_pay_hourly_low"] = "NOT_VISIBLE"
+            statuses["j_pay_hourly_high"] = "NOT_VISIBLE"
+        else:
+            j_pay_hourly_low = _coerce_positive_money_field(
+                j_pay_hourly_low,
+                "j_pay_hourly_low",
+                statuses,
+            )
+            j_pay_hourly_high = _coerce_positive_money_field(
+                j_pay_hourly_high,
+                "j_pay_hourly_high",
+                statuses,
+            )
         statuses["j_pay_fixed"] = "NOT_APPLICABLE"
         return _replace_fields(
             normalized,
@@ -758,6 +792,27 @@ def _apply_contract_specific_pay_fields(
         )
 
     return normalized
+
+
+def _coerce_positive_money_field(
+    value: float | None,
+    field_name: str,
+    statuses: dict[str, FieldStatus],
+) -> float | None:
+    if value is None:
+        return None
+    if value <= 0:
+        statuses[field_name] = "NOT_VISIBLE"
+        return None
+    statuses[field_name] = "VISIBLE"
+    return value
+
+
+def _is_hourly_budget_not_provided(hourly_budget_type: str | None) -> bool:
+    if hourly_budget_type is None:
+        return False
+    normalized = hourly_budget_type.strip().upper().replace("-", "_").replace(" ", "_")
+    return normalized == "NOT_PROVIDED"
 
 
 def _replace_field_status_json(
@@ -918,11 +973,13 @@ def _normalize_contract_type(
     extracted = _extract_value(
         raw_payload,
         (
+            "type",
             "contract_type",
             "contractType",
             "job_type",
             "jobType",
             "j_contract_type",
+            ("job", "type"),
             ("job", "contract_type"),
             ("job", "contractType"),
             ("job", "job_type"),
@@ -943,6 +1000,7 @@ def _normalize_posted_fields(
         (
             "posted_at",
             "postedAt",
+            "publishedDateTime",
             "published_on",
             "publishedOn",
             "created_on",
@@ -950,6 +1008,7 @@ def _normalize_posted_fields(
             "createdDateTime",
             ("job", "posted_at"),
             ("job", "postedAt"),
+            ("job", "publishedDateTime"),
             ("job", "published_on"),
             ("job", "publishedOn"),
             ("job", "created_on"),

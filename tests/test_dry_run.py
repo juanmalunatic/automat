@@ -148,9 +148,44 @@ def test_dry_run_raw_jobs_reports_useful_coverage_for_marketplace_live_like_payl
     assert summary.jobs_processed_count == 1
     assert summary.key_field_visible_counts["source_url"] == 1
     assert summary.key_field_visible_counts["c_verified_payment"] == 1
+    assert summary.key_field_visible_counts["c_hist_total_spent"] == 1
     assert summary.key_field_visible_counts["j_skills"] == 1
     assert summary.key_field_visible_counts["j_posted_at"] == 1
     assert summary.key_field_visible_counts["j_mins_since_posted"] == 1
+
+
+def test_dry_run_raw_jobs_reports_useful_coverage_for_hybrid_fixed_payload() -> None:
+    summary = dry_run_raw_jobs([make_hybrid_live_like_payload()], artifact_path="artifact.json")
+
+    assert summary.jobs_processed_count == 1
+    assert summary.key_field_visible_counts["source_url"] == 1
+    assert summary.key_field_visible_counts["c_verified_payment"] == 1
+    assert summary.key_field_visible_counts["c_hist_total_spent"] == 1
+    assert summary.key_field_visible_counts["j_contract_type"] == 1
+    assert summary.key_field_visible_counts["j_pay_fixed"] == 1
+    assert summary.key_field_visible_counts["a_proposals"] == 1
+    assert summary.key_field_visible_counts["j_posted_at"] == 1
+    assert summary.key_field_visible_counts["j_mins_since_posted"] == 1
+
+
+def test_dry_run_raw_jobs_reports_useful_coverage_for_hybrid_hourly_payload() -> None:
+    summary = dry_run_raw_jobs(
+        [
+            make_hybrid_live_like_payload(
+                type="HOURLY",
+                amount=None,
+                hourlyBudgetType="MANUAL",
+                hourlyBudgetMin=20.0,
+                hourlyBudgetMax=28.0,
+            )
+        ],
+        artifact_path="artifact.json",
+    )
+
+    assert summary.jobs_processed_count == 1
+    assert summary.key_field_visible_counts["j_contract_type"] == 1
+    assert summary.key_field_visible_counts["j_pay_hourly_low"] == 1
+    assert summary.key_field_visible_counts["j_pay_hourly_high"] == 1
 
 
 def test_dry_run_raw_jobs_records_parse_failure_counts() -> None:
@@ -320,6 +355,11 @@ def make_marketplace_live_like_payload() -> dict[str, object]:
             "verificationStatus": "VERIFIED",
             "totalHires": 12,
             "totalPostedJobs": 34,
+            "totalSpent": {
+                "rawValue": "25000",
+                "currency": "USD",
+                "displayValue": "$25,000",
+            },
             "totalFeedback": 10,
             "totalReviews": 8,
             "location": {"country": "US"},
@@ -330,6 +370,57 @@ def make_marketplace_live_like_payload() -> dict[str, object]:
             {"bogus": "skip me"},
         ],
     }
+
+
+def make_hybrid_live_like_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "hybrid-0123456789",
+        "ciphertext": "~044049488018911397244",
+        "title": "Sanitized hybrid marketplace job",
+        "description": "Sanitized merged marketplace/public payload for WooCommerce calibration.",
+        "createdDateTime": "2026-04-29T13:00:00+0000",
+        "publishedDateTime": "2026-04-29T13:45:00+0000",
+        "type": "FIXED_PRICE",
+        "engagement": "SINGLE_JOB",
+        "duration": "LESS_THAN_ONE_MONTH",
+        "durationLabel": "Less than 1 month",
+        "contractorTier": "INTERMEDIATE",
+        "jobStatus": "OPEN",
+        "recno": 123456,
+        "totalApplicants": 4,
+        "hourlyBudgetType": "NOT_PROVIDED",
+        "hourlyBudgetMin": 0.0,
+        "hourlyBudgetMax": 0.0,
+        "amount": {
+            "rawValue": "500",
+            "currency": "USD",
+            "displayValue": "$500",
+        },
+        "weeklyBudget": {
+            "rawValue": "0",
+            "currency": "USD",
+            "displayValue": "$0",
+        },
+        "client": {
+            "verificationStatus": "VERIFIED",
+            "totalHires": 12,
+            "totalPostedJobs": 34,
+            "totalSpent": {
+                "rawValue": "25000",
+                "currency": "USD",
+                "displayValue": "$25,000",
+            },
+            "location": {"country": "US"},
+        },
+        "skills": [
+            {"prettyName": "WooCommerce"},
+            {"name": "API"},
+            {"bogus": "skip me"},
+        ],
+        "_source_terms": ["WordPress", "WooCommerce"],
+        "_source_surfaces": ["marketplace", "public"],
+    }
+    return _merge_payload(payload, overrides)
 
 
 def write_raw_artifact(path: Path, *, jobs: list[dict[str, object]]) -> None:

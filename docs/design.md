@@ -88,6 +88,8 @@ The first live-ingestion step may use a best-effort GraphQL query that still nee
 
 Before spending AI cost through `ingest-once`, the app may run a raw-fetch inspection step that fetches Upwork payloads, prints response-shape information, and optionally writes a local debug artifact for schema/normalizer calibration.
 
+When public-marketplace coverage is needed for decision fields such as contract type, budgets, and applicant counts, raw inspection may merge marketplace and public search surfaces into one enriched payload keyed by visible `id` and falling back to `ciphertext`. Marketplace and public search should be fetched per narrow search term rather than through one giant combined public search expression, because the public search surface has proved sensitive to broad joined terms.
+
 The next calibration bridge after raw inspection is a no-AI dry run over a saved raw artifact. That step should reuse the real normalizer and deterministic filters, report field coverage and routing distribution, and avoid staged DB writes by default so query/normalizer adjustments can happen before AI cost is incurred.
 
 Calibration against live Upwork shape should happen through ignored local debug artifacts plus sanitized minimal regression fixtures. The raw artifacts themselves stay local/private and out of source control; committed tests should preserve only the key names, nesting, and representative formats needed to reproduce the mapping behavior safely.
@@ -516,6 +518,8 @@ Calibration/debug command target:
 `py -m upwork_triage inspect-upwork-raw`
 
 This command should fetch raw jobs through the Upwork client boundary, avoid OpenAI entirely, avoid staged DB writes by default, and print just enough shape information to refine the GraphQL query and normalizer safely.
+
+For live calibration, `inspect-upwork-raw` may use a hybrid marketplace+public fetch by default so the saved raw artifact contains both descriptive marketplace fields and public contract/pay/activity fields before AI is turned on. A marketplace-only escape hatch is acceptable for debugging individual surfaces.
 
 If it writes a raw inspection artifact, that artifact should be treated as a local/private debug file rather than a checked-in fixture unless it is manually curated later.
 

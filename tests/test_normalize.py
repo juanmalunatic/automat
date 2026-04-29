@@ -327,6 +327,89 @@ def test_marketplace_live_like_payload_maps_client_hires_and_jobs_posted() -> No
     assert normalized.c_hist_jobs_posted == 34
 
 
+def test_marketplace_live_like_payload_maps_client_total_spent() -> None:
+    result = normalize_job_payload(make_marketplace_live_like_payload())
+
+    assert result.to_job_snapshot_insert_input().c_hist_total_spent == 25000.0
+
+
+def test_public_live_like_fixed_payload_maps_type_and_amount() -> None:
+    result = normalize_job_payload(make_public_live_like_payload())
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.j_contract_type == "fixed"
+    assert normalized.j_pay_fixed == 500.0
+    assert normalized.j_pay_hourly_low is None
+    assert normalized.j_pay_hourly_high is None
+    assert statuses["j_pay_fixed"] == "VISIBLE"
+    assert statuses["j_pay_hourly_low"] == "NOT_APPLICABLE"
+    assert statuses["j_pay_hourly_high"] == "NOT_APPLICABLE"
+
+
+def test_public_live_like_hourly_manual_payload_maps_hourly_budget_range() -> None:
+    result = normalize_job_payload(
+        make_public_live_like_payload(
+            type="HOURLY",
+            amount=None,
+            hourlyBudgetType="MANUAL",
+            hourlyBudgetMin=20.0,
+            hourlyBudgetMax=28.0,
+        )
+    )
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.j_contract_type == "hourly"
+    assert normalized.j_pay_fixed is None
+    assert normalized.j_pay_hourly_low == 20.0
+    assert normalized.j_pay_hourly_high == 28.0
+    assert statuses["j_pay_fixed"] == "NOT_APPLICABLE"
+    assert statuses["j_pay_hourly_low"] == "VISIBLE"
+    assert statuses["j_pay_hourly_high"] == "VISIBLE"
+
+
+def test_public_live_like_hourly_not_provided_does_not_treat_zero_as_real_pay() -> None:
+    result = normalize_job_payload(
+        make_public_live_like_payload(
+            type="HOURLY",
+            amount=None,
+            hourlyBudgetType="NOT_PROVIDED",
+            hourlyBudgetMin=0.0,
+            hourlyBudgetMax=0.0,
+        )
+    )
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.j_pay_fixed is None
+    assert normalized.j_pay_hourly_low is None
+    assert normalized.j_pay_hourly_high is None
+    assert statuses["j_pay_fixed"] == "NOT_APPLICABLE"
+    assert statuses["j_pay_hourly_low"] == "NOT_VISIBLE"
+    assert statuses["j_pay_hourly_high"] == "NOT_VISIBLE"
+
+
+def test_public_live_like_payload_prefers_published_datetime_over_created_datetime() -> None:
+    result = normalize_job_payload(
+        make_public_live_like_payload(
+            createdDateTime="2026-04-29T13:00:00+0000",
+            publishedDateTime="2026-04-29T14:30:00+0000",
+        ),
+        now_utc=datetime(2026, 4, 29, 15, 0, 0, tzinfo=timezone.utc),
+    )
+    normalized = result.to_job_snapshot_insert_input()
+
+    assert normalized.j_posted_at == "2026-04-29T14:30:00+0000"
+    assert normalized.j_mins_since_posted == 30
+
+
+def test_public_live_like_payload_maps_total_applicants_to_a_proposals() -> None:
+    result = normalize_job_payload(make_public_live_like_payload(totalApplicants=4))
+
+    assert result.to_job_snapshot_insert_input().a_proposals == "4"
+
+
 def test_marketplace_live_like_payload_skips_malformed_skill_items_when_valid_skills_exist() -> None:
     result = normalize_job_payload(
         make_marketplace_live_like_payload(
@@ -436,6 +519,11 @@ def make_marketplace_live_like_payload(**overrides: object) -> dict[str, object]
             "verificationStatus": "VERIFIED",
             "totalHires": 12,
             "totalPostedJobs": 34,
+            "totalSpent": {
+                "rawValue": "25000",
+                "currency": "USD",
+                "displayValue": "$25,000",
+            },
             "totalFeedback": 10,
             "totalReviews": 8,
             "location": {"country": "US"},
@@ -454,4 +542,40 @@ def make_marketplace_live_like_payload(**overrides: object) -> dict[str, object]
             nested.update(value)
         else:
             cloned[key] = value
+    return cloned
+
+
+def make_public_live_like_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "public-0123456789",
+        "ciphertext": "~033049488018911397244",
+        "createdDateTime": "2026-04-29T13:00:00+0000",
+        "publishedDateTime": "2026-04-29T13:45:00+0000",
+        "title": "Sanitized public marketplace job",
+        "type": "FIXED_PRICE",
+        "engagement": "SINGLE_JOB",
+        "duration": "ONE_TO_THREE_MONTHS",
+        "durationLabel": "1 to 3 months",
+        "contractorTier": "INTERMEDIATE",
+        "jobStatus": "OPEN",
+        "recno": 123456,
+        "totalApplicants": 0,
+        "hourlyBudgetType": "NOT_PROVIDED",
+        "hourlyBudgetMin": 0.0,
+        "hourlyBudgetMax": 0.0,
+        "amount": {
+            "rawValue": "500",
+            "currency": "USD",
+            "displayValue": "$500",
+        },
+        "weeklyBudget": {
+            "rawValue": "0",
+            "currency": "USD",
+            "displayValue": "$0",
+        },
+    }
+
+    cloned = copy.deepcopy(payload)
+    for key, value in overrides.items():
+        cloned[key] = value
     return cloned

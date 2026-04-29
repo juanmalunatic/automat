@@ -14,6 +14,8 @@ from upwork_triage.upwork_client import (
     MissingUpworkCredentialsError,
     UpworkClientError,
     UpworkGraphQlError,
+    fetch_hybrid_upwork_jobs,
+    fetch_marketplace_upwork_jobs_for_term,
     build_public_job_search_query,
     build_probe_job_search_query,
     build_job_search_query,
@@ -59,9 +61,10 @@ def test_fetch_upwork_jobs_sends_bearer_header_query_and_variables() -> None:
     assert "jobType" not in str(call["payload"]["query"])
     assert "jobUrl" not in str(call["payload"]["query"])
     assert "hourlyBudget" not in str(call["payload"]["query"])
-    assert "rawValue" not in str(call["payload"]["query"])
-    assert "currency" not in str(call["payload"]["query"])
-    assert "displayValue" not in str(call["payload"]["query"])
+    assert "totalSpent {" in str(call["payload"]["query"])
+    assert "rawValue" in str(call["payload"]["query"])
+    assert "currency" in str(call["payload"]["query"])
+    assert "displayValue" in str(call["payload"]["query"])
     assert "pageInfo" not in str(call["payload"]["query"])
     assert "hasNextPage" not in str(call["payload"]["query"])
     assert "endCursor" not in str(call["payload"]["query"])
@@ -91,9 +94,10 @@ def test_build_job_search_query_uses_marketplace_job_postings_search_shape() -> 
     assert "jobType" not in query
     assert "jobUrl" not in query
     assert "hourlyBudget" not in query
-    assert "rawValue" not in query
-    assert "currency" not in query
-    assert "displayValue" not in query
+    assert "totalSpent {" in query
+    assert "rawValue" in query
+    assert "currency" in query
+    assert "displayValue" in query
     assert "pageInfo" not in query
     assert "hasNextPage" not in query
     assert "endCursor" not in query
@@ -153,6 +157,36 @@ def test_fetch_public_upwork_jobs_for_term_sends_public_query_and_variables() ->
     }
 
 
+def test_fetch_marketplace_upwork_jobs_for_term_uses_single_term_query_text() -> None:
+    transport = FakeTransport(response_json=jobs_edges_response())
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+            "UPWORK_POLL_LIMIT": "25",
+        }
+    )
+
+    payloads = fetch_marketplace_upwork_jobs_for_term(
+        config,
+        "WooCommerce",
+        transport=transport,
+    )
+
+    assert payloads == [{"id": "job-1", "title": "First job"}]
+    assert transport.calls[0]["payload"]["variables"] == {
+        "marketPlaceJobFilter": {
+            "searchExpression_eq": "WooCommerce",
+        },
+        "searchType": "USER_JOBS_SEARCH",
+        "sortAttributes": [
+            {
+                "field": "RECENCY",
+            }
+        ],
+    }
+
+
 def test_build_public_job_search_query_uses_public_marketplace_shape() -> None:
     query, variables = build_public_job_search_query("WooCommerce", 10)
 
@@ -167,12 +201,20 @@ def test_build_public_job_search_query_uses_public_marketplace_shape() -> None:
     assert "      title\n" in query
     assert "      ciphertext\n" in query
     assert "      createdDateTime\n" in query
+    assert "      publishedDateTime\n" in query
     assert "      type\n" in query
     assert "      engagement\n" in query
+    assert "      duration\n" in query
+    assert "      durationLabel\n" in query
     assert "      contractorTier\n" in query
     assert "      jobStatus\n" in query
     assert "      recno\n" in query
+    assert "      totalApplicants\n" in query
+    assert "      hourlyBudgetType\n" in query
+    assert "      hourlyBudgetMin\n" in query
+    assert "      hourlyBudgetMax\n" in query
     assert "      amount {\n" in query
+    assert "      weeklyBudget {\n" in query
     assert "        rawValue\n" in query
     assert "        currency\n" in query
     assert "        displayValue\n" in query
@@ -180,6 +222,171 @@ def test_build_public_job_search_query_uses_public_marketplace_shape() -> None:
         "marketPlaceJobFilter": {
             "searchExpression_eq": "WooCommerce",
         },
+    }
+
+
+def test_fetch_hybrid_upwork_jobs_merges_results_by_id_and_tracks_terms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_SEARCH_TERMS": "WordPress, WooCommerce, WordPress",
+            "UPWORK_POLL_LIMIT": "25",
+        }
+    )
+    calls: list[tuple[str, str]] = []
+
+    def fake_fetch_marketplace(
+        config_arg: object,
+        search_term: str,
+        *,
+        transport: object | None = None,
+    ) -> list[dict[str, object]]:
+        calls.append(("marketplace", search_term))
+        assert config_arg is config
+        if search_term == "WordPress":
+            return [
+                {
+                    "id": "job-1",
+                    "title": "Marketplace title",
+                    "description": "Marketplace description",
+                    "ciphertext": "~job-one",
+                    "client": {"verificationStatus": "VERIFIED"},
+                    "skills": [{"prettyName": "WooCommerce"}],
+                }
+            ]
+        return [
+            {
+                "id": "job-1",
+                "title": "Marketplace title updated",
+                "description": "Marketplace description updated",
+                "ciphertext": "~job-one",
+                "client": {"verificationStatus": "VERIFIED"},
+                "skills": [{"prettyName": "WooCommerce"}, {"name": "API"}],
+            }
+        ]
+
+    def fake_fetch_public(
+        config_arg: object,
+        search_term: str,
+        *,
+        transport: object | None = None,
+    ) -> list[dict[str, object]]:
+        calls.append(("public", search_term))
+        assert config_arg is config
+        return [
+            {
+                "id": "job-1",
+                "title": "Public title",
+                "ciphertext": "~job-one",
+                "type": "HOURLY",
+                "publishedDateTime": "2026-04-29T13:56:36+0000",
+                "hourlyBudgetType": "MANUAL",
+                "hourlyBudgetMin": 20.0,
+                "hourlyBudgetMax": 28.0,
+                "totalApplicants": 4,
+            }
+        ]
+
+    monkeypatch.setattr(
+        "upwork_triage.upwork_client.fetch_marketplace_upwork_jobs_for_term",
+        fake_fetch_marketplace,
+    )
+    monkeypatch.setattr(
+        "upwork_triage.upwork_client.fetch_public_upwork_jobs_for_term",
+        fake_fetch_public,
+    )
+
+    payloads = fetch_hybrid_upwork_jobs(config)
+
+    assert calls == [
+        ("marketplace", "WordPress"),
+        ("public", "WordPress"),
+        ("marketplace", "WooCommerce"),
+        ("public", "WooCommerce"),
+    ]
+    assert len(payloads) == 1
+    assert payloads[0]["id"] == "job-1"
+    assert payloads[0]["title"] == "Marketplace title updated"
+    assert payloads[0]["description"] == "Marketplace description updated"
+    assert payloads[0]["type"] == "HOURLY"
+    assert payloads[0]["hourlyBudgetType"] == "MANUAL"
+    assert payloads[0]["hourlyBudgetMin"] == 20.0
+    assert payloads[0]["hourlyBudgetMax"] == 28.0
+    assert payloads[0]["totalApplicants"] == 4
+    assert payloads[0]["client"] == {"verificationStatus": "VERIFIED"}
+    assert payloads[0]["skills"] == [{"prettyName": "WooCommerce"}, {"name": "API"}]
+    assert payloads[0]["_source_terms"] == ["WordPress", "WooCommerce"]
+    assert payloads[0]["_source_surfaces"] == ["marketplace", "public"]
+    assert payloads[0]["_marketplace_raw"] == {
+        "id": "job-1",
+        "title": "Marketplace title",
+        "description": "Marketplace description",
+        "ciphertext": "~job-one",
+        "client": {"verificationStatus": "VERIFIED"},
+        "skills": [{"prettyName": "WooCommerce"}],
+    }
+    assert payloads[0]["_public_raw"] == {
+        "id": "job-1",
+        "title": "Public title",
+        "ciphertext": "~job-one",
+        "type": "HOURLY",
+        "publishedDateTime": "2026-04-29T13:56:36+0000",
+        "hourlyBudgetType": "MANUAL",
+        "hourlyBudgetMin": 20.0,
+        "hourlyBudgetMax": 28.0,
+        "totalApplicants": 4,
+    }
+
+
+def test_fetch_hybrid_upwork_jobs_falls_back_to_ciphertext_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_SEARCH_TERMS": "WordPress",
+            "UPWORK_POLL_LIMIT": "25",
+        }
+    )
+
+    monkeypatch.setattr(
+        "upwork_triage.upwork_client.fetch_marketplace_upwork_jobs_for_term",
+        lambda config, search_term, *, transport=None: [
+            {
+                "ciphertext": "~job-one",
+                "title": "Marketplace-only title",
+                "description": "Marketplace description",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "upwork_triage.upwork_client.fetch_public_upwork_jobs_for_term",
+        lambda config, search_term, *, transport=None: [
+            {
+                "ciphertext": "~job-one",
+                "type": "FIXED_PRICE",
+                "amount": {
+                    "rawValue": "500",
+                    "currency": "USD",
+                    "displayValue": "$500",
+                },
+            }
+        ],
+    )
+
+    payloads = fetch_hybrid_upwork_jobs(config)
+
+    assert len(payloads) == 1
+    assert payloads[0]["ciphertext"] == "~job-one"
+    assert payloads[0]["title"] == "Marketplace-only title"
+    assert payloads[0]["description"] == "Marketplace description"
+    assert payloads[0]["type"] == "FIXED_PRICE"
+    assert payloads[0]["amount"] == {
+        "rawValue": "500",
+        "currency": "USD",
+        "displayValue": "$500",
     }
 
 
