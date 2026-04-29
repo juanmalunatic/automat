@@ -14,7 +14,9 @@ from upwork_triage.upwork_client import (
     MissingUpworkCredentialsError,
     UpworkClientError,
     UpworkGraphQlError,
+    build_exact_marketplace_job_query,
     fetch_hybrid_upwork_jobs,
+    fetch_exact_marketplace_job,
     fetch_marketplace_upwork_jobs_for_term,
     build_public_job_search_query,
     build_probe_job_search_query,
@@ -223,6 +225,68 @@ def test_build_public_job_search_query_uses_public_marketplace_shape() -> None:
             "searchExpression_eq": "WooCommerce",
         },
     }
+
+
+def test_build_exact_marketplace_job_query_uses_marketplace_job_posting_id_shape() -> None:
+    query, variables = build_exact_marketplace_job_query("2049488018911397244")
+
+    assert "query marketplaceJobPosting($id: ID!)" in query
+    assert "marketplaceJobPosting(id: $id)" in query
+    assert "content {\n      title\n      description\n    }" in query
+    assert "activityStat {\n      jobActivity {" in query
+    assert "invitesSent" in query
+    assert "totalInvitedToInterview" in query
+    assert "totalHired" in query
+    assert "totalUnansweredInvites" in query
+    assert "totalOffered" in query
+    assert "totalRecommended" in query
+    assert "fixedPriceContractTerms {\n        amount {" in query
+    assert "hourlyBudgetMin" in query
+    assert "hourlyBudgetMax" in query
+    assert "contractorSelection {" in query
+    assert "qualification {" in query
+    assert "location {" in query
+    assert "clientCompanyPublic {" in query
+    assert "paymentVerification {" in query
+    assert variables == {"id": "2049488018911397244"}
+
+
+def test_fetch_exact_marketplace_job_returns_single_marketplace_job_object() -> None:
+    transport = FakeTransport(response_json=exact_marketplace_job_response())
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+        }
+    )
+
+    payload = fetch_exact_marketplace_job(
+        config,
+        "2049488018911397244",
+        transport=transport,
+    )
+
+    assert payload == exact_marketplace_job_response()["data"]["marketplaceJobPosting"]
+    assert len(transport.calls) == 1
+    call = transport.calls[0]
+    assert call["headers"]["Authorization"] == "bearer token-123"
+    assert call["headers"]["User-Agent"] == "Automat/0.1 personal-internal-upwork-api-client"
+    assert "marketplaceJobPosting(id: $id)" in str(call["payload"]["query"])
+    assert call["payload"]["variables"] == {"id": "2049488018911397244"}
+
+
+def test_fetch_exact_marketplace_job_raises_graphql_error_for_exact_query() -> None:
+    transport = FakeTransport(
+        response_json={"errors": [{"message": "permission denied"}]}
+    )
+    config = load_config({"UPWORK_ACCESS_TOKEN": "token-123"})
+
+    with pytest.raises(UpworkGraphQlError, match="permission denied"):
+        fetch_exact_marketplace_job(
+            config,
+            "2049488018911397244",
+            transport=transport,
+        )
 
 
 def test_fetch_hybrid_upwork_jobs_merges_results_by_id_and_tracks_terms(
@@ -774,6 +838,90 @@ def public_jobs_with_amount_response() -> dict[str, object]:
                         },
                     }
                 ]
+            }
+        }
+    }
+
+
+def exact_marketplace_job_response() -> dict[str, object]:
+    return {
+        "data": {
+            "marketplaceJobPosting": {
+                "id": "2049488018911397244",
+                "content": {
+                    "title": "Sanitized exact marketplace job",
+                    "description": "Sanitized description for exact-job hydration coverage.",
+                },
+                "activityStat": {
+                    "jobActivity": {
+                        "lastClientActivity": "2026-04-29T13:56:36+0000",
+                        "invitesSent": 2,
+                        "totalInvitedToInterview": 1,
+                        "totalHired": 0,
+                        "totalUnansweredInvites": 0,
+                        "totalOffered": 0,
+                        "totalRecommended": 3,
+                    }
+                },
+                "contractTerms": {
+                    "contractType": "HOURLY",
+                    "personsToHire": 1,
+                    "experienceLevel": "INTERMEDIATE",
+                    "fixedPriceContractTerms": {
+                        "amount": {
+                            "rawValue": "500",
+                            "currency": "USD",
+                            "displayValue": "$500",
+                        },
+                        "maxAmount": {
+                            "rawValue": "750",
+                            "currency": "USD",
+                            "displayValue": "$750",
+                        },
+                    },
+                    "hourlyContractTerms": {
+                        "engagementType": "ONGOING",
+                        "hourlyBudgetType": "MANUAL",
+                        "hourlyBudgetMin": 20.0,
+                        "hourlyBudgetMax": 28.0,
+                        "notSureProjectDuration": False,
+                    },
+                },
+                "contractorSelection": {
+                    "proposalRequirement": {
+                        "coverLetterRequired": True,
+                        "freelancerMilestonesAllowed": False,
+                    },
+                    "qualification": {
+                        "contractorType": "INDIVIDUAL",
+                        "englishProficiency": "CONVERSATIONAL",
+                        "hasPortfolio": True,
+                        "hoursWorked": 100,
+                        "risingTalent": False,
+                        "jobSuccessScore": 90,
+                        "minEarning": 1000,
+                    },
+                    "location": {
+                        "localCheckRequired": False,
+                        "localMarket": None,
+                        "notSureLocationPreference": True,
+                        "localDescription": None,
+                        "localFlexibilityDescription": "Open to remote contractors.",
+                    },
+                },
+                "clientCompanyPublic": {
+                    "country": {
+                        "name": "United States",
+                        "twoLetterAbbreviation": "US",
+                        "threeLetterAbbreviation": "USA",
+                    },
+                    "city": "Austin",
+                    "timezone": "America/Chicago",
+                    "paymentVerification": {
+                        "status": "VERIFIED",
+                        "paymentVerified": True,
+                    },
+                },
             }
         }
     }

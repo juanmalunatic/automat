@@ -289,6 +289,10 @@ Should verify:
 - `fetch_upwork_jobs()` sends a GraphQL query string plus variables payload
 - query construction uses `marketplaceJobPostingsSearch` with compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables derived from `search_terms`
 - the marketplace query includes `client.totalSpent { rawValue currency displayValue }`
+- `build_exact_marketplace_job_query()` uses `marketplaceJobPosting(id: $id)` and preserves the provided numeric id string in variables
+- the exact-job hydration query includes the confirmed `content`, `activityStat.jobActivity`, `contractTerms`, `contractorSelection`, and `clientCompanyPublic.paymentVerification` fields
+- the exact-job fetch helper returns a single `data.marketplaceJobPosting` object through fake transport
+- GraphQL errors on the exact-job path still raise `UpworkGraphQlError`
 - public-job helper query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter!`, one narrow `searchExpression_eq` term, and no `searchType`, `sortAttributes`, or `totalCount`
 - the public-job helper query includes the confirmed live public fields including `publishedDateTime`, `duration`, `durationLabel`, `totalApplicants`, `hourlyBudgetType`, `hourlyBudgetMin`, `hourlyBudgetMax`, `amount { rawValue currency displayValue }`, and `weeklyBudget { rawValue currency displayValue }`
 - marketplace-per-term and public-per-term helpers each use one narrow search term at a time

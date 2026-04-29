@@ -111,6 +111,14 @@ class UpworkGraphQlClient:
         query, variables = build_public_job_search_query(search_term, limit)
         return self._execute_and_extract(query, variables)
 
+    def fetch_exact_marketplace_job(
+        self,
+        job_id: str,
+    ) -> dict[str, object]:
+        query, variables = build_exact_marketplace_job_query(job_id)
+        response_json = self._execute(query, variables)
+        return _extract_exact_marketplace_job_payload(response_json)
+
     def probe_fields(
         self,
         search_terms: tuple[str, ...],
@@ -132,6 +140,14 @@ class UpworkGraphQlClient:
         query: str,
         variables: Mapping[str, object],
     ) -> list[dict[str, object]]:
+        response_json = self._execute(query, variables)
+        return extract_job_payloads(response_json)
+
+    def _execute(
+        self,
+        query: str,
+        variables: Mapping[str, object],
+    ) -> Mapping[str, object]:
         headers = {
             "Authorization": f"bearer {self._access_token}",
             "User-Agent": UPWORK_GRAPHQL_USER_AGENT,
@@ -152,7 +168,7 @@ class UpworkGraphQlClient:
         except Exception as exc:
             raise UpworkClientError(f"Upwork transport failed: {exc}") from exc
 
-        return extract_job_payloads(response_json)
+        return response_json
 
 
 __all__ = [
@@ -162,11 +178,13 @@ __all__ = [
     "UpworkGraphQlClient",
     "UpworkGraphQlError",
     "UrllibHttpJsonTransport",
+    "build_exact_marketplace_job_query",
     "build_hybrid_source_query_text",
     "build_public_job_search_query",
     "build_probe_job_search_query",
     "build_job_search_query",
     "extract_job_payloads",
+    "fetch_exact_marketplace_job",
     "fetch_hybrid_upwork_jobs",
     "fetch_marketplace_upwork_jobs_for_term",
     "fetch_public_upwork_jobs_for_term",
@@ -362,6 +380,94 @@ query publicMarketplaceJobPostingsSearch(
     return query, variables
 
 
+def build_exact_marketplace_job_query(
+    job_id: str,
+) -> tuple[str, dict[str, object]]:
+    query = """
+query marketplaceJobPosting($id: ID!) {
+  marketplaceJobPosting(id: $id) {
+    id
+    content {
+      title
+      description
+    }
+    activityStat {
+      jobActivity {
+        lastClientActivity
+        invitesSent
+        totalInvitedToInterview
+        totalHired
+        totalUnansweredInvites
+        totalOffered
+        totalRecommended
+      }
+    }
+    contractTerms {
+      contractType
+      personsToHire
+      experienceLevel
+      fixedPriceContractTerms {
+        amount {
+          rawValue
+          currency
+          displayValue
+        }
+        maxAmount {
+          rawValue
+          currency
+          displayValue
+        }
+      }
+      hourlyContractTerms {
+        engagementType
+        hourlyBudgetType
+        hourlyBudgetMin
+        hourlyBudgetMax
+        notSureProjectDuration
+      }
+    }
+    contractorSelection {
+      proposalRequirement {
+        coverLetterRequired
+        freelancerMilestonesAllowed
+      }
+      qualification {
+        contractorType
+        englishProficiency
+        hasPortfolio
+        hoursWorked
+        risingTalent
+        jobSuccessScore
+        minEarning
+      }
+      location {
+        localCheckRequired
+        localMarket
+        notSureLocationPreference
+        localDescription
+        localFlexibilityDescription
+      }
+    }
+    clientCompanyPublic {
+      country {
+        name
+        twoLetterAbbreviation
+        threeLetterAbbreviation
+      }
+      city
+      timezone
+      paymentVerification {
+        status
+        paymentVerified
+      }
+    }
+  }
+}
+""".strip()
+    variables: dict[str, object] = {"id": job_id}
+    return query, variables
+
+
 def build_probe_job_search_query(
     search_terms: tuple[str, ...],
     limit: int,
@@ -434,13 +540,7 @@ query publicMarketplaceJobPostingsSearch(
 
 
 def extract_job_payloads(response_json: Mapping[str, object]) -> list[dict[str, object]]:
-    errors_value = response_json.get("errors")
-    if errors_value:
-        raise UpworkGraphQlError(_format_graphql_errors(errors_value))
-
-    data = response_json.get("data")
-    if not isinstance(data, Mapping):
-        raise UpworkGraphQlError("Upwork GraphQL response is missing a data object")
+    data = _extract_graphql_data(response_json)
 
     for container_name in (
         "jobs",
@@ -462,6 +562,20 @@ def extract_job_payloads(response_json: Mapping[str, object]) -> list[dict[str, 
     raise UpworkGraphQlError(
         "Upwork GraphQL response did not contain a recognized jobs/search payload"
     )
+
+
+def fetch_exact_marketplace_job(
+    config: AppConfig,
+    job_id: str,
+    *,
+    transport: HttpJsonTransport | None = None,
+) -> dict[str, object]:
+    client = UpworkGraphQlClient(
+        config.upwork_graphql_url,
+        config.upwork_access_token,
+        transport=transport,
+    )
+    return client.fetch_exact_marketplace_job(job_id)
 
 
 def fetch_upwork_jobs(
@@ -568,6 +682,29 @@ def probe_upwork_fields(
         fields,
         source=source,
     )
+
+
+def _extract_exact_marketplace_job_payload(
+    response_json: Mapping[str, object],
+) -> dict[str, object]:
+    data = _extract_graphql_data(response_json)
+    payload = data.get("marketplaceJobPosting")
+    if not isinstance(payload, Mapping):
+        raise UpworkGraphQlError(
+            "Upwork GraphQL response is missing a marketplaceJobPosting object"
+        )
+    return dict(payload)
+
+
+def _extract_graphql_data(response_json: Mapping[str, object]) -> Mapping[str, object]:
+    errors_value = response_json.get("errors")
+    if errors_value:
+        raise UpworkGraphQlError(_format_graphql_errors(errors_value))
+
+    data = response_json.get("data")
+    if not isinstance(data, Mapping):
+        raise UpworkGraphQlError("Upwork GraphQL response is missing a data object")
+    return data
 
 
 def _extract_from_edge_list(
