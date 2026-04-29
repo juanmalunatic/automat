@@ -190,6 +190,28 @@ def test_fetch_marketplace_upwork_jobs_for_term_uses_single_term_query_text() ->
     }
 
 
+def test_fetch_marketplace_upwork_jobs_for_term_caps_results_to_requested_limit() -> None:
+    transport = FakeTransport(response_json=jobs_list_response(["job-1", "job-2", "job-3"]))
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+            "UPWORK_POLL_LIMIT": "2",
+        }
+    )
+
+    payloads = fetch_marketplace_upwork_jobs_for_term(
+        config,
+        "WooCommerce",
+        transport=transport,
+    )
+
+    assert payloads == [
+        {"id": "job-1", "title": "job-1 title"},
+        {"id": "job-2", "title": "job-2 title"},
+    ]
+
+
 def test_build_public_job_search_query_uses_public_marketplace_shape() -> None:
     query, variables = build_public_job_search_query("WooCommerce", 10)
 
@@ -226,6 +248,30 @@ def test_build_public_job_search_query_uses_public_marketplace_shape() -> None:
             "searchExpression_eq": "WooCommerce",
         },
     }
+
+
+def test_fetch_public_upwork_jobs_for_term_caps_results_to_requested_limit() -> None:
+    transport = FakeTransport(
+        response_json=public_jobs_list_response(["job-public-1", "job-public-2", "job-public-3"])
+    )
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+            "UPWORK_POLL_LIMIT": "2",
+        }
+    )
+
+    payloads = fetch_public_upwork_jobs_for_term(
+        config,
+        "WordPress",
+        transport=transport,
+    )
+
+    assert payloads == [
+        {"id": "job-public-1", "title": "job-public-1 title"},
+        {"id": "job-public-2", "title": "job-public-2 title"},
+    ]
 
 
 def test_build_exact_marketplace_job_query_uses_marketplace_job_posting_id_shape() -> None:
@@ -536,6 +582,141 @@ def test_fetch_hybrid_upwork_jobs_falls_back_to_ciphertext_identity(
         "currency": "USD",
         "displayValue": "$500",
     }
+
+
+def test_fetch_hybrid_upwork_jobs_caps_final_results_to_config_poll_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_SEARCH_TERMS": "WordPress, WooCommerce",
+            "UPWORK_POLL_LIMIT": "2",
+        }
+    )
+
+    monkeypatch.setattr(
+        "upwork_triage.upwork_client.fetch_marketplace_upwork_jobs_for_term",
+        lambda config, search_term, *, transport=None: (
+            [
+                {
+                    "id": "job-1",
+                    "title": "Marketplace title 1",
+                    "description": "Marketplace description 1",
+                },
+                {
+                    "id": "job-2",
+                    "title": "Marketplace title 2",
+                    "description": "Marketplace description 2",
+                },
+            ]
+            if search_term == "WordPress"
+            else [
+                {
+                    "id": "job-3",
+                    "title": "Marketplace title 3",
+                    "description": "Marketplace description 3",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.upwork_client.fetch_public_upwork_jobs_for_term",
+        lambda config, search_term, *, transport=None: (
+            [
+                {
+                    "id": "job-1",
+                    "type": "HOURLY",
+                    "hourlyBudgetMin": 20.0,
+                },
+                {
+                    "id": "job-2",
+                    "type": "FIXED_PRICE",
+                    "amount": {
+                        "rawValue": "500",
+                        "currency": "USD",
+                        "displayValue": "$500",
+                    },
+                },
+            ]
+            if search_term == "WordPress"
+            else [
+                {
+                    "id": "job-3",
+                    "type": "HOURLY",
+                    "hourlyBudgetMin": 30.0,
+                }
+            ]
+        ),
+    )
+
+    payloads = fetch_hybrid_upwork_jobs(config)
+
+    assert len(payloads) == 2
+    assert [payload["id"] for payload in payloads] == ["job-1", "job-2"]
+    assert payloads[0]["type"] == "HOURLY"
+    assert payloads[1]["type"] == "FIXED_PRICE"
+
+
+def test_fetch_hybrid_upwork_jobs_dedupes_before_final_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_SEARCH_TERMS": "WordPress, WooCommerce",
+            "UPWORK_POLL_LIMIT": "2",
+        }
+    )
+
+    monkeypatch.setattr(
+        "upwork_triage.upwork_client.fetch_marketplace_upwork_jobs_for_term",
+        lambda config, search_term, *, transport=None: (
+            [
+                {
+                    "id": "job-1",
+                    "title": "Marketplace title 1",
+                    "description": "Marketplace description 1",
+                }
+            ]
+            if search_term == "WordPress"
+            else [
+                {
+                    "id": "job-2",
+                    "title": "Marketplace title 2",
+                    "description": "Marketplace description 2",
+                },
+                {
+                    "id": "job-3",
+                    "title": "Marketplace title 3",
+                    "description": "Marketplace description 3",
+                },
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.upwork_client.fetch_public_upwork_jobs_for_term",
+        lambda config, search_term, *, transport=None: (
+            [
+                {
+                    "id": "job-1",
+                    "type": "HOURLY",
+                }
+            ]
+            if search_term == "WordPress"
+            else [
+                {
+                    "id": "job-1",
+                    "type": "HOURLY",
+                }
+            ]
+        ),
+    )
+
+    payloads = fetch_hybrid_upwork_jobs(config)
+
+    assert len(payloads) == 2
+    assert [payload["id"] for payload in payloads] == ["job-1", "job-2"]
 
 
 def test_probe_upwork_fields_sends_bearer_header_user_agent_and_probe_query() -> None:
@@ -895,6 +1076,17 @@ def jobs_edges_response() -> dict[str, object]:
     }
 
 
+def jobs_list_response(job_ids: list[str]) -> dict[str, object]:
+    return {
+        "data": {
+            "jobs": [
+                {"id": job_id, "title": f"{job_id} title"}
+                for job_id in job_ids
+            ]
+        }
+    }
+
+
 def real_like_search_results_response() -> dict[str, object]:
     return {
         "data": {
@@ -924,6 +1116,19 @@ def public_jobs_response() -> dict[str, object]:
             "publicMarketplaceJobPostingsSearch": {
                 "jobs": [
                     {"id": "job-public-1", "title": "Public job"},
+                ]
+            }
+        }
+    }
+
+
+def public_jobs_list_response(job_ids: list[str]) -> dict[str, object]:
+    return {
+        "data": {
+            "publicMarketplaceJobPostingsSearch": {
+                "jobs": [
+                    {"id": job_id, "title": f"{job_id} title"}
+                    for job_id in job_ids
                 ]
             }
         }

@@ -2,77 +2,78 @@
 
 ## Task name
 
-Wire safe exact marketplace hydration into raw inspection artifacts only.
+Enforce local Upwork poll-limit bounds for search and inspection before exact hydration.
 
 ## Goal
 
-Allow `inspect-upwork-raw` to optionally enrich already-fetched raw jobs with best-effort exact `marketplaceJobPosting(id)` payloads, using numeric marketplace ids only, while keeping inspection the only affected surface.
+Make `config.poll_limit` act as a real local maximum on live search/inspection payload counts without inventing unverified GraphQL pagination arguments.
 
-This task is additive only. It must not change ingest, normalization, dry run, DB schema, AI, economics, queue, action tracking, or scoring behavior.
+This task is additive only. It must not change normalization, dry run, ingest, DB schema, AI, economics, queue, action tracking, or scoring behavior.
 
 ## Files to modify
 
 Expected files:
 
+- `src/upwork_triage/upwork_client.py`
 - `src/upwork_triage/inspect_upwork.py`
-- `src/upwork_triage/cli.py`
+- `tests/test_upwork_client.py`
 - `tests/test_inspect_upwork.py`
-- `tests/test_cli.py`
 - `docs/current_task.md`
 - `docs/testing.md`
 
 ## Required behavior
 
-1. Reuse the existing safe batch helper:
+1. Do not add speculative live GraphQL pagination or limit arguments. The live schema support is not yet confirmed for this repo.
 
-   - `fetch_exact_marketplace_jobs(config, job_ids, *, transport=None)`
+2. Cap per-term search helpers locally after extraction:
 
-2. Add a small inspection-only helper that:
+   - `fetch_marketplace_upwork_jobs_for_term(...)`
+   - `fetch_public_upwork_jobs_for_term(...)`
 
-   - takes already-fetched raw job dicts
-   - looks for numeric `id` values only
-   - attempts exact marketplace hydration for those numeric ids
-   - preserves input order
-   - never uses `ciphertext` as the exact hydration id
+   Each helper should return no more than the requested limit even if the fake transport or live response contains more items.
 
-3. Attach additive metadata to inspected jobs when exact hydration is enabled:
+3. Cap hybrid fetch results after the existing merge/dedupe step:
 
-   - `_exact_hydration_status`: `success`, `failed`, or `skipped`
-   - `_exact_marketplace_raw` only on success
-   - `_exact_hydration_error` only on failure
+   - `fetch_hybrid_upwork_jobs(config, ...)`
 
-4. Jobs without a usable numeric id must be marked `_exact_hydration_status = "skipped"` and must not be sent to the exact hydration helper.
+   The final returned list should contain no more than `config.poll_limit` merged jobs overall.
 
-5. `inspect_upwork_raw(...)` should gain an explicit option such as `hydrate_exact: bool = False`.
+4. Preserve the current merge behavior for retained jobs:
 
-6. `py -m upwork_triage inspect-upwork-raw` should remain backward-compatible by default.
+   - dedupe by visible `id`, falling back to `ciphertext`
+   - preserve current order for retained jobs
+   - do not let duplicate public/marketplace rows waste final capped slots
 
-7. The CLI should add an explicit flag such as:
+5. Cap raw inspection results before exact hydration:
 
-   - `--hydrate-exact`
+   - `inspect_upwork_raw(..., hydrate_exact=True)`
 
-8. If exact hydration is enabled, the rendered inspection summary may include a compact count line:
+   Exact hydration should only run for the bounded retained job list.
 
-   - `exact hydration: success=N failed=N skipped=N`
+6. The inspection summary and any written raw artifact should reflect the bounded retained job count.
 
-9. The inspection artifact should include the enriched jobs only when exact hydration is enabled.
+7. Preserve current missing-credential and GraphQL error behavior.
+
+8. Do not change exact hydration payload shape, normalization, dry run, or ingest wiring in this task.
 
 ## Test requirements
 
 Update tests so they verify:
 
-- `inspect_upwork_raw()` without exact hydration keeps the current behavior and does not call exact hydration
-- `inspect_upwork_raw()` with exact hydration enabled can attach `_exact_hydration_status = "success"` plus `_exact_marketplace_raw`
-- `inspect_upwork_raw()` with exact hydration enabled can attach `_exact_hydration_status = "failed"` plus `_exact_hydration_error` without failing the whole inspection
-- jobs without numeric ids are marked `skipped` and are not passed to exact hydration
-- CLI `inspect-upwork-raw --hydrate-exact` forwards the flag into `inspect_upwork_raw()`
+- marketplace per-term fetch helpers cap returned jobs to the requested limit
+- public per-term fetch helpers cap returned jobs to the requested limit
+- hybrid fetch caps the final merged result to `config.poll_limit`
+- hybrid fetch still dedupes before the final cap so duplicate rows do not waste retained slots
+- `inspect_upwork_raw(..., hydrate_exact=True)` exact-hydrates only the bounded retained jobs
+- inspection summary and artifact `fetched_count` reflect the bounded retained jobs
+- existing exact hydration success / failure / skipped inspection tests still pass
 - tests stay fake-transport-only and require no real credentials or network calls
 
 ## Out of scope
 
 Do not implement:
 
-- ingest-once wiring
+- speculative GraphQL pagination arguments
 - normalization changes
 - dry-run readiness changes
 - DB schema changes
@@ -90,8 +91,8 @@ Do not implement:
 
 The task is complete when:
 
-- `inspect-upwork-raw` can optionally enrich raw jobs with best-effort exact marketplace payloads
-- skipped and failed exact hydrations stay per-job and do not crash the whole inspection
-- the default inspection behavior remains unchanged unless the explicit flag is used
+- per-term search helpers and hybrid inspection results are locally bounded by `poll_limit`
+- exact hydration only runs for the bounded retained inspection jobs
+- no speculative live pagination arguments are introduced
 - committed tests remain network-free
 - the full test suite still passes

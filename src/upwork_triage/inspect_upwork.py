@@ -57,7 +57,10 @@ def inspect_upwork_raw(
 
     try:
         fetch_function = fetch_upwork_jobs if marketplace_only else fetch_hybrid_upwork_jobs
-        jobs = fetch_function(config, transport=transport)
+        jobs = _cap_inspection_jobs(
+            fetch_function(config, transport=transport),
+            config.poll_limit,
+        )
         if hydrate_exact:
             job_dicts, exact_counts = _attach_exact_hydration_metadata(
                 config,
@@ -251,6 +254,16 @@ def _attach_exact_hydration_metadata(
 
 def _collect_observed_keys(jobs: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
     return tuple(sorted({key for job in jobs for key in job.keys()}))
+
+
+def _cap_inspection_jobs(
+    jobs: Sequence[Mapping[str, object]],
+    limit: int,
+) -> list[Mapping[str, object]]:
+    bounded_limit = max(limit, 0)
+    if bounded_limit == 0:
+        return []
+    return list(jobs[:bounded_limit])
 
 
 def _join_or_none(values: Sequence[str]) -> str:

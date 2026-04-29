@@ -302,7 +302,9 @@ Should verify:
 - public-job helper query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter!`, one narrow `searchExpression_eq` term, and no `searchType`, `sortAttributes`, or `totalCount`
 - the public-job helper query includes the confirmed live public fields including `publishedDateTime`, `duration`, `durationLabel`, `totalApplicants`, `hourlyBudgetType`, `hourlyBudgetMin`, `hourlyBudgetMax`, `amount { rawValue currency displayValue }`, and `weeklyBudget { rawValue currency displayValue }`
 - marketplace-per-term and public-per-term helpers each use one narrow search term at a time
+- marketplace-per-term and public-per-term helpers cap returned items locally to the requested limit even when fake transports return more rows
 - `fetch_hybrid_upwork_jobs()` fetches marketplace and public jobs per normalized term, dedupes by `id` with `ciphertext` fallback, preserves marketplace descriptive/client fields, prefers public pay/activity fields, and keeps simple source metadata for debugging
+- `fetch_hybrid_upwork_jobs()` caps the final merged job list to `config.poll_limit` after dedupe so duplicate rows do not waste retained slots
 - probe query construction uses `marketplaceJobPostingsSearch` with the same compact `marketPlaceJobFilter`, `USER_JOBS_SEARCH`, and `RECENCY` variables
 - public probe query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter!`, `jobs { ... }`, and only `marketPlaceJobFilter.searchExpression_eq`
 - explicit public nested probe tokens such as `amountMoney` and `clientBasic` render the expected nested selections
@@ -327,10 +329,12 @@ Should verify:
 - `inspect_upwork_raw()` calls the hybrid Upwork fetch boundary with the supplied config/transport by default
 - `inspect_upwork_raw()` can still force the marketplace-only fetch path if that escape hatch exists
 - `inspect_upwork_raw()` does not call exact marketplace hydration unless explicitly enabled
+- `inspect_upwork_raw()` caps retained jobs to `config.poll_limit` before exact hydration
 - with exact hydration enabled, successful exact results attach `_exact_hydration_status = "success"` plus `_exact_marketplace_raw`
 - with exact hydration enabled, failed exact results attach `_exact_hydration_status = "failed"` plus `_exact_hydration_error` without failing the whole inspection
 - jobs without numeric ids are marked `_exact_hydration_status = "skipped"` and are not sent to exact hydration
 - fetched-count summary matches returned jobs
+- when a raw inspection fetch returns more than `config.poll_limit`, the summary and written artifact reflect only the bounded retained jobs
 - observed keys combine top-level keys across returned jobs
 - first-job keys reflect only the first returned job
 - sample-limit behavior is respected

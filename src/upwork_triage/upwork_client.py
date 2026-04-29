@@ -110,7 +110,7 @@ class UpworkGraphQlClient:
         limit: int,
     ) -> list[dict[str, object]]:
         query, variables = build_job_search_query((search_term,), limit)
-        return self._execute_and_extract(query, variables)
+        return _cap_job_payloads(self._execute_and_extract(query, variables), limit)
 
     def fetch_public_jobs_for_term(
         self,
@@ -118,7 +118,7 @@ class UpworkGraphQlClient:
         limit: int,
     ) -> list[dict[str, object]]:
         query, variables = build_public_job_search_query(search_term, limit)
-        return self._execute_and_extract(query, variables)
+        return _cap_job_payloads(self._execute_and_extract(query, variables), limit)
 
     def fetch_exact_marketplace_job(
         self,
@@ -711,7 +711,7 @@ def fetch_hybrid_upwork_jobs(
                 search_term=search_term,
             )
 
-    return merged_jobs
+    return _cap_job_payloads(merged_jobs, config.poll_limit)
 
 
 def build_hybrid_source_query_text(search_terms: tuple[str, ...]) -> str:
@@ -846,6 +846,16 @@ def _format_graphql_errors(errors_value: object) -> str:
         return f"Upwork GraphQL returned errors: {joined}"
 
     return f"Upwork GraphQL returned errors: {errors_value}"
+
+
+def _cap_job_payloads(
+    jobs: Sequence[dict[str, object]],
+    limit: int,
+) -> list[dict[str, object]]:
+    bounded_limit = max(limit, 0)
+    if bounded_limit == 0:
+        return []
+    return list(jobs[:bounded_limit])
 
 
 def _normalize_probe_fields(fields: tuple[str, ...], *, source: str) -> tuple[str, ...]:

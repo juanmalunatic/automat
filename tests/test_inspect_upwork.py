@@ -255,6 +255,71 @@ def test_inspect_upwork_raw_marks_jobs_without_numeric_ids_as_skipped(
     assert summary.sample_jobs[2]["_exact_hydration_status"] == "skipped"
 
 
+def test_inspect_upwork_raw_with_exact_hydration_only_hydrates_bounded_retained_jobs(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_POLL_LIMIT": "2",
+        }
+    )
+    recorded_job_ids: list[str] = []
+    artifact_path = workspace_tmp_dir / "debug" / "upwork_raw_latest.json"
+    monkeypatch.setattr(
+        inspect_module,
+        "fetch_hybrid_upwork_jobs",
+        lambda config, *, transport=None: [
+            {"id": "2049488018911397244", "title": "First job"},
+            {"id": "2049488018911397245", "title": "Second job"},
+            {"id": "2049488018911397246", "title": "Third job"},
+        ],
+    )
+
+    def fake_exact_fetch(
+        config: object,
+        job_ids: list[str],
+        *,
+        transport: object | None = None,
+    ) -> list[ExactMarketplaceJobHydrationResult]:
+        recorded_job_ids.extend(job_ids)
+        return [
+            ExactMarketplaceJobHydrationResult(
+                job_id=job_id,
+                status="success",
+                payload={"id": job_id},
+                error_message=None,
+            )
+            for job_id in job_ids
+        ]
+
+    monkeypatch.setattr(inspect_module, "fetch_exact_marketplace_jobs", fake_exact_fetch)
+
+    summary = inspect_upwork_raw(
+        config,
+        hydrate_exact=True,
+        artifact_path=artifact_path,
+        sample_limit=3,
+    )
+
+    assert recorded_job_ids == ["2049488018911397244", "2049488018911397245"]
+    assert summary.fetched_count == 2
+    assert len(summary.sample_jobs) == 2
+    assert [job["id"] for job in summary.sample_jobs] == [
+        "2049488018911397244",
+        "2049488018911397245",
+    ]
+
+    document = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert document["summary"]["fetched_count"] == 2
+    assert len(document["jobs"]) == 2
+    assert [job["id"] for job in document["jobs"]] == [
+        "2049488018911397244",
+        "2049488018911397245",
+    ]
+
+
 def test_write_raw_inspection_artifact_writes_valid_json_and_creates_parent_dirs(
     workspace_tmp_dir: Path,
 ) -> None:
