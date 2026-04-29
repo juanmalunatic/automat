@@ -95,9 +95,12 @@ Optional examples:
 py -m upwork_triage inspect-upwork-raw --no-write
 py -m upwork_triage inspect-upwork-raw --output data/debug/my_upwork_sample.json
 py -m upwork_triage inspect-upwork-raw --marketplace-only
+py -m upwork_triage inspect-upwork-raw --hydrate-exact
 ```
 
 Important: raw inspection artifacts are local/private debug files that may contain real job and client text. Do not commit them. Their purpose is to help refine the GraphQL query and the normalizer before using `ingest-once`.
+
+`--hydrate-exact` is a best-effort debug flag. It tries exact `marketplaceJobPosting(id)` hydration only for jobs that already have a numeric marketplace id, and it records per-job success/failed/skipped metadata in the raw inspection artifact without changing ingest or normalization behavior yet.
 
 The public search surface has worked best with narrow search terms such as `WordPress` or `WooCommerce`, not one giant combined expression. The hybrid inspection path handles that by fetching both surfaces per configured term and merging the results locally by visible `id` or `ciphertext`.
 

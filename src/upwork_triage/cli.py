@@ -102,6 +102,7 @@ def main(
                 output_path=args.output,
                 sample_limit=args.sample_limit,
                 marketplace_only=args.marketplace_only,
+                hydrate_exact=args.hydrate_exact,
                 stdout=out,
             )
         if args.command == "probe-upwork-fields":
@@ -217,6 +218,11 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "--marketplace-only",
         action="store_true",
         help="Use only the marketplace search surface instead of the default hybrid marketplace+public fetch.",
+    )
+    inspect_parser.add_argument(
+        "--hydrate-exact",
+        action="store_true",
+        help="Best-effort exact marketplace hydration for numeric ids in the saved raw artifact.",
     )
     probe_parser = subparsers.add_parser(
         "probe-upwork-fields",
@@ -349,6 +355,7 @@ def _run_inspect_upwork_raw(
     output_path: str | None,
     sample_limit: int,
     marketplace_only: bool,
+    hydrate_exact: bool,
     stdout: TextIO,
 ) -> int:
     config = load_config()
@@ -365,6 +372,7 @@ def _run_inspect_upwork_raw(
         artifact_path=artifact_path,
         sample_limit=sample_limit,
         marketplace_only=marketplace_only,
+        hydrate_exact=hydrate_exact,
     )
     print(render_raw_inspection_summary(summary), file=stdout)
     return 0

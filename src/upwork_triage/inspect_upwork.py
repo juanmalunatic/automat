@@ -10,6 +10,7 @@ from .config import AppConfig
 from .upwork_client import (
     HttpJsonTransport,
     MissingUpworkCredentialsError,
+    fetch_exact_marketplace_jobs,
     fetch_hybrid_upwork_jobs,
     fetch_upwork_jobs,
 )
@@ -28,6 +29,9 @@ class RawInspectionSummary:
     first_job_keys: tuple[str, ...]
     sample_jobs: tuple[dict[str, object], ...]
     artifact_path: str | None
+    exact_hydration_success_count: int | None = None
+    exact_hydration_failed_count: int | None = None
+    exact_hydration_skipped_count: int | None = None
 
 
 __all__ = [
@@ -47,12 +51,22 @@ def inspect_upwork_raw(
     artifact_path: str | Path | None = None,
     sample_limit: int = 3,
     marketplace_only: bool = False,
+    hydrate_exact: bool = False,
 ) -> RawInspectionSummary:
     bounded_sample_limit = max(sample_limit, 0)
 
     try:
         fetch_function = fetch_upwork_jobs if marketplace_only else fetch_hybrid_upwork_jobs
         jobs = fetch_function(config, transport=transport)
+        if hydrate_exact:
+            job_dicts, exact_counts = _attach_exact_hydration_metadata(
+                config,
+                jobs,
+                transport=transport,
+            )
+        else:
+            job_dicts = [dict(job) for job in jobs]
+            exact_counts = None
     except MissingUpworkCredentialsError:
         raise
     except Exception as exc:
@@ -64,13 +78,21 @@ def inspect_upwork_raw(
             )
         ) from exc
 
-    job_dicts = [dict(job) for job in jobs]
     summary = RawInspectionSummary(
         fetched_count=len(job_dicts),
         observed_keys=_collect_observed_keys(job_dicts),
         first_job_keys=tuple(sorted(job_dicts[0].keys())) if job_dicts else (),
         sample_jobs=tuple(job_dicts[:bounded_sample_limit]),
         artifact_path=None,
+        exact_hydration_success_count=(
+            exact_counts["success"] if exact_counts is not None else None
+        ),
+        exact_hydration_failed_count=(
+            exact_counts["failed"] if exact_counts is not None else None
+        ),
+        exact_hydration_skipped_count=(
+            exact_counts["skipped"] if exact_counts is not None else None
+        ),
     )
 
     if artifact_path is None:
@@ -89,6 +111,9 @@ def inspect_upwork_raw(
         first_job_keys=summary.first_job_keys,
         sample_jobs=summary.sample_jobs,
         artifact_path=str(resolved_artifact_path),
+        exact_hydration_success_count=summary.exact_hydration_success_count,
+        exact_hydration_failed_count=summary.exact_hydration_failed_count,
+        exact_hydration_skipped_count=summary.exact_hydration_skipped_count,
     )
 
 
@@ -98,6 +123,13 @@ def render_raw_inspection_summary(summary: RawInspectionSummary) -> str:
         f"Observed keys: {_join_or_none(summary.observed_keys)}",
         f"First job keys: {_join_or_none(summary.first_job_keys)}",
     ]
+    if summary.exact_hydration_success_count is not None:
+        lines.append(
+            "exact hydration: "
+            f"success={summary.exact_hydration_success_count} "
+            f"failed={summary.exact_hydration_failed_count or 0} "
+            f"skipped={summary.exact_hydration_skipped_count or 0}"
+        )
 
     if summary.sample_jobs:
         lines.append("Sample jobs:")
@@ -141,10 +173,80 @@ def write_raw_inspection_artifact(
         },
         "jobs": [dict(job) for job in jobs],
     }
+    if summary.exact_hydration_success_count is not None:
+        document["summary"]["exact_hydration"] = {
+            "success": summary.exact_hydration_success_count,
+            "failed": summary.exact_hydration_failed_count or 0,
+            "skipped": summary.exact_hydration_skipped_count or 0,
+        }
     target.write_text(
         json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+
+
+def _attach_exact_hydration_metadata(
+    config: AppConfig,
+    jobs: Sequence[Mapping[str, object]],
+    *,
+    transport: HttpJsonTransport | None = None,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    enriched_jobs = [dict(job) for job in jobs]
+    numeric_job_ids: list[str] = []
+    numeric_job_indexes: list[int] = []
+    skipped_count = 0
+
+    for index, job in enumerate(enriched_jobs):
+        numeric_job_id = _numeric_marketplace_job_id(job)
+        if numeric_job_id is None:
+            job["_exact_hydration_status"] = "skipped"
+            skipped_count += 1
+            continue
+        numeric_job_ids.append(numeric_job_id)
+        numeric_job_indexes.append(index)
+
+    if not numeric_job_ids:
+        return enriched_jobs, {
+            "success": 0,
+            "failed": 0,
+            "skipped": skipped_count,
+        }
+
+    hydration_results = fetch_exact_marketplace_jobs(
+        config,
+        numeric_job_ids,
+        transport=transport,
+    )
+    if len(hydration_results) != len(numeric_job_indexes):
+        raise UpworkInspectionError(
+            "Exact marketplace hydration returned an unexpected result count"
+        )
+
+    success_count = 0
+    failed_count = 0
+    for job_index, hydration_result in zip(
+        numeric_job_indexes,
+        hydration_results,
+        strict=True,
+    ):
+        job = enriched_jobs[job_index]
+        job["_exact_hydration_status"] = hydration_result.status
+        if hydration_result.status == "success":
+            success_count += 1
+            if hydration_result.payload is not None:
+                job["_exact_marketplace_raw"] = dict(hydration_result.payload)
+            continue
+
+        if hydration_result.status == "failed":
+            failed_count += 1
+            if hydration_result.error_message:
+                job["_exact_hydration_error"] = hydration_result.error_message
+
+    return enriched_jobs, {
+        "success": success_count,
+        "failed": failed_count,
+        "skipped": skipped_count,
+    }
 
 
 def _collect_observed_keys(jobs: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
@@ -174,6 +276,19 @@ def _sample_url(job: Mapping[str, object]) -> str:
         if text:
             return text
     return "(missing)"
+
+
+def _numeric_marketplace_job_id(job: Mapping[str, object]) -> str | None:
+    job_id = job.get("id")
+    if isinstance(job_id, bool):
+        return None
+    if isinstance(job_id, int):
+        return str(job_id)
+    if isinstance(job_id, str):
+        trimmed = job_id.strip()
+        if trimmed.isdigit():
+            return trimmed
+    return None
 
 
 def _sanitize_message(*, config: AppConfig, detail: str, base: str) -> str:

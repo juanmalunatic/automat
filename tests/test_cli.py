@@ -162,6 +162,7 @@ def test_main_inspect_upwork_raw_marketplace_only_forwards_flag(
         artifact_path: object | None = None,
         sample_limit: int = 3,
         marketplace_only: bool = False,
+        hydrate_exact: bool = False,
     ) -> object:
         recorded_marketplace_only.append(marketplace_only)
         from upwork_triage.inspect_upwork import RawInspectionSummary
@@ -184,6 +185,44 @@ def test_main_inspect_upwork_raw_marketplace_only_forwards_flag(
 
     assert exit_code == 0
     assert recorded_marketplace_only == [True]
+
+
+def test_main_inspect_upwork_raw_hydrate_exact_forwards_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UPWORK_ACCESS_TOKEN", "upwork-token")
+    recorded_hydrate_exact: list[bool] = []
+
+    def fake_inspect(
+        config: object,
+        *,
+        transport: object | None = None,
+        artifact_path: object | None = None,
+        sample_limit: int = 3,
+        marketplace_only: bool = False,
+        hydrate_exact: bool = False,
+    ) -> object:
+        recorded_hydrate_exact.append(hydrate_exact)
+        from upwork_triage.inspect_upwork import RawInspectionSummary
+
+        return RawInspectionSummary(
+            fetched_count=0,
+            observed_keys=(),
+            first_job_keys=(),
+            sample_jobs=(),
+            artifact_path=None,
+        )
+
+    monkeypatch.setattr("upwork_triage.cli.inspect_upwork_raw", fake_inspect)
+
+    exit_code = main(
+        ["inspect-upwork-raw", "--no-write", "--hydrate-exact"],
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    assert exit_code == 0
+    assert recorded_hydrate_exact == [True]
 
 
 def test_main_probe_upwork_fields_returns_zero_and_prints_summary(

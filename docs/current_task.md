@@ -2,101 +2,96 @@
 
 ## Task name
 
-Add a safe multi-job exact marketplace hydration attempt helper.
+Wire safe exact marketplace hydration into raw inspection artifacts only.
 
 ## Goal
 
-Add a narrow safe batch helper on top of the existing exact-job query path so the repo can attempt exact marketplace hydration for multiple numeric job ids and record per-job success or failure.
+Allow `inspect-upwork-raw` to optionally enrich already-fetched raw jobs with best-effort exact `marketplaceJobPosting(id)` payloads, using numeric marketplace ids only, while keeping inspection the only affected surface.
 
-This task is additive only. It must not change live inspection, hybrid fetching, normalization, dry run, ingest, AI, DB, queue, or CLI behavior yet.
+This task is additive only. It must not change ingest, normalization, dry run, DB schema, AI, economics, queue, action tracking, or scoring behavior.
 
 ## Files to modify
 
 Expected files:
 
-- `src/upwork_triage/upwork_client.py`
-- `tests/test_upwork_client.py`
+- `src/upwork_triage/inspect_upwork.py`
+- `src/upwork_triage/cli.py`
+- `tests/test_inspect_upwork.py`
+- `tests/test_cli.py`
 - `docs/current_task.md`
 - `docs/testing.md`
 
 ## Required behavior
 
-1. Keep the existing single-job exact query builder and single-job fetch helper unchanged.
+1. Reuse the existing safe batch helper:
 
-2. Add a small result shape, such as `ExactMarketplaceJobHydrationResult`, with at least:
+   - `fetch_exact_marketplace_jobs(config, job_ids, *, transport=None)`
 
-   - `job_id`
-   - `status`
-   - `payload`
-   - `error_message`
+2. Add a small inspection-only helper that:
 
-3. Add a helper on `UpworkGraphQlClient`, such as `fetch_exact_marketplace_jobs(job_ids)`, that:
+   - takes already-fetched raw job dicts
+   - looks for numeric `id` values only
+   - attempts exact marketplace hydration for those numeric ids
+   - preserves input order
+   - never uses `ciphertext` as the exact hydration id
 
-   - loops over the provided numeric job ids in order
-   - calls the existing single-job exact hydration helper
-   - returns one result per input id in the same order
-   - records per-job `success` or `failed` status
-   - does not crash the whole batch when one job returns GraphQL errors, 403, 404, or transport-level `UpworkClientError` after the client has already been constructed
-   - still lets `MissingUpworkCredentialsError` surface normally before any network work
+3. Attach additive metadata to inspected jobs when exact hydration is enabled:
 
-4. Add a top-level convenience helper such as `fetch_exact_marketplace_jobs(config, job_ids, *, transport=None)`.
+   - `_exact_hydration_status`: `success`, `failed`, or `skipped`
+   - `_exact_marketplace_raw` only on success
+   - `_exact_hydration_error` only on failure
 
-5. Preserve the existing exact query field set, which should continue to request only the confirmed live fields:
+4. Jobs without a usable numeric id must be marked `_exact_hydration_status = "skipped"` and must not be sent to the exact hydration helper.
 
-   - `id`
-   - `content { title description }`
-   - `activityStat { jobActivity { lastClientActivity invitesSent totalInvitedToInterview totalHired totalUnansweredInvites totalOffered totalRecommended } }`
-   - `contractTerms { contractType personsToHire experienceLevel fixedPriceContractTerms { amount { rawValue currency displayValue } maxAmount { rawValue currency displayValue } } hourlyContractTerms { engagementType hourlyBudgetType hourlyBudgetMin hourlyBudgetMax notSureProjectDuration } }`
-   - `contractorSelection { proposalRequirement { coverLetterRequired freelancerMilestonesAllowed } qualification { contractorType englishProficiency hasPortfolio hoursWorked risingTalent jobSuccessScore minEarning } location { localCheckRequired localMarket notSureLocationPreference localDescription localFlexibilityDescription } }`
-   - `clientCompanyPublic { country { name twoLetterAbbreviation threeLetterAbbreviation } city timezone paymentVerification { status paymentVerified } }`
+5. `inspect_upwork_raw(...)` should gain an explicit option such as `hydrate_exact: bool = False`.
 
-6. If needed, keep using the narrow private extractor for the single-object `data.marketplaceJobPosting` response shape rather than refactoring the generic multi-job extractor broadly.
+6. `py -m upwork_triage inspect-upwork-raw` should remain backward-compatible by default.
 
-7. Preserve existing transport and GraphQL error behavior for the single-job helper.
+7. The CLI should add an explicit flag such as:
 
-8. Do not wire this helper into `fetch_upwork_jobs()`, `fetch_hybrid_upwork_jobs()`, `inspect-upwork-raw`, `ingest-once`, normalization, dry run, or any CLI command yet.
+   - `--hydrate-exact`
+
+8. If exact hydration is enabled, the rendered inspection summary may include a compact count line:
+
+   - `exact hydration: success=N failed=N skipped=N`
+
+9. The inspection artifact should include the enriched jobs only when exact hydration is enabled.
 
 ## Test requirements
 
 Update tests so they verify:
 
-- the existing exact query builder still contains `marketplaceJobPosting(id: $id)`
-- the existing exact query variables preserve the provided numeric id string exactly
-- the exact query still includes the confirmed `content`, `activityStat.jobActivity`, `contractTerms`, `contractorSelection`, and `clientCompanyPublic.paymentVerification` fields
-- a fake transport response with two exact-job successes returns two success results in input order
-- a mixed fake transport response with one success and one GraphQL error returns one success result and one failed result without raising for the whole batch
-- failed results include the original `job_id` and a useful `error_message`
-- an empty job-id list returns an empty result list and makes no transport calls
-- the top-level convenience helper uses the configured token, URL, and fake transport
-- existing single-job exact hydration tests still pass
+- `inspect_upwork_raw()` without exact hydration keeps the current behavior and does not call exact hydration
+- `inspect_upwork_raw()` with exact hydration enabled can attach `_exact_hydration_status = "success"` plus `_exact_marketplace_raw`
+- `inspect_upwork_raw()` with exact hydration enabled can attach `_exact_hydration_status = "failed"` plus `_exact_hydration_error` without failing the whole inspection
+- jobs without numeric ids are marked `skipped` and are not passed to exact hydration
+- CLI `inspect-upwork-raw --hydrate-exact` forwards the flag into `inspect_upwork_raw()`
+- tests stay fake-transport-only and require no real credentials or network calls
 
 ## Out of scope
 
 Do not implement:
 
+- ingest-once wiring
+- normalization changes
+- dry-run readiness changes
+- DB schema changes
 - OpenAI / AI calls
 - paid AI calls
-- DB schema changes
 - Upwork mutations
 - queue / UI changes
-- CLI behavior changes
-- normalization changes
-- dry-run changes
-- hybrid fetch changes
-- inspect-upwork-raw wiring
-- ingest-once wiring
+- scoring / filter policy changes
 - broad refactors
 - polling / daemon behavior
 - real network calls in tests
 - committing `data/debug` artifacts or secrets
-- manual hydration workflow wiring
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- the client can attempt exact marketplace hydration for multiple ids and return per-job success/failure results
-- the single-job exact hydration behavior remains unchanged
-- existing live search/hybrid paths remain unchanged
-- committed tests stay network-free
+- `inspect-upwork-raw` can optionally enrich raw jobs with best-effort exact marketplace payloads
+- skipped and failed exact hydrations stay per-job and do not crash the whole inspection
+- the default inspection behavior remains unchanged unless the explicit flag is used
+- committed tests remain network-free
 - the full test suite still passes

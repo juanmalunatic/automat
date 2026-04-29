@@ -20,6 +20,7 @@ from upwork_triage.inspect_upwork import (
     render_raw_inspection_summary,
     write_raw_inspection_artifact,
 )
+from upwork_triage.upwork_client import ExactMarketplaceJobHydrationResult
 
 
 @pytest.fixture
@@ -44,6 +45,13 @@ def test_inspect_upwork_raw_calls_fetch_boundary_with_config_and_transport(
         return sample_jobs()
 
     monkeypatch.setattr(inspect_module, "fetch_hybrid_upwork_jobs", fake_fetch)
+    monkeypatch.setattr(
+        inspect_module,
+        "fetch_exact_marketplace_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("exact hydration should not run without the explicit flag")
+        ),
+    )
 
     summary = inspect_upwork_raw(config, transport=fake_transport, sample_limit=2)
 
@@ -117,6 +125,136 @@ def test_inspect_upwork_raw_can_use_marketplace_only_boundary(
     assert calls == ["marketplace"]
 
 
+def test_inspect_upwork_raw_can_attach_exact_hydration_success_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config({"UPWORK_ACCESS_TOKEN": "token-123"})
+    monkeypatch.setattr(
+        inspect_module,
+        "fetch_hybrid_upwork_jobs",
+        lambda config, *, transport=None: [
+            {
+                "id": "2049488018911397244",
+                "title": "First job",
+                "source_url": "https://example.test/jobs/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        inspect_module,
+        "fetch_exact_marketplace_jobs",
+        lambda config, job_ids, *, transport=None: [
+            ExactMarketplaceJobHydrationResult(
+                job_id="2049488018911397244",
+                status="success",
+                payload={"id": "2049488018911397244", "content": {"title": "Hydrated job"}},
+                error_message=None,
+            )
+        ],
+    )
+
+    summary = inspect_upwork_raw(config, hydrate_exact=True)
+
+    assert summary.exact_hydration_success_count == 1
+    assert summary.exact_hydration_failed_count == 0
+    assert summary.exact_hydration_skipped_count == 0
+    assert summary.sample_jobs[0]["_exact_hydration_status"] == "success"
+    assert summary.sample_jobs[0]["_exact_marketplace_raw"] == {
+        "id": "2049488018911397244",
+        "content": {"title": "Hydrated job"},
+    }
+
+
+def test_inspect_upwork_raw_can_attach_exact_hydration_failure_without_failing_inspection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config({"UPWORK_ACCESS_TOKEN": "token-123"})
+    monkeypatch.setattr(
+        inspect_module,
+        "fetch_hybrid_upwork_jobs",
+        lambda config, *, transport=None: [
+            {
+                "id": "2049488018911397244",
+                "title": "First job",
+                "source_url": "https://example.test/jobs/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        inspect_module,
+        "fetch_exact_marketplace_jobs",
+        lambda config, job_ids, *, transport=None: [
+            ExactMarketplaceJobHydrationResult(
+                job_id="2049488018911397244",
+                status="failed",
+                payload=None,
+                error_message="job unavailable",
+            )
+        ],
+    )
+
+    summary = inspect_upwork_raw(config, hydrate_exact=True)
+
+    assert summary.fetched_count == 1
+    assert summary.exact_hydration_success_count == 0
+    assert summary.exact_hydration_failed_count == 1
+    assert summary.exact_hydration_skipped_count == 0
+    assert summary.sample_jobs[0]["_exact_hydration_status"] == "failed"
+    assert summary.sample_jobs[0]["_exact_hydration_error"] == "job unavailable"
+
+
+def test_inspect_upwork_raw_marks_jobs_without_numeric_ids_as_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config({"UPWORK_ACCESS_TOKEN": "token-123"})
+    recorded_job_ids: list[str] = []
+    monkeypatch.setattr(
+        inspect_module,
+        "fetch_hybrid_upwork_jobs",
+        lambda config, *, transport=None: [
+            {
+                "id": "job-public-1",
+                "title": "Non-numeric id job",
+            },
+            {
+                "id": "2049488018911397244",
+                "title": "Numeric id job",
+            },
+            {
+                "title": "Missing id job",
+            },
+        ],
+    )
+
+    def fake_exact_fetch(
+        config: object,
+        job_ids: list[str],
+        *,
+        transport: object | None = None,
+    ) -> list[ExactMarketplaceJobHydrationResult]:
+        recorded_job_ids.extend(job_ids)
+        return [
+            ExactMarketplaceJobHydrationResult(
+                job_id="2049488018911397244",
+                status="success",
+                payload={"id": "2049488018911397244"},
+                error_message=None,
+            )
+        ]
+
+    monkeypatch.setattr(inspect_module, "fetch_exact_marketplace_jobs", fake_exact_fetch)
+
+    summary = inspect_upwork_raw(config, hydrate_exact=True, sample_limit=3)
+
+    assert recorded_job_ids == ["2049488018911397244"]
+    assert summary.exact_hydration_success_count == 1
+    assert summary.exact_hydration_failed_count == 0
+    assert summary.exact_hydration_skipped_count == 2
+    assert summary.sample_jobs[0]["_exact_hydration_status"] == "skipped"
+    assert summary.sample_jobs[1]["_exact_hydration_status"] == "success"
+    assert summary.sample_jobs[2]["_exact_hydration_status"] == "skipped"
+
+
 def test_write_raw_inspection_artifact_writes_valid_json_and_creates_parent_dirs(
     workspace_tmp_dir: Path,
 ) -> None:
@@ -187,6 +325,9 @@ def test_render_raw_inspection_summary_includes_count_keys_and_sample_values() -
         first_job_keys=("id", "source_url", "title"),
         sample_jobs=tuple(sample_jobs()),
         artifact_path="data/debug/upwork_raw_latest.json",
+        exact_hydration_success_count=1,
+        exact_hydration_failed_count=0,
+        exact_hydration_skipped_count=1,
     )
 
     rendered = render_raw_inspection_summary(summary)
@@ -194,6 +335,7 @@ def test_render_raw_inspection_summary_includes_count_keys_and_sample_values() -
     assert "Fetched jobs: 2" in rendered
     assert "Observed keys: budget, id, source_url, title, url" in rendered
     assert "First job keys: id, source_url, title" in rendered
+    assert "exact hydration: success=1 failed=0 skipped=1" in rendered
     assert "id=job-1" in rendered
     assert "title=First job" in rendered
     assert "url=https://example.test/jobs/1" in rendered

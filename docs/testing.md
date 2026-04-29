@@ -100,6 +100,7 @@ Should verify:
 - `inspect-upwork-raw` missing `UPWORK_ACCESS_TOKEN` returns a non-zero exit code with a helpful error
 - `inspect-upwork-raw --output PATH` writes the requested artifact
 - `inspect-upwork-raw --no-write` does not create the default artifact
+- `inspect-upwork-raw --hydrate-exact` forwards the explicit exact-hydration flag into the inspection helper
 - inspect CLI error output must not leak fake token values
 - `main(["probe-upwork-fields", "--fields", "ciphertext,createdDateTime"])` returns `0` with a fake probe boundary
 - `main(["probe-upwork-fields", "--source", "public", "--fields", ...])` returns `0` with a fake public probe boundary
@@ -325,6 +326,10 @@ Should verify:
 
 - `inspect_upwork_raw()` calls the hybrid Upwork fetch boundary with the supplied config/transport by default
 - `inspect_upwork_raw()` can still force the marketplace-only fetch path if that escape hatch exists
+- `inspect_upwork_raw()` does not call exact marketplace hydration unless explicitly enabled
+- with exact hydration enabled, successful exact results attach `_exact_hydration_status = "success"` plus `_exact_marketplace_raw`
+- with exact hydration enabled, failed exact results attach `_exact_hydration_status = "failed"` plus `_exact_hydration_error` without failing the whole inspection
+- jobs without numeric ids are marked `_exact_hydration_status = "skipped"` and are not sent to exact hydration
 - fetched-count summary matches returned jobs
 - observed keys combine top-level keys across returned jobs
 - first-job keys reflect only the first returned job
@@ -335,6 +340,7 @@ Should verify:
 - artifact JSON does not include `UPWORK_ACCESS_TOKEN` or Authorization headers
 - parent artifact directories are created automatically
 - `render_raw_inspection_summary()` includes count, observed keys, first-job keys, and sample id/title/url-like values
+- when exact hydration is enabled, the rendered summary may include a compact `success/failed/skipped` count line
 
 ### `tests/test_dry_run.py`
 
