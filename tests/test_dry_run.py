@@ -188,6 +188,30 @@ def test_dry_run_raw_jobs_reports_useful_coverage_for_hybrid_hourly_payload() ->
     assert summary.key_field_visible_counts["j_pay_hourly_high"] == 1
 
 
+def test_dry_run_raw_jobs_uses_exact_hydration_fields_when_present() -> None:
+    summary = dry_run_raw_jobs(
+        [
+            make_marketplace_live_like_payload(
+                description=None,
+                client={"verificationStatus": None},
+                _exact_hydration_status="success",
+                _exact_marketplace_raw=make_exact_marketplace_raw(),
+            )
+        ],
+        artifact_path="artifact.json",
+    )
+
+    assert summary.jobs_processed_count == 1
+    assert summary.key_field_visible_counts["j_description"] == 1
+    assert summary.key_field_visible_counts["j_contract_type"] == 1
+    assert summary.key_field_visible_counts["j_pay_fixed"] == 1
+    assert summary.key_field_visible_counts["c_verified_payment"] == 1
+    assert summary.key_field_visible_counts["a_interviewing"] == 1
+    assert summary.key_field_visible_counts["a_invites_sent"] == 1
+    assert summary.results[0].field_status["a_hires"] == "VISIBLE"
+    assert summary.results[0].field_status["a_invites_unanswered"] == "VISIBLE"
+
+
 def test_dry_run_raw_jobs_records_parse_failure_counts() -> None:
     summary = dry_run_raw_jobs(
         [make_strong_raw_payload(client={"avg_hourly_rate": "fortyish"})],
@@ -344,8 +368,8 @@ def make_sanitized_real_like_payload() -> dict[str, object]:
     }
 
 
-def make_marketplace_live_like_payload() -> dict[str, object]:
-    return {
+def make_marketplace_live_like_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
         "id": "0123456789",
         "ciphertext": "~022049488018911397244",
         "createdDateTime": "2020-01-01T00:00:00+0000",
@@ -370,6 +394,7 @@ def make_marketplace_live_like_payload() -> dict[str, object]:
             {"bogus": "skip me"},
         ],
     }
+    return _merge_payload(payload, overrides)
 
 
 def make_hybrid_live_like_payload(**overrides: object) -> dict[str, object]:
@@ -421,6 +446,50 @@ def make_hybrid_live_like_payload(**overrides: object) -> dict[str, object]:
         "_source_surfaces": ["marketplace", "public"],
     }
     return _merge_payload(payload, overrides)
+
+
+def make_exact_marketplace_raw() -> dict[str, object]:
+    return {
+        "content": {
+            "title": "Sanitized exact marketplace title",
+            "description": "Sanitized exact marketplace description.",
+        },
+        "activityStat": {
+            "jobActivity": {
+                "invitesSent": 3,
+                "totalInvitedToInterview": 2,
+                "totalHired": 1,
+                "totalUnansweredInvites": 1,
+            }
+        },
+        "contractTerms": {
+            "contractType": "FIXED_PRICE",
+            "fixedPriceContractTerms": {
+                "amount": {
+                    "rawValue": "500",
+                    "currency": "USD",
+                    "displayValue": "$500",
+                }
+            },
+        },
+        "contractorSelection": {
+            "proposalRequirement": {
+                "coverLetterRequired": True,
+            },
+            "qualification": {
+                "contractorType": "INDEPENDENT",
+            },
+            "location": {
+                "localDescription": "US only",
+            },
+        },
+        "clientCompanyPublic": {
+            "paymentVerification": {
+                "status": "VERIFIED",
+                "paymentVerified": True,
+            }
+        },
+    }
 
 
 def write_raw_artifact(path: Path, *, jobs: list[dict[str, object]]) -> None:

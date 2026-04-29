@@ -649,6 +649,7 @@ def normalize_job_payload(
         field_status_json="",
     )
 
+    normalized = _apply_exact_marketplace_fallbacks(raw_payload, normalized, statuses)
     normalized = _apply_contract_specific_pay_fields(raw_payload, normalized, statuses)
     normalized = _replace_field_status_json(normalized, statuses)
 
@@ -687,6 +688,7 @@ def _apply_contract_specific_pay_fields(
     statuses: dict[str, FieldStatus],
 ) -> JobSnapshotNormalizedInput:
     contract_type = normalized.j_contract_type
+    exact_payload = _extract_exact_marketplace_raw(raw_payload)
 
     if contract_type == "fixed":
         j_pay_fixed = _normalize_money(
@@ -707,6 +709,17 @@ def _apply_contract_specific_pay_fields(
             "j_pay_fixed",
             statuses,
         )
+        exact_j_pay_fixed, exact_status, changed = _resolve_mapping_override(
+            j_pay_fixed,
+            statuses.get("j_pay_fixed"),
+            exact_payload,
+            (("contractTerms", "fixedPriceContractTerms", "amount"),),
+            _parse_money,
+        )
+        if changed:
+            j_pay_fixed = exact_j_pay_fixed
+            if exact_status is not None:
+                statuses["j_pay_fixed"] = exact_status
         j_pay_fixed = _coerce_positive_money_field(
             j_pay_fixed,
             "j_pay_fixed",
@@ -733,6 +746,15 @@ def _apply_contract_specific_pay_fields(
             "hourly_budget_type",
             statuses,
         )
+        hourly_budget_type, exact_hourly_status, changed = _resolve_mapping_override(
+            hourly_budget_type,
+            statuses.get("hourly_budget_type"),
+            exact_payload,
+            (("contractTerms", "hourlyContractTerms", "hourlyBudgetType"),),
+            _parse_text,
+        )
+        if changed and exact_hourly_status is not None:
+            statuses["hourly_budget_type"] = exact_hourly_status
         j_pay_hourly_low = _normalize_money(
             raw_payload,
             (
@@ -750,6 +772,15 @@ def _apply_contract_specific_pay_fields(
             "j_pay_hourly_low",
             statuses,
         )
+        j_pay_hourly_low, exact_low_status, changed = _resolve_mapping_override(
+            j_pay_hourly_low,
+            statuses.get("j_pay_hourly_low"),
+            exact_payload,
+            (("contractTerms", "hourlyContractTerms", "hourlyBudgetMin"),),
+            _parse_money,
+        )
+        if changed and exact_low_status is not None:
+            statuses["j_pay_hourly_low"] = exact_low_status
         j_pay_hourly_high = _normalize_money(
             raw_payload,
             (
@@ -767,6 +798,15 @@ def _apply_contract_specific_pay_fields(
             "j_pay_hourly_high",
             statuses,
         )
+        j_pay_hourly_high, exact_high_status, changed = _resolve_mapping_override(
+            j_pay_hourly_high,
+            statuses.get("j_pay_hourly_high"),
+            exact_payload,
+            (("contractTerms", "hourlyContractTerms", "hourlyBudgetMax"),),
+            _parse_money,
+        )
+        if changed and exact_high_status is not None:
+            statuses["j_pay_hourly_high"] = exact_high_status
         if _is_hourly_budget_not_provided(hourly_budget_type):
             j_pay_hourly_low = None
             j_pay_hourly_high = None
@@ -794,6 +834,95 @@ def _apply_contract_specific_pay_fields(
     return normalized
 
 
+def _apply_exact_marketplace_fallbacks(
+    raw_payload: Mapping[str, object],
+    normalized: JobSnapshotNormalizedInput,
+    statuses: dict[str, FieldStatus],
+) -> JobSnapshotNormalizedInput:
+    exact_payload = _extract_exact_marketplace_raw(raw_payload)
+    if exact_payload is None:
+        return normalized
+
+    normalized = _apply_mapping_override_to_field(
+        normalized,
+        "j_title",
+        statuses,
+        exact_payload,
+        (("content", "title"),),
+        _parse_text,
+    )
+    normalized = _apply_mapping_override_to_field(
+        normalized,
+        "j_description",
+        statuses,
+        exact_payload,
+        (("content", "description"),),
+        _parse_text,
+    )
+    normalized = _apply_mapping_override_to_field(
+        normalized,
+        "j_contract_type",
+        statuses,
+        exact_payload,
+        (("contractTerms", "contractType"),),
+        _parse_contract_type,
+    )
+    normalized = _apply_mapping_override_to_field(
+        normalized,
+        "c_verified_payment",
+        statuses,
+        exact_payload,
+        (
+            ("clientCompanyPublic", "paymentVerification", "paymentVerified"),
+            ("clientCompanyPublic", "paymentVerification", "status"),
+        ),
+        _parse_bool,
+    )
+    normalized = _apply_mapping_override_to_field(
+        normalized,
+        "a_hires",
+        statuses,
+        exact_payload,
+        (("activityStat", "jobActivity", "totalHired"),),
+        _parse_int,
+    )
+    normalized = _apply_mapping_override_to_field(
+        normalized,
+        "a_interviewing",
+        statuses,
+        exact_payload,
+        (("activityStat", "jobActivity", "totalInvitedToInterview"),),
+        _parse_int,
+    )
+    normalized = _apply_mapping_override_to_field(
+        normalized,
+        "a_invites_sent",
+        statuses,
+        exact_payload,
+        (("activityStat", "jobActivity", "invitesSent"),),
+        _parse_int,
+    )
+    normalized = _apply_mapping_override_to_field(
+        normalized,
+        "a_invites_unanswered",
+        statuses,
+        exact_payload,
+        (("activityStat", "jobActivity", "totalUnansweredInvites"),),
+        _parse_int,
+    )
+
+    if not _field_has_visible_value(normalized, "j_qualifications", statuses):
+        exact_qualifications = _build_exact_qualifications_text(exact_payload)
+        if exact_qualifications is not None:
+            statuses["j_qualifications"] = "VISIBLE"
+            normalized = _replace_fields(
+                normalized,
+                j_qualifications=exact_qualifications,
+            )
+
+    return normalized
+
+
 def _coerce_positive_money_field(
     value: float | None,
     field_name: str,
@@ -813,6 +942,255 @@ def _is_hourly_budget_not_provided(hourly_budget_type: str | None) -> bool:
         return False
     normalized = hourly_budget_type.strip().upper().replace("-", "_").replace(" ", "_")
     return normalized == "NOT_PROVIDED"
+
+
+def _extract_exact_marketplace_raw(raw_payload: Mapping[str, object]) -> Mapping[str, object] | None:
+    hydration_status = raw_payload.get("_exact_hydration_status")
+    if hydration_status != "success":
+        return None
+
+    exact_payload = raw_payload.get("_exact_marketplace_raw")
+    if not isinstance(exact_payload, Mapping):
+        return None
+    return exact_payload
+
+
+def _apply_mapping_override_to_field(
+    normalized: JobSnapshotNormalizedInput,
+    field_name: str,
+    statuses: dict[str, FieldStatus],
+    mapping: Mapping[str, object] | None,
+    aliases: tuple[object, ...],
+    parser: Any,
+) -> JobSnapshotNormalizedInput:
+    current_value = getattr(normalized, field_name)
+    current_status = statuses.get(field_name)
+    next_value, next_status, changed = _resolve_mapping_override(
+        current_value,
+        current_status,
+        mapping,
+        aliases,
+        parser,
+    )
+    if not changed:
+        return normalized
+
+    if next_status is not None:
+        statuses[field_name] = next_status
+    if next_value == current_value:
+        return normalized
+    return _replace_fields(normalized, **{field_name: next_value})
+
+
+def _resolve_mapping_override(
+    current_value: object | None,
+    current_status: FieldStatus | None,
+    mapping: Mapping[str, object] | None,
+    aliases: tuple[object, ...],
+    parser: Any,
+) -> tuple[object | None, FieldStatus | None, bool]:
+    if mapping is None:
+        return current_value, current_status, False
+
+    found, next_status, next_value = _extract_parsed_value_from_mapping(mapping, aliases, parser)
+    if not found:
+        return current_value, current_status, False
+
+    if next_value is not None:
+        return next_value, next_status, True
+
+    if current_value is None and not _is_visible_status(current_status):
+        return None, next_status, True
+
+    return current_value, current_status, False
+
+
+def _extract_parsed_value_from_mapping(
+    mapping: Mapping[str, object],
+    aliases: tuple[object, ...],
+    parser: Any,
+) -> tuple[bool, FieldStatus | None, object | None]:
+    extracted = _extract_value(mapping, aliases)
+    return _parse_extracted_value(extracted, parser)
+
+
+def _parse_extracted_value(
+    extracted: _ExtractedValue,
+    parser: Any,
+) -> tuple[bool, FieldStatus | None, object | None]:
+    if not extracted.found:
+        return False, None, None
+
+    if extracted.status in {"NOT_VISIBLE", "NOT_APPLICABLE", "PARSE_FAILURE"}:
+        return True, extracted.status, None
+
+    if extracted.value is None or _is_unavailable_marker(extracted.value):
+        return True, "NOT_VISIBLE", None
+
+    parsed = parser(extracted.value)
+    if parsed is PARSE_ERROR:
+        return True, "PARSE_FAILURE", None
+
+    if extracted.status == "MANUAL":
+        return True, "MANUAL", parsed
+
+    return True, "VISIBLE", parsed
+
+
+def _field_has_visible_value(
+    normalized: JobSnapshotNormalizedInput,
+    field_name: str,
+    statuses: Mapping[str, FieldStatus],
+) -> bool:
+    return getattr(normalized, field_name) is not None and _is_visible_status(statuses.get(field_name))
+
+
+def _is_visible_status(status: FieldStatus | None) -> bool:
+    return status in {"VISIBLE", "MANUAL"}
+
+
+def _build_exact_qualifications_text(exact_payload: Mapping[str, object]) -> str | None:
+    parts: list[str] = []
+
+    cover_letter_required = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "proposalRequirement", "coverLetterRequired"),
+        _parse_bool,
+    )
+    if cover_letter_required == 1:
+        parts.append("cover letter required")
+    elif cover_letter_required == 0:
+        parts.append("cover letter optional")
+
+    milestones_allowed = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "proposalRequirement", "freelancerMilestonesAllowed"),
+        _parse_bool,
+    )
+    if milestones_allowed == 1:
+        parts.append("freelancer milestones allowed")
+    elif milestones_allowed == 0:
+        parts.append("freelancer milestones not allowed")
+
+    contractor_type = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "qualification", "contractorType"),
+        _parse_text,
+    )
+    if contractor_type is not None:
+        parts.append(f"contractor type: {contractor_type}")
+
+    english_proficiency = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "qualification", "englishProficiency"),
+        _parse_text,
+    )
+    if english_proficiency is not None:
+        parts.append(f"english: {english_proficiency}")
+
+    has_portfolio = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "qualification", "hasPortfolio"),
+        _parse_bool,
+    )
+    if has_portfolio == 1:
+        parts.append("portfolio required")
+    elif has_portfolio == 0:
+        parts.append("portfolio optional")
+
+    hours_worked = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "qualification", "hoursWorked"),
+        _parse_number,
+    )
+    if hours_worked is not None:
+        parts.append(f"hours worked: {_format_compact_number(hours_worked)}")
+
+    rising_talent = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "qualification", "risingTalent"),
+        _parse_bool,
+    )
+    if rising_talent == 1:
+        parts.append("rising talent preferred")
+
+    job_success_score = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "qualification", "jobSuccessScore"),
+        _parse_number,
+    )
+    if job_success_score is not None:
+        parts.append(f"job success score: {_format_compact_number(job_success_score)}")
+
+    min_earning = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "qualification", "minEarning"),
+        _parse_money,
+    )
+    if min_earning is not None:
+        parts.append(f"min earning: {_format_compact_number(min_earning)}")
+
+    local_check_required = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "location", "localCheckRequired"),
+        _parse_bool,
+    )
+    if local_check_required == 1:
+        parts.append("local check required")
+
+    local_market = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "location", "localMarket"),
+        _parse_text,
+    )
+    if local_market is not None:
+        parts.append(f"local market: {local_market}")
+
+    location_preference_flexible = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "location", "notSureLocationPreference"),
+        _parse_bool,
+    )
+    if location_preference_flexible == 1:
+        parts.append("location preference flexible")
+
+    local_description = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "location", "localDescription"),
+        _parse_text,
+    )
+    if local_description is not None:
+        parts.append(f"location note: {local_description}")
+
+    local_flexibility_description = _read_mapping_value(
+        exact_payload,
+        ("contractorSelection", "location", "localFlexibilityDescription"),
+        _parse_text,
+    )
+    if local_flexibility_description is not None:
+        parts.append(f"location flexibility: {local_flexibility_description}")
+
+    if not parts:
+        return None
+    return "; ".join(parts)
+
+
+def _read_mapping_value(
+    mapping: Mapping[str, object],
+    path: tuple[str, ...],
+    parser: Any,
+) -> object | None:
+    found, _status, value = _extract_parsed_value_from_mapping(mapping, (path,), parser)
+    if not found:
+        return None
+    return value
+
+
+def _format_compact_number(value: float | int) -> str:
+    numeric = float(value)
+    if numeric.is_integer():
+        return str(int(numeric))
+    return f"{numeric:g}"
 
 
 def _replace_field_status_json(

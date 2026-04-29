@@ -223,6 +223,9 @@ Should verify:
 - sanitized marketplace-search payload fixtures map `createdDateTime` to `j_posted_at` and can derive `j_mins_since_posted` with a deterministic test clock
 - sanitized marketplace-search payload fixtures map `client.verificationStatus`, `client.totalSpent`, `client.totalHires`, and `client.totalPostedJobs`
 - sanitized public-marketplace payload fixtures map `publishedDateTime`, top-level `type`, fixed/hourly pay fields, and `totalApplicants`
+- hydrated exact-marketplace payload fixtures can backfill missing title/description, contract type, fixed/hourly pay fields, payment verification, and exact job-activity counters when `_exact_hydration_status = "success"`
+- hydrated exact-marketplace payload fixtures can generate a compact fallback `j_qualifications` string from confirmed contractor-selection fields
+- failed or skipped exact hydration does not create false visible normalized values
 - mixed valid/malformed marketplace skill objects still yield a usable `j_skills`
 - normalized output can build `FilterInput`
 - normalized output can build `AiPayloadInput`
@@ -361,6 +364,7 @@ Should verify:
 - sanitized real-like raw payload fixtures produce useful field-coverage counts
 - sanitized marketplace-search raw payload fixtures produce useful coverage for derived `source_url`, verification status, and posted-time fields
 - sanitized hybrid raw payload fixtures produce useful coverage for contract type, fixed/hourly pay visibility, proposals from applicant counts, and client spend when those values are present
+- sanitized hydrated exact-marketplace raw payload fixtures can improve dry-run coverage for description, contract type, pay, payment verification, and activity counters without any live fetch
 - parse-failure counts are recorded
 - empty job lists still produce a valid summary
 - unexpected per-job normalization/filter failures are recorded per job while the overall summary continues

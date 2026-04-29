@@ -333,6 +333,200 @@ def test_marketplace_live_like_payload_maps_client_total_spent() -> None:
     assert result.to_job_snapshot_insert_input().c_hist_total_spent == 25000.0
 
 
+def test_exact_marketplace_payload_fills_missing_title_and_description() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            title=None,
+            description=None,
+            _exact_hydration_status="success",
+            _exact_marketplace_raw=make_exact_marketplace_raw(),
+        )
+    )
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.j_title == "Sanitized exact marketplace title"
+    assert normalized.j_description == "Sanitized exact marketplace description."
+    assert statuses["j_title"] == "VISIBLE"
+    assert statuses["j_description"] == "VISIBLE"
+
+
+def test_exact_marketplace_hourly_contract_terms_map_contract_type_and_budget_range() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            _exact_hydration_status="success",
+            _exact_marketplace_raw=make_exact_marketplace_raw(
+                contractTerms={
+                    "contractType": "HOURLY",
+                    "hourlyContractTerms": {
+                        "hourlyBudgetType": "MANUAL",
+                        "hourlyBudgetMin": 35,
+                        "hourlyBudgetMax": 55,
+                    },
+                },
+            ),
+        )
+    )
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.j_contract_type == "hourly"
+    assert normalized.j_pay_fixed is None
+    assert normalized.j_pay_hourly_low == 35.0
+    assert normalized.j_pay_hourly_high == 55.0
+    assert statuses["j_contract_type"] == "VISIBLE"
+    assert statuses["j_pay_fixed"] == "NOT_APPLICABLE"
+    assert statuses["j_pay_hourly_low"] == "VISIBLE"
+    assert statuses["j_pay_hourly_high"] == "VISIBLE"
+
+
+def test_exact_marketplace_fixed_contract_terms_map_contract_type_and_fixed_budget() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            _exact_hydration_status="success",
+            _exact_marketplace_raw=make_exact_marketplace_raw(
+                contractTerms={
+                    "contractType": "FIXED_PRICE",
+                    "fixedPriceContractTerms": {
+                        "amount": {
+                            "rawValue": "750",
+                            "currency": "USD",
+                            "displayValue": "$750",
+                        }
+                    },
+                },
+            ),
+        )
+    )
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.j_contract_type == "fixed"
+    assert normalized.j_pay_fixed == 750.0
+    assert normalized.j_pay_hourly_low is None
+    assert normalized.j_pay_hourly_high is None
+    assert statuses["j_pay_fixed"] == "VISIBLE"
+    assert statuses["j_pay_hourly_low"] == "NOT_APPLICABLE"
+    assert statuses["j_pay_hourly_high"] == "NOT_APPLICABLE"
+
+
+def test_exact_marketplace_payment_verification_maps_when_top_level_verification_missing() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            client={"verificationStatus": None},
+            _exact_hydration_status="success",
+            _exact_marketplace_raw=make_exact_marketplace_raw(
+                clientCompanyPublic={
+                    "paymentVerification": {
+                        "paymentVerified": True,
+                        "status": "VERIFIED",
+                    }
+                },
+            ),
+        )
+    )
+
+    assert result.to_job_snapshot_insert_input().c_verified_payment == 1
+
+
+def test_exact_marketplace_job_activity_maps_hires_interviews_and_invites() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            _exact_hydration_status="success",
+            _exact_marketplace_raw=make_exact_marketplace_raw(
+                activityStat={
+                    "jobActivity": {
+                        "totalHired": 2,
+                        "totalInvitedToInterview": 4,
+                        "invitesSent": 6,
+                        "totalUnansweredInvites": 1,
+                    }
+                },
+            ),
+        )
+    )
+    normalized = result.to_job_snapshot_insert_input()
+
+    assert normalized.a_hires == 2
+    assert normalized.a_interviewing == 4
+    assert normalized.a_invites_sent == 6
+    assert normalized.a_invites_unanswered == 1
+
+
+def test_exact_marketplace_contractor_selection_builds_compact_qualifications_text() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            _exact_hydration_status="success",
+            _exact_marketplace_raw=make_exact_marketplace_raw(),
+        )
+    )
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.j_qualifications is not None
+    assert "cover letter required" in normalized.j_qualifications
+    assert "contractor type: INDEPENDENT" in normalized.j_qualifications
+    assert "english: CONVERSATIONAL" in normalized.j_qualifications
+    assert "portfolio required" in normalized.j_qualifications
+    assert "location note: US only" in normalized.j_qualifications
+    assert statuses["j_qualifications"] == "VISIBLE"
+
+
+def test_search_level_country_remains_preferred_over_exact_client_company_country() -> None:
+    result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            client={"location": {"country": "US"}},
+            _exact_hydration_status="success",
+            _exact_marketplace_raw=make_exact_marketplace_raw(
+                clientCompanyPublic={
+                    "country": {
+                        "name": "Canada",
+                        "twoLetterAbbreviation": "CA",
+                        "threeLetterAbbreviation": "CAN",
+                    },
+                    "paymentVerification": {
+                        "paymentVerified": True,
+                        "status": "VERIFIED",
+                    },
+                },
+            ),
+        )
+    )
+
+    assert result.to_job_snapshot_insert_input().c_country == "US"
+
+
+def test_failed_or_skipped_exact_hydration_is_ignored_by_normalization() -> None:
+    failed_result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            title=None,
+            description=None,
+            client={"verificationStatus": None},
+            _exact_hydration_status="failed",
+            _exact_marketplace_raw=make_exact_marketplace_raw(),
+        )
+    )
+    failed_normalized = failed_result.to_job_snapshot_insert_input()
+    failed_statuses = json.loads(failed_normalized.field_status_json)
+
+    assert failed_normalized.j_title is None
+    assert failed_normalized.j_description is None
+    assert failed_normalized.c_verified_payment is None
+    assert failed_statuses["j_title"] == "NOT_VISIBLE"
+    assert failed_statuses["j_description"] == "NOT_VISIBLE"
+    assert failed_statuses["c_verified_payment"] == "NOT_VISIBLE"
+
+    skipped_result = normalize_job_payload(
+        make_marketplace_live_like_payload(
+            description=None,
+            _exact_hydration_status="skipped",
+            _exact_marketplace_raw=make_exact_marketplace_raw(),
+        )
+    )
+
+    assert skipped_result.to_job_snapshot_insert_input().j_description is None
+
+
 def test_public_live_like_fixed_payload_maps_type_and_amount() -> None:
     result = normalize_job_payload(make_public_live_like_payload())
     normalized = result.to_job_snapshot_insert_input()
@@ -578,4 +772,88 @@ def make_public_live_like_payload(**overrides: object) -> dict[str, object]:
     cloned = copy.deepcopy(payload)
     for key, value in overrides.items():
         cloned[key] = value
+    return cloned
+
+
+def make_exact_marketplace_raw(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": "0123456789",
+        "content": {
+            "title": "Sanitized exact marketplace title",
+            "description": "Sanitized exact marketplace description.",
+        },
+        "activityStat": {
+            "jobActivity": {
+                "invitesSent": 3,
+                "totalInvitedToInterview": 2,
+                "totalHired": 1,
+                "totalUnansweredInvites": 1,
+            }
+        },
+        "contractTerms": {
+            "contractType": "FIXED_PRICE",
+            "fixedPriceContractTerms": {
+                "amount": {
+                    "rawValue": "500",
+                    "currency": "USD",
+                    "displayValue": "$500",
+                }
+            },
+            "hourlyContractTerms": {
+                "hourlyBudgetType": "MANUAL",
+                "hourlyBudgetMin": 20,
+                "hourlyBudgetMax": 30,
+            },
+        },
+        "contractorSelection": {
+            "proposalRequirement": {
+                "coverLetterRequired": True,
+                "freelancerMilestonesAllowed": True,
+            },
+            "qualification": {
+                "contractorType": "INDEPENDENT",
+                "englishProficiency": "CONVERSATIONAL",
+                "hasPortfolio": True,
+                "hoursWorked": 100,
+                "risingTalent": True,
+                "jobSuccessScore": 90,
+                "minEarning": 1000,
+            },
+            "location": {
+                "localCheckRequired": True,
+                "localMarket": "US",
+                "notSureLocationPreference": True,
+                "localDescription": "US only",
+                "localFlexibilityDescription": "Remote in US okay",
+            },
+        },
+        "clientCompanyPublic": {
+            "country": {
+                "name": "United States",
+                "twoLetterAbbreviation": "US",
+                "threeLetterAbbreviation": "USA",
+            },
+            "city": "New York",
+            "timezone": "America/New_York",
+            "paymentVerification": {
+                "status": "VERIFIED",
+                "paymentVerified": True,
+            },
+        },
+    }
+
+    cloned = copy.deepcopy(payload)
+    for key, value in overrides.items():
+        if key in {
+            "content",
+            "activityStat",
+            "contractTerms",
+            "contractorSelection",
+            "clientCompanyPublic",
+        } and isinstance(value, dict):
+            nested = cloned[key]
+            assert isinstance(nested, dict)
+            nested.update(value)
+        else:
+            cloned[key] = value
     return cloned
