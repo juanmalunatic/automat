@@ -130,6 +130,18 @@ def test_dry_run_raw_jobs_records_key_field_visible_counts() -> None:
     assert summary.key_field_visible_counts["j_apply_cost_connects"] == 1
 
 
+def test_dry_run_raw_jobs_reports_useful_coverage_for_sanitized_real_like_payload() -> None:
+    summary = dry_run_raw_jobs([make_sanitized_real_like_payload()], artifact_path="artifact.json")
+
+    assert summary.jobs_processed_count == 1
+    assert summary.key_field_visible_counts["upwork_job_id"] == 1
+    assert summary.key_field_visible_counts["source_url"] == 1
+    assert summary.key_field_visible_counts["c_hist_total_spent"] == 1
+    assert summary.key_field_visible_counts["j_apply_cost_connects"] == 1
+    assert summary.key_field_visible_counts["j_posted_at"] == 1
+    assert summary.routing_bucket_counts["AI_EVAL"] == 1
+
+
 def test_dry_run_raw_jobs_records_parse_failure_counts() -> None:
     summary = dry_run_raw_jobs(
         [make_strong_raw_payload(client={"avg_hourly_rate": "fortyish"})],
@@ -253,6 +265,37 @@ def make_hard_reject_raw_payload() -> dict[str, object]:
         source_url="https://www.upwork.com/jobs/~111222333",
         client={"payment_verified": "payment unverified"},
     )
+
+
+def make_sanitized_real_like_payload() -> dict[str, object]:
+    return {
+        "ciphertext": "~0123456789",
+        "jobUrl": "https://www.example.test/jobs/~0123456789",
+        "title": "Sanitized WooCommerce job",
+        "description": "Sanitized description mentioning WooCommerce and API integration.",
+        "jobType": "FIXED_PRICE",
+        "amount": {"amount": "$500"},
+        "skills": [
+            {"name": "WooCommerce"},
+            {"name": "API"},
+            {"name": "PHP"},
+        ],
+        "publishedOn": "2026-04-29T12:00:00Z",
+        "connectsRequired": 16,
+        "buyer": {
+            "paymentVerificationStatus": "VERIFIED",
+            "location": {"country": "US"},
+            "totalSpent": {"amount": "$25K"},
+            "hireRate": {"value": "75%"},
+            "avgHourlyRate": {"amount": "$42/hr"},
+        },
+        "jobActivity": {
+            "proposalsTier": {"label": "5 to 10"},
+            "interviewCount": {"count": 1},
+            "inviteCount": 2,
+            "lastViewedMinutesAgo": 20,
+        },
+    }
 
 
 def write_raw_artifact(path: Path, *, jobs: list[dict[str, object]]) -> None:

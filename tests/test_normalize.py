@@ -191,6 +191,89 @@ def test_normalized_output_can_build_economics_job_input() -> None:
     assert economics_job_input.j_apply_cost_connects == 16
 
 
+def test_sanitized_real_like_payload_normalizes_job_id_title_description_and_url() -> None:
+    result = normalize_job_payload(make_sanitized_real_like_payload())
+    normalized = result.to_job_snapshot_insert_input()
+
+    assert result.job_key == "upwork:~0123456789"
+    assert normalized.upwork_job_id == "~0123456789"
+    assert normalized.j_title == "Sanitized WooCommerce job"
+    assert normalized.j_description == (
+        "Sanitized description mentioning WooCommerce and API integration."
+    )
+    assert normalized.source_url == "https://www.example.test/jobs/~0123456789"
+    assert normalized.j_posted_at == "2026-04-29T12:00:00Z"
+
+
+def test_sanitized_real_like_payload_normalizes_client_payment_and_history_fields() -> None:
+    result = normalize_job_payload(make_sanitized_real_like_payload())
+    normalized = result.to_job_snapshot_insert_input()
+
+    assert normalized.c_verified_payment == 1
+    assert normalized.c_country == "US"
+    assert normalized.c_hist_total_spent == 25000.0
+    assert normalized.c_hist_hire_rate == 75.0
+    assert normalized.c_hist_avg_hourly_rate == 42.0
+
+
+def test_sanitized_real_like_payload_normalizes_budget_hourly_skills_and_activity_fields() -> None:
+    fixed_result = normalize_job_payload(make_sanitized_real_like_payload())
+    fixed_normalized = fixed_result.to_job_snapshot_insert_input()
+
+    assert fixed_normalized.j_contract_type == "fixed"
+    assert fixed_normalized.j_pay_fixed == 500.0
+    assert fixed_normalized.j_skills == "WooCommerce, API, PHP"
+    assert fixed_normalized.j_apply_cost_connects == 16
+    assert fixed_normalized.a_proposals == "5 to 10"
+    assert fixed_normalized.a_interviewing == 1
+    assert fixed_normalized.a_invites_sent == 2
+    assert fixed_normalized.a_mins_since_cli_viewed == 20
+
+    hourly_result = normalize_job_payload(
+        make_sanitized_real_like_payload(
+            jobType="HOURLY",
+            amount=None,
+            hourlyBudget={"minAmount": "$25/hr", "maxAmount": "$40/hr"},
+        )
+    )
+    hourly_normalized = hourly_result.to_job_snapshot_insert_input()
+    hourly_statuses = json.loads(hourly_normalized.field_status_json)
+
+    assert hourly_normalized.j_contract_type == "hourly"
+    assert hourly_normalized.j_pay_fixed is None
+    assert hourly_normalized.j_pay_hourly_low == 25.0
+    assert hourly_normalized.j_pay_hourly_high == 40.0
+    assert hourly_statuses["j_pay_fixed"] == "NOT_APPLICABLE"
+
+
+def test_sanitized_real_like_payload_preserves_not_visible_for_unavailable_fields() -> None:
+    payload = make_sanitized_real_like_payload()
+    payload["buyer"].pop("avgHourlyRate")
+
+    result = normalize_job_payload(payload)
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.c_hist_avg_hourly_rate is None
+    assert statuses["c_hist_avg_hourly_rate"] == "NOT_VISIBLE"
+
+
+def test_sanitized_real_like_payload_preserves_parse_failure_for_malformed_visible_fields() -> None:
+    result = normalize_job_payload(
+        make_sanitized_real_like_payload(
+            buyer={"avgHourlyRate": {"amount": "fortyish"}},
+            connectsRequired="sixteen",
+        )
+    )
+    normalized = result.to_job_snapshot_insert_input()
+    statuses = json.loads(normalized.field_status_json)
+
+    assert normalized.c_hist_avg_hourly_rate is None
+    assert normalized.j_apply_cost_connects is None
+    assert statuses["c_hist_avg_hourly_rate"] == "PARSE_FAILURE"
+    assert statuses["j_apply_cost_connects"] == "PARSE_FAILURE"
+
+
 def make_raw_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "id": "123456789",
@@ -229,6 +312,47 @@ def make_raw_payload(**overrides: object) -> dict[str, object]:
     for key, value in overrides.items():
         if key in {"client", "activity", "market"} and isinstance(value, dict):
             cloned[key].update(value)
+        else:
+            cloned[key] = value
+    return cloned
+
+
+def make_sanitized_real_like_payload(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "ciphertext": "~0123456789",
+        "jobUrl": "https://www.example.test/jobs/~0123456789",
+        "title": "Sanitized WooCommerce job",
+        "description": "Sanitized description mentioning WooCommerce and API integration.",
+        "jobType": "FIXED_PRICE",
+        "amount": {"amount": "$500"},
+        "skills": [
+            {"name": "WooCommerce"},
+            {"name": "API"},
+            {"name": "PHP"},
+        ],
+        "publishedOn": "2026-04-29T12:00:00Z",
+        "connectsRequired": 16,
+        "buyer": {
+            "paymentVerificationStatus": "VERIFIED",
+            "location": {"country": "US"},
+            "totalSpent": {"amount": "$25K"},
+            "hireRate": {"value": "75%"},
+            "avgHourlyRate": {"amount": "$42/hr"},
+        },
+        "jobActivity": {
+            "proposalsTier": {"label": "5 to 10"},
+            "interviewCount": {"count": 1},
+            "inviteCount": 2,
+            "lastViewedMinutesAgo": 20,
+        },
+    }
+
+    cloned = copy.deepcopy(payload)
+    for key, value in overrides.items():
+        if key in {"buyer", "jobActivity"} and isinstance(value, dict):
+            nested = cloned[key]
+            assert isinstance(nested, dict)
+            nested.update(value)
         else:
             cloned[key] = value
     return cloned

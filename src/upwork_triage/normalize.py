@@ -28,8 +28,21 @@ UNAVAILABLE_MARKERS = {
     "unavailable",
 }
 
-FIXED_MARKERS = {"fixed", "fixed price", "fixed-price", "budget"}
-HOURLY_MARKERS = {"hourly", "hourly rate"}
+FIXED_MARKERS = {
+    "fixed",
+    "fixed price",
+    "fixed-price",
+    "fixed_price",
+    "fixedprice",
+    "fixed price contract",
+    "budget",
+}
+HOURLY_MARKERS = {
+    "hourly",
+    "hourly rate",
+    "hourly contract",
+    "hourly_contract",
+}
 TRUE_MARKERS = {
     "1",
     "true",
@@ -249,13 +262,38 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
 
     upwork_job_id = _normalize_identifier(
         raw_payload,
-        ("upwork_job_id", "id", ("job", "id"), ("meta", "id")),
+        (
+            "upwork_job_id",
+            "id",
+            "job_id",
+            "jobId",
+            "ciphertext",
+            ("job", "id"),
+            ("job", "job_id"),
+            ("job", "jobId"),
+            ("job", "ciphertext"),
+            ("meta", "id"),
+        ),
         "upwork_job_id",
         statuses,
     )
     source_url = _normalize_source_url(
         raw_payload,
-        ("source_url", "url", ("job", "source_url"), ("meta", "source_url")),
+        (
+            "source_url",
+            "sourceUrl",
+            "url",
+            "job_url",
+            "jobUrl",
+            "canonical_url",
+            "canonicalUrl",
+            ("job", "source_url"),
+            ("job", "sourceUrl"),
+            ("job", "url"),
+            ("job", "job_url"),
+            ("job", "jobUrl"),
+            ("meta", "source_url"),
+        ),
         "source_url",
         statuses,
     )
@@ -294,7 +332,20 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         source_url=source_url,
         c_verified_payment=_normalize_bool(
             raw_payload,
-            (("client", "payment_verified"), "c_verified_payment", "payment_verified"),
+            (
+                ("client", "payment_verified"),
+                ("client", "paymentVerified"),
+                ("client", "payment_verification_status"),
+                ("client", "paymentVerificationStatus"),
+                ("buyer", "payment_verified"),
+                ("buyer", "paymentVerified"),
+                ("buyer", "is_payment_verified"),
+                ("buyer", "isPaymentVerified"),
+                ("buyer", "payment_verification_status"),
+                ("buyer", "paymentVerificationStatus"),
+                "c_verified_payment",
+                "payment_verified",
+            ),
             "c_verified_payment",
             statuses,
         ),
@@ -306,7 +357,14 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         ),
         c_country=_normalize_text(
             raw_payload,
-            (("client", "country"), "c_country", "country"),
+            (
+                ("client", "country"),
+                ("client", "location", "country"),
+                ("buyer", "country"),
+                ("buyer", "location", "country"),
+                "c_country",
+                "country",
+            ),
             "c_country",
             statuses,
         ),
@@ -324,13 +382,33 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         ),
         c_hist_hire_rate=_normalize_percent(
             raw_payload,
-            (("client", "hire_rate"), "c_hist_hire_rate"),
+            (
+                ("client", "hire_rate"),
+                ("client", "hireRate"),
+                ("client", "stats", "hire_rate"),
+                ("client", "stats", "hireRate"),
+                ("buyer", "hire_rate"),
+                ("buyer", "hireRate"),
+                ("buyer", "stats", "hire_rate"),
+                ("buyer", "stats", "hireRate"),
+                "c_hist_hire_rate",
+            ),
             "c_hist_hire_rate",
             statuses,
         ),
         c_hist_total_spent=_normalize_money(
             raw_payload,
-            (("client", "total_spent"), "c_hist_total_spent"),
+            (
+                ("client", "total_spent"),
+                ("client", "totalSpent"),
+                ("client", "stats", "total_spent"),
+                ("client", "stats", "totalSpent"),
+                ("buyer", "total_spent"),
+                ("buyer", "totalSpent"),
+                ("buyer", "stats", "total_spent"),
+                ("buyer", "stats", "totalSpent"),
+                "c_hist_total_spent",
+            ),
             "c_hist_total_spent",
             statuses,
         ),
@@ -348,7 +426,17 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         ),
         c_hist_avg_hourly_rate=_normalize_money(
             raw_payload,
-            (("client", "avg_hourly_rate"), "c_hist_avg_hourly_rate"),
+            (
+                ("client", "avg_hourly_rate"),
+                ("client", "avgHourlyRate"),
+                ("client", "stats", "avg_hourly_rate"),
+                ("client", "stats", "avgHourlyRate"),
+                ("buyer", "avg_hourly_rate"),
+                ("buyer", "avgHourlyRate"),
+                ("buyer", "stats", "avg_hourly_rate"),
+                ("buyer", "stats", "avgHourlyRate"),
+                "c_hist_avg_hourly_rate",
+            ),
             "c_hist_avg_hourly_rate",
             statuses,
         ),
@@ -366,37 +454,81 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         ),
         j_title=_normalize_text(
             raw_payload,
-            ("title", "j_title", ("job", "title")),
+            ("title", "job_title", "jobTitle", "j_title", ("job", "title")),
             "j_title",
             statuses,
         ),
         j_description=_normalize_text(
             raw_payload,
-            ("description", "j_description", ("job", "description")),
+            (
+                "description",
+                "job_description",
+                "jobDescription",
+                "j_description",
+                ("job", "description"),
+            ),
             "j_description",
             statuses,
         ),
         j_mins_since_posted=_normalize_minutes(
             raw_payload,
-            ("mins_since_posted", "posted_minutes_ago", ("job", "mins_since_posted")),
+            (
+                "mins_since_posted",
+                "posted_minutes_ago",
+                "postedMinutesAgo",
+                ("job", "mins_since_posted"),
+                ("job", "posted_minutes_ago"),
+                ("job", "postedMinutesAgo"),
+            ),
             "j_mins_since_posted",
             statuses,
         ),
         j_posted_at=_normalize_text(
             raw_payload,
-            ("posted_at", ("job", "posted_at")),
+            (
+                "posted_at",
+                "postedAt",
+                "published_on",
+                "publishedOn",
+                "created_on",
+                "createdOn",
+                ("job", "posted_at"),
+                ("job", "postedAt"),
+                ("job", "published_on"),
+                ("job", "publishedOn"),
+                ("job", "created_on"),
+                ("job", "createdOn"),
+            ),
             "j_posted_at",
             statuses,
         ),
         j_apply_cost_connects=_normalize_int(
             raw_payload,
-            ("apply_cost_connects", "j_apply_cost_connects", ("job", "apply_cost_connects")),
+            (
+                "apply_cost_connects",
+                "connects_required",
+                "connectsRequired",
+                "connect_price",
+                "connectPrice",
+                "j_apply_cost_connects",
+                ("job", "apply_cost_connects"),
+                ("job", "connects_required"),
+                ("job", "connectsRequired"),
+                ("job", "connect_price"),
+                ("job", "connectPrice"),
+            ),
             "j_apply_cost_connects",
             statuses,
         ),
         j_project_type=_normalize_text(
             raw_payload,
-            ("project_type", "j_project_type", ("job", "project_type")),
+            (
+                "project_type",
+                "projectType",
+                "j_project_type",
+                ("job", "project_type"),
+                ("job", "projectType"),
+            ),
             "j_project_type",
             statuses,
         ),
@@ -406,7 +538,17 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         j_pay_hourly_high=None,
         j_skills=_normalize_joined_text(
             raw_payload,
-            ("skills", "j_skills", ("job", "skills")),
+            (
+                "skills",
+                "skill_names",
+                "skillNames",
+                "ontologySkills",
+                "j_skills",
+                ("job", "skills"),
+                ("job", "skill_names"),
+                ("job", "skillNames"),
+                ("job", "ontologySkills"),
+            ),
             "j_skills",
             statuses,
         ),
@@ -418,7 +560,15 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         ),
         a_proposals=_normalize_proposal_text(
             raw_payload,
-            (("activity", "proposals"), "a_proposals", "proposals"),
+            (
+                ("activity", "proposals"),
+                ("activity", "proposals_label"),
+                ("jobActivity", "proposals"),
+                ("jobActivity", "proposalsTier"),
+                "a_proposals",
+                "proposals",
+                "proposalRange",
+            ),
             "a_proposals",
             statuses,
         ),
@@ -427,6 +577,9 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
             (
                 ("activity", "mins_since_cli_viewed"),
                 ("activity", "client_last_viewed"),
+                ("jobActivity", "mins_since_cli_viewed"),
+                ("jobActivity", "client_last_viewed"),
+                ("jobActivity", "lastViewedMinutesAgo"),
                 "a_mins_since_cli_viewed",
             ),
             "a_mins_since_cli_viewed",
@@ -440,13 +593,23 @@ def normalize_job_payload(raw_payload: Mapping[str, object]) -> NormalizationRes
         ),
         a_interviewing=_normalize_int(
             raw_payload,
-            (("activity", "interviewing"), "a_interviewing"),
+            (
+                ("activity", "interviewing"),
+                ("jobActivity", "interviewing"),
+                ("jobActivity", "interviewCount"),
+                "a_interviewing",
+            ),
             "a_interviewing",
             statuses,
         ),
         a_invites_sent=_normalize_int(
             raw_payload,
-            (("activity", "invites_sent"), "a_invites_sent"),
+            (
+                ("activity", "invites_sent"),
+                ("jobActivity", "invites_sent"),
+                ("jobActivity", "inviteCount"),
+                "a_invites_sent",
+            ),
             "a_invites_sent",
             statuses,
         ),
@@ -519,7 +682,19 @@ def _apply_contract_specific_pay_fields(
     if contract_type == "fixed":
         j_pay_fixed = _normalize_money(
             raw_payload,
-            ("budget", "j_pay_fixed", ("job", "budget"), ("job", "pay_fixed")),
+            (
+                "budget",
+                "budgetAmount",
+                "fixed_price",
+                "fixedPrice",
+                "amount",
+                "j_pay_fixed",
+                ("job", "budget"),
+                ("job", "budgetAmount"),
+                ("job", "pay_fixed"),
+                ("job", "fixedPrice"),
+                ("job", "amount"),
+            ),
             "j_pay_fixed",
             statuses,
         )
@@ -535,13 +710,35 @@ def _apply_contract_specific_pay_fields(
     if contract_type == "hourly":
         j_pay_hourly_low = _normalize_money(
             raw_payload,
-            ("hourly_low", "j_pay_hourly_low", ("job", "hourly_low")),
+            (
+                "hourly_low",
+                "hourlyBudgetLow",
+                "hourlyBudgetMin",
+                "j_pay_hourly_low",
+                ("job", "hourly_low"),
+                ("job", "hourlyBudgetLow"),
+                ("job", "hourlyBudgetMin"),
+                ("hourlyBudget", "min"),
+                ("hourlyBudget", "minimum"),
+                ("hourlyBudget", "minAmount"),
+            ),
             "j_pay_hourly_low",
             statuses,
         )
         j_pay_hourly_high = _normalize_money(
             raw_payload,
-            ("hourly_high", "j_pay_hourly_high", ("job", "hourly_high")),
+            (
+                "hourly_high",
+                "hourlyBudgetHigh",
+                "hourlyBudgetMax",
+                "j_pay_hourly_high",
+                ("job", "hourly_high"),
+                ("job", "hourlyBudgetHigh"),
+                ("job", "hourlyBudgetMax"),
+                ("hourlyBudget", "max"),
+                ("hourlyBudget", "maximum"),
+                ("hourlyBudget", "maxAmount"),
+            ),
             "j_pay_hourly_high",
             statuses,
         )
@@ -693,7 +890,17 @@ def _normalize_contract_type(
 ) -> str | None:
     extracted = _extract_value(
         raw_payload,
-        ("contract_type", "j_contract_type", ("job", "contract_type")),
+        (
+            "contract_type",
+            "contractType",
+            "job_type",
+            "jobType",
+            "j_contract_type",
+            ("job", "contract_type"),
+            ("job", "contractType"),
+            ("job", "job_type"),
+            ("job", "jobType"),
+        ),
     )
     return _coerce_value(extracted, "j_contract_type", _parse_contract_type, statuses)
 
@@ -753,7 +960,30 @@ def _lookup_path(raw_payload: Mapping[str, object], path: tuple[str, ...]) -> ob
     return current
 
 
+def _extract_mapping_candidate(value: object, *paths: tuple[str, ...]) -> object:
+    if not isinstance(value, Mapping):
+        return MISSING
+
+    for path in paths:
+        candidate = _lookup_path(value, path)
+        if candidate is not MISSING:
+            return candidate
+
+    return MISSING
+
+
 def _parse_identifier(value: object) -> str | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("id",),
+        ("job_id",),
+        ("jobId",),
+        ("ciphertext",),
+        ("uid",),
+        ("value",),
+    )
+    if candidate is not MISSING:
+        return _parse_identifier(candidate)
     if isinstance(value, str):
         trimmed = value.strip()
         return trimmed if trimmed else PARSE_ERROR
@@ -763,6 +993,19 @@ def _parse_identifier(value: object) -> str | object:
 
 
 def _parse_source_url(value: object) -> str | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("source_url",),
+        ("sourceUrl",),
+        ("url",),
+        ("job_url",),
+        ("jobUrl",),
+        ("canonical_url",),
+        ("canonicalUrl",),
+        ("value",),
+    )
+    if candidate is not MISSING:
+        return _parse_source_url(candidate)
     if not isinstance(value, str):
         return PARSE_ERROR
     trimmed = value.strip()
@@ -772,6 +1015,22 @@ def _parse_source_url(value: object) -> str | object:
 
 
 def _parse_text(value: object) -> str | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("value",),
+        ("label",),
+        ("text",),
+        ("name",),
+        ("title",),
+        ("description",),
+        ("prettyName",),
+        ("pretty_name",),
+        ("displayValue",),
+        ("display_value",),
+        ("url",),
+    )
+    if candidate is not MISSING:
+        return _parse_text(candidate)
     if not isinstance(value, str):
         return PARSE_ERROR
     trimmed = value.strip()
@@ -783,12 +1042,30 @@ def _parse_joined_text(value: object) -> str | object:
         trimmed = value.strip()
         return trimmed if trimmed else PARSE_ERROR
     if isinstance(value, list):
-        items = [str(item).strip() for item in value if str(item).strip()]
+        items: list[str] = []
+        for item in value:
+            parsed = _parse_text(item)
+            if parsed is PARSE_ERROR:
+                text = str(item).strip()
+                if text:
+                    items.append(text)
+                continue
+            items.append(parsed)
         return ", ".join(items) if items else PARSE_ERROR
     return PARSE_ERROR
 
 
 def _parse_bool(value: object) -> int | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("value",),
+        ("status",),
+        ("verified",),
+        ("isVerified",),
+        ("is_verified",),
+    )
+    if candidate is not MISSING:
+        return _parse_bool(candidate)
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int) and value in {0, 1}:
@@ -803,6 +1080,15 @@ def _parse_bool(value: object) -> int | object:
 
 
 def _parse_int(value: object) -> int | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("value",),
+        ("count",),
+        ("amount",),
+        ("total",),
+    )
+    if candidate is not MISSING:
+        return _parse_int(candidate)
     if isinstance(value, bool):
         return PARSE_ERROR
     if isinstance(value, int):
@@ -817,6 +1103,15 @@ def _parse_int(value: object) -> int | object:
 
 
 def _parse_number(value: object) -> float | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("value",),
+        ("amount",),
+        ("count",),
+        ("total",),
+    )
+    if candidate is not MISSING:
+        return _parse_number(candidate)
     if isinstance(value, bool):
         return PARSE_ERROR
     if isinstance(value, int | float):
@@ -831,6 +1126,19 @@ def _parse_number(value: object) -> float | object:
 
 
 def _parse_money(value: object) -> float | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("amount",),
+        ("value",),
+        ("displayValue",),
+        ("display_value",),
+        ("rawValue",),
+        ("raw_value",),
+        ("minAmount",),
+        ("maxAmount",),
+    )
+    if candidate is not MISSING:
+        return _parse_money(candidate)
     if isinstance(value, bool):
         return PARSE_ERROR
     if isinstance(value, int | float):
@@ -852,6 +1160,17 @@ def _parse_money(value: object) -> float | object:
 
 
 def _parse_percent(value: object) -> float | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("percentage",),
+        ("percent",),
+        ("rate",),
+        ("value",),
+        ("displayValue",),
+        ("display_value",),
+    )
+    if candidate is not MISSING:
+        return _parse_percent(candidate)
     if isinstance(value, bool):
         return PARSE_ERROR
     if isinstance(value, int | float):
@@ -871,6 +1190,16 @@ def _parse_percent(value: object) -> float | object:
 
 
 def _parse_minutes(value: object) -> int | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("minutesAgo",),
+        ("minutes_ago",),
+        ("minutes",),
+        ("value",),
+        ("amount",),
+    )
+    if candidate is not MISSING:
+        return _parse_minutes(candidate)
     if isinstance(value, bool):
         return PARSE_ERROR
     if isinstance(value, int):
@@ -898,6 +1227,17 @@ def _parse_minutes(value: object) -> int | object:
 
 
 def _parse_proposal_text(value: object) -> str | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("label",),
+        ("value",),
+        ("text",),
+        ("displayValue",),
+        ("display_value",),
+        ("range",),
+    )
+    if candidate is not MISSING:
+        return _parse_proposal_text(candidate)
     if isinstance(value, str):
         trimmed = value.strip()
         return trimmed if trimmed else PARSE_ERROR
@@ -907,9 +1247,18 @@ def _parse_proposal_text(value: object) -> str | object:
 
 
 def _parse_contract_type(value: object) -> str | object:
+    candidate = _extract_mapping_candidate(
+        value,
+        ("value",),
+        ("label",),
+        ("type",),
+        ("name",),
+    )
+    if candidate is not MISSING:
+        return _parse_contract_type(candidate)
     if not isinstance(value, str):
         return PARSE_ERROR
-    lowered = value.strip().lower()
+    lowered = value.strip().lower().replace("-", " ").replace("_", " ")
     if lowered in FIXED_MARKERS:
         return "fixed"
     if lowered in HOURLY_MARKERS:

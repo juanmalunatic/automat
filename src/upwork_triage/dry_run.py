@@ -29,6 +29,7 @@ KEY_COVERAGE_FIELDS = (
     "a_interviewing",
     "a_invites_sent",
     "j_mins_since_posted",
+    "j_posted_at",
 )
 ROUTING_BUCKET_ORDER = ("AI_EVAL", "MANUAL_EXCEPTION", "LOW_PRIORITY_REVIEW", "DISCARD")
 MISSING = "\N{EM DASH}"

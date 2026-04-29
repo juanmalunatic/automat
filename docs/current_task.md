@@ -2,123 +2,79 @@
 
 ## Task name
 
-Implement a no-AI raw-artifact normalization/filter dry run.
+Calibrate the Upwork GraphQL/raw-payload mapping against the first real inspection artifact.
 
 ## Goal
 
-Add a local calibration bridge between `inspect-upwork-raw` and `ingest-once`.
+Use the ignored local raw-inspection and dry-run artifacts when they exist to make the live Upwork boundary more trustworthy before spending AI cost.
 
-The command should read a raw inspection artifact, run the current normalizer and deterministic filters only, and report:
+This task focuses on:
 
-1. how many jobs loaded successfully
-2. routing-bucket distribution
-3. key-field coverage after normalization
-4. parse-failure hotspots
-5. a few per-job sample lines for manual review
+1. Upwork GraphQL response extraction shape support
+2. raw payload alias/parsing support in `normalize_job_payload()`
+3. sanitized regression fixtures that preserve real nesting/key/type patterns without private job text
+4. small dry-run reporting improvements when they help calibration
 
-This task should not call AI, should not run economics or triage, and should not write staged DB rows by default.
+This task should not call AI, should not run economics or final triage, and should not commit any real Upwork raw artifacts.
+
+## Local prerequisites
+
+Before or during calibration, the local developer may create ignored artifacts such as:
+
+- `data/debug/upwork_raw_latest.json`
+- `data/debug/upwork_dry_run_latest.json`
+
+Typical manual workflow:
+
+```powershell
+py -m upwork_triage inspect-upwork-raw
+py -m upwork_triage dry-run-raw-artifact --show-field-status --json-output data/debug/upwork_dry_run_latest.json
+```
+
+These artifacts are private/debug data and must not be committed.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/dry_run.py`
-- `src/upwork_triage/cli.py`
-- `tests/test_dry_run.py`
-- `tests/test_cli.py`
+- `src/upwork_triage/upwork_client.py` if the real response shape needs extractor/query calibration
+- `src/upwork_triage/normalize.py` if real payload nesting/aliases need support
+- `tests/test_upwork_client.py`
+- `tests/test_normalize.py`
+- `tests/test_dry_run.py` if dry-run reporting needs a tiny calibration-focused adjustment
 - `docs/current_task.md`
 - `docs/testing.md`
-- `docs/design.md` if needed
-- `docs/decisions.md` if a durable dry-run decision is made
-- `README.md` if command docs change
+- `docs/design.md` if the calibration workflow needs clarification
+- `docs/decisions.md` only if a durable mapping/query decision is made
+- `README.md` if the live calibration workflow needs clarification
 
 Allowed supporting edits:
 
-- `src/upwork_triage/normalize.py` only if a tiny helper is clearly needed, without changing normalization semantics unless a bug is discovered and documented
-- `src/upwork_triage/filters.py` only if a tiny helper is clearly needed, without changing filter rules
-- `.gitignore` only if a new default output path is introduced
+- `src/upwork_triage/inspect_upwork.py` only if artifact metadata needs a tiny compatibility improvement
+- `src/upwork_triage/dry_run.py` only if field coverage/reporting needs a tiny bug fix
+- `.gitignore` only if a new ignored local debug artifact path appears
 - `pyproject.toml` only if needed for test/import configuration
 
-## Public API
+## Calibration boundaries
 
-Implement a small pure dry-run module with responsibilities like:
+Do only the following kinds of calibration work:
 
-- `RawArtifactError`
-- `JobDryRunResult`
-- `RawArtifactDryRunSummary`
-- `load_raw_inspection_artifact(path)`
-- `dry_run_raw_jobs(raw_jobs, *, artifact_path=None)`
-- `render_raw_artifact_dry_run_summary(summary, *, sample_limit=10, show_field_status=False)`
-- `write_dry_run_summary_json(path, summary)` if JSON summary output is implemented
+- inspect ignored local raw/dry-run artifacts when they exist
+- extend `extract_job_payloads()` for a real-like GraphQL response shape if needed
+- extend `normalize_job_payload()` aliases/parsers for real-like Upwork payload keys/nesting
+- add sanitized minimal regression fixtures that preserve key names, nesting, and types
+- preserve `NOT_VISIBLE` / `PARSE_FAILURE` semantics when live fields are absent or malformed
 
-Equivalent clear names are acceptable if the module stays explicit, typed, and local-only.
+Do not:
 
-## Dry-run command behavior
+- paste real client/job text into committed tests
+- invent unavailable fields
+- coerce missing live fields to zero
+- redesign the architecture
 
-Add a package CLI command:
+## Calibration targets
 
-- `py -m upwork_triage dry-run-raw-artifact`
-
-Suggested flags:
-
-- `--input PATH`
-  - default: `data/debug/upwork_raw_latest.json`
-- `--sample-limit N`
-  - default: `10`
-- `--json-output PATH`
-  - optional
-- `--show-field-status`
-  - optional
-
-The command should:
-
-1. read a raw inspection artifact produced by `inspect-upwork-raw`
-2. load the top-level `jobs` list
-3. normalize each raw job with `normalize_job_payload()`
-4. evaluate deterministic filters with `evaluate_filters()`
-5. print a compact summary to stdout
-6. optionally write a JSON dry-run summary if `--json-output` is supplied
-7. return `0` when processing completes, even if some jobs have missing fields or route to `DISCARD`
-
-The command must not:
-
-- call Upwork
-- call OpenAI or any AI provider
-- run economics
-- run final triage
-- run `fake-demo`
-- run `ingest-once`
-- write staged SQLite rows by default
-
-## Dry-run summary behavior
-
-The dry run should report at least:
-
-- artifact path
-- total jobs loaded
-- jobs processed successfully
-- jobs failed unexpectedly
-- normalization successes / failures
-- observed `job_key` examples
-- routing bucket counts
-- hard reject count
-- `AI_EVAL` count
-- `MANUAL_EXCEPTION` count
-- `LOW_PRIORITY_REVIEW` count
-- `DISCARD` count
-- key-field visible coverage after normalization
-- parse-failure counts
-- sample per-job lines showing:
-  - title
-  - `job_key`
-  - routing bucket
-  - score
-  - reject reasons
-  - positive flags
-
-Coverage must be based on normalized values and/or normalized field-status information. Missing values must not be guessed or treated as zero.
-
-At minimum, coverage should be reported for:
+Prioritize visible progress on these decision fields:
 
 - `upwork_job_id`
 - `source_url`
@@ -138,74 +94,72 @@ At minimum, coverage should be reported for:
 - `a_proposals`
 - `a_interviewing`
 - `a_invites_sent`
-- `j_mins_since_posted`
+- `j_mins_since_posted` or `j_posted_at`
 
-## Artifact behavior
+If some fields are not available from the current live response shape, keep them `NOT_VISIBLE` and document that honestly.
 
-The dry-run command should read the raw-artifact shape produced by `inspect-upwork-raw`:
+## Sanitization rule
 
-- top-level JSON object
-- `jobs` list
-- optional source/summary metadata
+If a committed test fixture is based on a real payload shape, it must be synthetic and sanitized.
 
-Malformed artifacts should fail clearly:
+Preserve:
 
-- missing file
-- invalid JSON
-- missing `jobs`
-- non-list `jobs`
+- field names
+- nesting
+- data types
+- representative formatting
 
-If an individual job fails normalization or filtering unexpectedly, prefer recording an error result for that job and continuing rather than failing the entire dry run.
+Replace private content with harmless placeholders such as:
+
+- title: `Sanitized WooCommerce job`
+- description: `Sanitized description mentioning WooCommerce and API integration.`
+- fake IDs / locations / URLs
+
+Do not paste full real job descriptions into committed tests.
 
 ## Test requirements
 
 Add or update tests covering:
 
-1. `load_raw_inspection_artifact()` reads the `jobs` list from an inspect artifact
-2. missing artifact path raises a clear `RawArtifactError`
-3. malformed JSON raises a clear `RawArtifactError`
-4. missing or non-list `jobs` raises a clear `RawArtifactError`
-5. `dry_run_raw_jobs()` normalizes and filters a strong fake raw job
-6. `dry_run_raw_jobs()` records routing bucket counts
-7. `dry_run_raw_jobs()` records key-field visible counts
-8. `dry_run_raw_jobs()` records parse-failure counts
-9. `dry_run_raw_jobs()` handles an empty jobs list
-10. `dry_run_raw_jobs()` handles an individual malformed job according to the chosen behavior
-11. `render_raw_artifact_dry_run_summary()` includes counts, bucket distribution, coverage, parse failures, and sample per-job lines
-12. `write_dry_run_summary_json()` writes valid JSON if implemented
-13. `main(["dry-run-raw-artifact", "--input", PATH])` returns `0` for a valid artifact
-14. CLI output includes total loaded, routing distribution, and sample title / `job_key`
-15. the command does not require `UPWORK_ACCESS_TOKEN` or `OPENAI_API_KEY`
-16. missing or malformed artifact returns non-zero with a helpful error
-17. `--sample-limit` limits rendered sample rows
-18. `--json-output` writes a JSON summary if implemented
-19. the dry-run CLI path does not call Upwork fetch, OpenAI evaluation, live ingest, fake demo, economics, or action recording
-20. existing fake-demo, inspect-upwork-raw, ingest-once, queue, and action tests remain passing
-
-All dry-run tests must stay local-only and make no network, AI, or staged DB writes by default.
+1. existing supported GraphQL response shapes still work
+2. a sanitized real-like GraphQL response shape extracts the expected job dicts
+3. GraphQL errors still raise clearly
+4. malformed response shapes still raise clearly
+5. a sanitized real-like Upwork payload normalizes job id, title, description, and source URL
+6. it normalizes payment verification when present
+7. it normalizes budget/hourly fields when present
+8. it normalizes client spend / hire rate / avg hourly when present
+9. it normalizes connects / proposals / interviewing / invites when present
+10. unavailable fields remain `NOT_VISIBLE`, not zero
+11. malformed visible fields remain `PARSE_FAILURE`
+12. existing fake/local normalizer tests remain passing
+13. dry-run reporting still computes routing distribution through `evaluate_filters()`
+14. a sanitized real-like payload produces useful dry-run field-coverage output if dry-run reporting changes
+15. no tests require real credentials, real artifacts, or network access
 
 ## Out of scope
 
 Do not implement:
 
-- OpenAI or other AI calls
-- economics or final triage in this command
-- default staged DB writes
-- live Upwork fetch inside this command
+- real artifact commits
+- real token/secret commits
+- OpenAI or any AI calls
+- economics or final triage changes
 - polling / daemon behavior
+- dashboard / web UI
 - proposal generation
 - auto-apply
-- dashboard / web UI
-- normalization or filter rule changes beyond clearly documented tiny bug fixes
+- large abstractions or architecture rewrites
+- deterministic filter rule changes unless a clear bug is discovered and documented
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- a user can analyze a raw Upwork artifact without AI cost
-- the dry run reports normalized field coverage and deterministic filter routing
-- the dry run does not write DB rows by default
-- the dry run does not call Upwork or OpenAI
-- missing or malformed artifacts fail clearly
-- docs are updated and honest about the calibration purpose
+- the code supports at least one sanitized real-like Upwork response/payload shape
+- existing fake/demo behavior still works
+- real artifacts are not committed
+- tests use sanitized minimal fixtures only
+- missing live fields remain `NOT_VISIBLE`, not fake values
+- dry-run is more useful for deciding whether `ingest-once` is safe
 - `py -m pytest` passes

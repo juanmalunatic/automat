@@ -114,6 +114,19 @@ def test_extract_job_payloads_handles_data_search_as_list() -> None:
     assert payloads == [{"id": "job-4", "title": "Fourth job"}]
 
 
+def test_extract_job_payloads_handles_sanitized_real_like_nested_search_results_shape() -> None:
+    payloads = extract_job_payloads(real_like_search_results_response())
+
+    assert payloads == [
+        {
+            "ciphertext": "~0123456789",
+            "title": "Sanitized WooCommerce job",
+            "description": "Sanitized description mentioning WooCommerce and API integration.",
+            "jobUrl": "https://www.example.test/jobs/~0123456789",
+        }
+    ]
+
+
 def test_extract_job_payloads_ignores_null_nodes_and_items_safely() -> None:
     payloads = extract_job_payloads(
         {
@@ -186,6 +199,29 @@ def jobs_edges_response() -> dict[str, object]:
                 "edges": [
                     {"node": {"id": "job-1", "title": "First job"}},
                 ]
+            }
+        }
+    }
+
+
+def real_like_search_results_response() -> dict[str, object]:
+    return {
+        "data": {
+            "marketplaceJobPostingsSearch": {
+                "searchResults": {
+                    "edges": [
+                        {
+                            "node": {
+                                "ciphertext": "~0123456789",
+                                "title": "Sanitized WooCommerce job",
+                                "description": (
+                                    "Sanitized description mentioning WooCommerce and API integration."
+                                ),
+                                "jobUrl": "https://www.example.test/jobs/~0123456789",
+                            }
+                        }
+                    ]
+                }
             }
         }
     }

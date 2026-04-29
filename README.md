@@ -131,6 +131,8 @@ py -m upwork_triage dry-run-raw-artifact
 py -m upwork_triage ingest-once
 ```
 
+If the dry-run coverage looks poor, do a local calibration pass against the ignored `data/debug/upwork_raw_latest.json` and `data/debug/upwork_dry_run_latest.json` artifacts before relying on `ingest-once`. Those files are private debug artifacts and should never be committed.
+
 ## Upwork auth helpers
 
 The repository now includes local helper commands for obtaining or refreshing Upwork tokens:

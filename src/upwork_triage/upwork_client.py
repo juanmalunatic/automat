@@ -162,21 +162,21 @@ def extract_job_payloads(response_json: Mapping[str, object]) -> list[dict[str, 
     if not isinstance(data, Mapping):
         raise UpworkGraphQlError("Upwork GraphQL response is missing a data object")
 
-    for container_name in ("jobs", "search"):
+    for container_name in (
+        "jobs",
+        "search",
+        "marketplaceJobPostingsSearch",
+        "marketplaceJobSearch",
+    ):
         if container_name not in data:
             continue
 
-        container = data[container_name]
-        if isinstance(container, list):
-            return _extract_from_item_list(container, container_name)
-
-        if isinstance(container, Mapping) and "edges" in container:
-            edges = container["edges"]
-            if not isinstance(edges, list):
-                raise UpworkGraphQlError(
-                    f"Upwork GraphQL response field data.{container_name}.edges must be a list"
-                )
-            return _extract_from_edge_list(edges, container_name)
+        extracted = _extract_from_container(
+            data[container_name],
+            f"data.{container_name}",
+        )
+        if extracted is not None:
+            return extracted
 
     raise UpworkGraphQlError(
         "Upwork GraphQL response did not contain a recognized jobs/search payload"
@@ -198,7 +198,7 @@ def fetch_upwork_jobs(
 
 def _extract_from_edge_list(
     edges: list[object],
-    container_name: str,
+    container_path: str,
 ) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     for edge in edges:
@@ -206,14 +206,14 @@ def _extract_from_edge_list(
             continue
         if not isinstance(edge, Mapping):
             raise UpworkGraphQlError(
-                f"Upwork GraphQL response field data.{container_name}.edges items must be objects"
+                f"Upwork GraphQL response field {container_path}.edges items must be objects"
             )
         node = edge.get("node")
         if node is None:
             continue
         if not isinstance(node, Mapping):
             raise UpworkGraphQlError(
-                f"Upwork GraphQL response field data.{container_name}.edges[].node must be an object"
+                f"Upwork GraphQL response field {container_path}.edges[].node must be an object"
             )
         items.append(dict(node))
     return items
@@ -221,7 +221,7 @@ def _extract_from_edge_list(
 
 def _extract_from_item_list(
     values: list[object],
-    container_name: str,
+    container_path: str,
 ) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     for value in values:
@@ -229,10 +229,41 @@ def _extract_from_item_list(
             continue
         if not isinstance(value, Mapping):
             raise UpworkGraphQlError(
-                f"Upwork GraphQL response field data.{container_name} items must be objects"
+                f"Upwork GraphQL response field {container_path} items must be objects"
             )
         items.append(dict(value))
     return items
+
+
+def _extract_from_container(
+    container: object,
+    container_path: str,
+) -> list[dict[str, object]] | None:
+    if isinstance(container, list):
+        return _extract_from_item_list(container, container_path)
+
+    if not isinstance(container, Mapping):
+        return None
+
+    if "edges" in container:
+        edges = container["edges"]
+        if not isinstance(edges, list):
+            raise UpworkGraphQlError(
+                f"Upwork GraphQL response field {container_path}.edges must be a list"
+            )
+        return _extract_from_edge_list(edges, container_path)
+
+    for nested_key in ("searchResults", "results", "items", "jobs", "search"):
+        if nested_key not in container:
+            continue
+        extracted = _extract_from_container(
+            container[nested_key],
+            f"{container_path}.{nested_key}",
+        )
+        if extracted is not None:
+            return extracted
+
+    return None
 
 
 def _format_graphql_errors(errors_value: object) -> str:

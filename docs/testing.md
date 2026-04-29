@@ -207,6 +207,10 @@ Should verify:
 - payment verified normalizes to a DB-compatible boolean flag
 - missing client avg hourly does not become `0`
 - malformed numeric values become `None` plus `PARSE_FAILURE`
+- sanitized real-like Upwork payload fixtures normalize job id/title/description/source URL correctly
+- sanitized real-like Upwork payload fixtures normalize client payment/client-history fields when present
+- sanitized real-like Upwork payload fixtures normalize budget/hourly/activity fields when present
+- sanitized real-like Upwork payload fixtures preserve `NOT_VISIBLE` and `PARSE_FAILURE` for unavailable or malformed visible fields
 - normalized output can build `FilterInput`
 - normalized output can build `AiPayloadInput`
 - normalized output can build `EconomicsJobInput`
@@ -275,6 +279,7 @@ Should verify:
 - `extract_job_payloads()` supports `data.search.edges[].node`
 - `extract_job_payloads()` supports `data.jobs` as a list
 - `extract_job_payloads()` supports `data.search` as a list
+- `extract_job_payloads()` supports sanitized real-like nested search-result shapes such as `data.marketplaceJobPostingsSearch.searchResults.edges[].node`
 - null nodes/items inside recognized lists are ignored safely
 - GraphQL `errors` responses raise `UpworkGraphQlError`
 - unrecognized response shapes raise `UpworkGraphQlError`
@@ -309,6 +314,7 @@ Should verify:
 - `dry_run_raw_jobs()` normalizes and filters a strong fake raw job
 - routing bucket counts are recorded
 - key field visible-count coverage is recorded
+- sanitized real-like raw payload fixtures produce useful field-coverage counts
 - parse-failure counts are recorded
 - empty job lists still produce a valid summary
 - unexpected per-job normalization/filter failures are recorded per job while the overall summary continues
@@ -402,6 +408,8 @@ Upwork raw-inspection tests should use fake fetch boundaries only. They should n
 
 Dry-run artifact tests should use local JSON fixtures only. They should not require real Upwork credentials, real network access, OpenAI credentials, or staged DB writes.
 
+Calibration-oriented Upwork extractor/normalizer tests should use sanitized minimal fixtures only. They must preserve representative key names, nesting, and value formats without copying real client/job text from ignored artifacts.
+
 Do not require real AI calls for unit tests.
 
 AI tests should use fake model responses or stored fixture JSON.
@@ -427,6 +435,8 @@ Auth-helper CLI tests should monkeypatch token exchange/refresh helpers rather t
 `inspect-upwork-raw` CLI tests should monkeypatch the Upwork fetch boundary rather than calling real Upwork. They should verify the command stays no-AI, can write a local debug artifact, and does not leak fake token values through normal error output.
 
 `dry-run-raw-artifact` CLI tests should read local raw-inspection artifacts, stay no-AI and no-network, avoid staged DB writes by default, and ensure missing or malformed artifacts fail clearly.
+
+No committed test should depend on the private contents of `data/debug/upwork_raw_latest.json` or `data/debug/upwork_dry_run_latest.json`. Those ignored artifacts are for local calibration only; committed regression coverage must stay sanitized and secret-free.
 
 Action tests should use in-memory SQLite plus `initialize_db(conn)` and should not call Upwork, OpenAI, or the batch pipeline.
 

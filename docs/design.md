@@ -90,6 +90,8 @@ Before spending AI cost through `ingest-once`, the app may run a raw-fetch inspe
 
 The next calibration bridge after raw inspection is a no-AI dry run over a saved raw artifact. That step should reuse the real normalizer and deterministic filters, report field coverage and routing distribution, and avoid staged DB writes by default so query/normalizer adjustments can happen before AI cost is incurred.
 
+Calibration against live Upwork shape should happen through ignored local debug artifacts plus sanitized minimal regression fixtures. The raw artifacts themselves stay local/private and out of source control; committed tests should preserve only the key names, nesting, and representative formats needed to reproduce the mapping behavior safely.
+
 ### Normalized data
 
 Normalized visible job data is stored in `job_snapshots_normalized`.
