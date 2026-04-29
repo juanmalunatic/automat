@@ -17,7 +17,9 @@ from upwork_triage import __main__ as package_main
 import upwork_triage.run_pipeline as run_pipeline_module
 from upwork_triage.ai_eval import AiEvaluation
 from upwork_triage.cli import main
+from upwork_triage.config import load_config
 from upwork_triage.db import connect_db
+from upwork_triage.upwork_auth import TokenResponse
 
 
 @pytest.fixture
@@ -109,6 +111,123 @@ def test_main_ingest_once_returns_zero_and_writes_rendered_shortlist(
     assert "Reason:" in output
     assert "Trap:" in output
     assert "Angle:" in output
+
+
+def test_main_upwork_auth_url_returns_zero_and_prints_authorization_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "upwork_triage.cli.load_config",
+        lambda: load_config(
+            {
+                "UPWORK_CLIENT_ID": "client-123",
+                "UPWORK_REDIRECT_URI": "https://localhost.example/callback",
+            }
+        ),
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["upwork-auth-url"], stdout=stdout, stderr=stderr)
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert "https://www.upwork.com/ab/account-security/oauth2/authorize" in output
+    assert "client_id=client-123" in output
+    assert "redirect_uri=https%3A%2F%2Flocalhost.example%2Fcallback" in output
+
+
+def test_upwork_auth_url_missing_config_returns_non_zero_and_helpful_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("upwork_triage.cli.load_config", lambda: load_config({}))
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["upwork-auth-url"], stdout=stdout, stderr=stderr)
+
+    assert exit_code != 0
+    assert "UPWORK_CLIENT_ID" in stderr.getvalue()
+    assert "UPWORK_REDIRECT_URI" in stderr.getvalue()
+
+
+def test_main_upwork_exchange_code_prints_env_style_token_lines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("upwork_triage.cli.load_config", lambda: load_config({}))
+    monkeypatch.setattr(
+        "upwork_triage.cli.exchange_authorization_code",
+        lambda config, code: TokenResponse(
+            access_token="access-123",
+            token_type="Bearer",
+            expires_in=3600,
+            refresh_token="refresh-123",
+            raw={"access_token": "access-123"},
+        ),
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["upwork-exchange-code", "abc123"], stdout=stdout, stderr=stderr)
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert "# WARNING: these token values are secrets." in output
+    assert "UPWORK_ACCESS_TOKEN=access-123" in output
+    assert "UPWORK_REFRESH_TOKEN=refresh-123" in output
+    assert "UPWORK_TOKEN_TYPE=Bearer" in output
+    assert "UPWORK_EXPIRES_IN=3600" in output
+
+
+def test_main_upwork_refresh_token_prints_env_style_token_lines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("upwork_triage.cli.load_config", lambda: load_config({}))
+    monkeypatch.setattr(
+        "upwork_triage.cli.refresh_upwork_access_token",
+        lambda config: TokenResponse(
+            access_token="new-access-123",
+            token_type=None,
+            expires_in=None,
+            refresh_token="new-refresh-123",
+            raw={"access_token": "new-access-123"},
+        ),
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["upwork-refresh-token"], stdout=stdout, stderr=stderr)
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert "# WARNING: these token values are secrets." in output
+    assert "UPWORK_ACCESS_TOKEN=new-access-123" in output
+    assert "UPWORK_REFRESH_TOKEN=new-refresh-123" in output
+
+
+def test_upwork_cli_errors_do_not_print_fake_client_secret_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_secret = "fake-secret-456"
+    monkeypatch.setattr(
+        "upwork_triage.cli.load_config",
+        lambda: load_config({"UPWORK_CLIENT_SECRET": fake_secret}),
+    )
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(["upwork-auth-url"], stdout=stdout, stderr=stderr)
+
+    assert exit_code != 0
+    assert fake_secret not in stderr.getvalue()
 
 
 def test_ingest_once_does_not_use_fake_demo_sqlite_tweak(

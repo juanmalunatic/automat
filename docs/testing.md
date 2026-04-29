@@ -67,6 +67,9 @@ Should verify:
 - `target_rate_usd` and `connect_cost_usd` parse as positive floats when present
 - invalid numeric config raises `ConfigError`
 - fake mode does not require OpenAI or Upwork secrets
+- defaults include `upwork_graphql_url`, `upwork_authorize_url`, and `upwork_token_url`
+- env overrides work for `UPWORK_GRAPHQL_URL`, `UPWORK_AUTHORIZE_URL`, and `UPWORK_TOKEN_URL`
+- `UPWORK_REDIRECT_URI` becomes `None` when missing/empty and stays a string when present
 - the returned config object is immutable
 - `.env.example` lists the supported variables and does not contain obvious real secrets
 
@@ -86,6 +89,11 @@ Should verify:
 - `ingest-once` uses the normal SQLite connection behavior and does not apply fake-demo-only connection tweaks
 - running `ingest-once` twice against the same temp DB keeps versioned stage rows replay-safe while still creating a fresh `ingestion_runs` row
 - missing live credentials or client/provider failures make `ingest-once` return a non-zero exit code with a helpful error
+- `main(["upwork-auth-url"])` returns `0` and prints an authorization URL when auth config is present
+- `upwork-auth-url` missing config returns a non-zero exit code with a helpful error
+- `main(["upwork-exchange-code", ...])` prints secret `.env`-style token lines plus a warning comment
+- `main(["upwork-refresh-token"])` prints secret `.env`-style token lines plus a warning comment
+- helper CLI error output must not leak fake client-secret values
 - `main([])` or an unknown command returns a non-zero exit code and prints usage or a helpful error
 - `src/upwork_triage/__main__.py` delegates to the CLI module without requiring a subprocess
 
@@ -230,6 +238,24 @@ Should verify:
 - transport/network exceptions are wrapped clearly in `UpworkClientError`
 - tests do not require real Upwork credentials or network access
 
+### `tests/test_upwork_auth.py`
+
+Should verify:
+
+- `build_authorization_url()` includes `response_type=code`, `client_id`, `redirect_uri`, and optional `state`
+- authorization URLs are URL-encoded correctly
+- missing `UPWORK_CLIENT_ID` or `UPWORK_REDIRECT_URI` fails clearly
+- authorization-code exchange posts the correct token URL and form fields
+- authorization-code exchange requires client id, client secret, redirect URI, and a non-empty code
+- token refresh posts the correct token URL and form fields
+- token refresh requires client id, client secret, and refresh token
+- `parse_token_response()` accepts a valid access-token response
+- optional `refresh_token` and `expires_in` fields are parsed when present
+- missing or empty `access_token` is rejected
+- OAuth-style error responses raise `UpworkTokenError`
+- transport failures are wrapped without leaking secret values
+- tests use fake form transports only and never call the network
+
 ### `tests/test_run_pipeline.py`
 
 Should verify:
@@ -293,6 +319,8 @@ Do not require real Upwork API credentials for unit tests.
 
 Upwork client tests should use fake transports only. They should not require real Upwork credentials, real network access, or a live GraphQL endpoint.
 
+Upwork auth tests should use fake form transports only. They should not require real Upwork credentials, real network access, or a live OAuth endpoint.
+
 Do not require real AI calls for unit tests.
 
 AI tests should use fake model responses or stored fixture JSON.
@@ -312,6 +340,8 @@ Config tests should prefer passing fake env dicts into `load_config()` rather th
 CLI tests should use temp DB paths through env overrides or other isolated config strategies. They should not write to the real default `data/automat.sqlite3`, require a live `.env` file, or require real network/model credentials.
 
 `ingest-once` CLI tests should monkeypatch the live fetch and/or AI boundaries rather than calling real Upwork or OpenAI services.
+
+Auth-helper CLI tests should monkeypatch token exchange/refresh helpers rather than calling real Upwork OAuth services. They should verify the secret warning comment and ensure fake secret values do not leak through normal error output.
 
 For `v_decision_shortlist` tests, use `queue_bucket = 'HOT'`, `REVIEW`, or `MANUAL_EXCEPTION` when the row is expected to appear.
 

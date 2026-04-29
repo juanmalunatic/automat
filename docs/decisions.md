@@ -268,3 +268,19 @@ Dependency injection keeps the live path unit-testable without real Upwork/OpenA
 Tradeoff:
 
 There are now two CLI paths to maintain. The live-compatible path is intentionally one-shot and conservative for now, so future recurring polling or retry behavior will need explicit design rather than being implied by this first batch runner.
+
+## 2026-04-28 - Keep Upwork OAuth/token management in a separate auth boundary
+
+Decision:
+
+Upwork OAuth authorization URL building, authorization-code exchange, and token refresh should live in `upwork_auth.py` behind a fakeable form-post transport boundary rather than inside the GraphQL client or the ingest pipeline.
+
+Local CLI helper commands may print `.env`-style token lines for copy/paste, but they should not write `.env` automatically or store tokens in SQLite in this MVP step.
+
+Reason:
+
+`ingest-once` needs configured access tokens, but it should not own the OAuth flow. Separating token management from GraphQL fetching keeps the staged ingestion pipeline focused on raw job payloads, makes auth behavior fully testable without network calls, and avoids inventing token-persistence policy before the project is ready for it.
+
+Tradeoff:
+
+There is one more local integration boundary and a few more CLI commands to maintain. Token persistence and recurring refresh behavior remain an explicit future decision instead of being hidden inside the first live-compatible ingestion path.

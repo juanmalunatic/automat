@@ -25,7 +25,13 @@ def test_load_config_with_empty_env_returns_defaults() -> None:
     assert config.upwork_client_secret is None
     assert config.upwork_access_token is None
     assert config.upwork_refresh_token is None
-    assert config.upwork_graphql_url == "https://placeholder.invalid/upwork-graphql"
+    assert config.upwork_graphql_url == "https://api.upwork.com/graphql"
+    assert (
+        config.upwork_authorize_url
+        == "https://www.upwork.com/ab/account-security/oauth2/authorize"
+    )
+    assert config.upwork_token_url == "https://www.upwork.com/api/v3/oauth2/token"
+    assert config.upwork_redirect_uri is None
     assert config.search_terms == (
         "WordPress",
         "WooCommerce",
@@ -80,6 +86,29 @@ def test_empty_upwork_graphql_url_falls_back_to_default() -> None:
     config = load_config({"UPWORK_GRAPHQL_URL": "   "})
 
     assert config.upwork_graphql_url == default_url
+
+
+def test_upwork_auth_urls_env_overrides_are_respected() -> None:
+    config = load_config(
+        {
+            "UPWORK_AUTHORIZE_URL": "https://example.test/oauth/authorize",
+            "UPWORK_TOKEN_URL": "https://example.test/oauth/token",
+        }
+    )
+
+    assert config.upwork_authorize_url == "https://example.test/oauth/authorize"
+    assert config.upwork_token_url == "https://example.test/oauth/token"
+
+
+def test_upwork_redirect_uri_parses_none_when_missing_or_empty() -> None:
+    assert load_config({}).upwork_redirect_uri is None
+    assert load_config({"UPWORK_REDIRECT_URI": "   "}).upwork_redirect_uri is None
+
+
+def test_upwork_redirect_uri_parses_as_string_when_present() -> None:
+    config = load_config({"UPWORK_REDIRECT_URI": "https://localhost.example/callback"})
+
+    assert config.upwork_redirect_uri == "https://localhost.example/callback"
 
 
 @pytest.mark.parametrize("run_mode", ["fake", "live"])
@@ -172,6 +201,9 @@ def test_env_example_contains_supported_variables_and_no_obvious_real_secrets() 
     assert "UPWORK_ACCESS_TOKEN=" in content
     assert "UPWORK_REFRESH_TOKEN=" in content
     assert "UPWORK_GRAPHQL_URL=" in content
+    assert "UPWORK_AUTHORIZE_URL=" in content
+    assert "UPWORK_TOKEN_URL=" in content
+    assert "UPWORK_REDIRECT_URI=" in content
     assert "UPWORK_SEARCH_TERMS=" in content
     assert "UPWORK_POLL_LIMIT=" in content
     assert "AUTOMAT_TARGET_RATE_USD=" in content

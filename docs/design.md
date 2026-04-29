@@ -56,7 +56,7 @@ Pipeline stages:
 
 The key architectural rule is that each stage stores its output separately.
 
-The live-fetch boundary should return plain raw job-like dict payloads through a small local client interface. Normalization remains the next stage and should not depend directly on HTTP response objects or provider-specific SDK types.
+The live-fetch boundary should return plain raw job-like dict payloads through a small local client interface. Upwork OAuth/token exchange should remain a separate boundary from GraphQL fetching so normalization and downstream stages do not depend directly on HTTP response objects, auth response payloads, or provider-specific SDK types.
 
 The first live-compatible batch runner should keep that staged boundary intact instead of collapsing fetch, normalization, AI, economics, and triage into one opaque helper. It may orchestrate the stages in one command, but it should still persist each stage separately and fail fast on unexpected per-job errors after marking the ingestion run as failed.
 
@@ -487,7 +487,17 @@ This command is the first live-compatible batch path. It should load config, ope
 
 `ingest-once` should use the normal SQLite connection behavior from `connect_db()`. Demo-only SQLite tweaks such as forcing `PRAGMA journal_mode = MEMORY` may remain limited to `fake-demo`.
 
-Even in this live-compatible path, OAuth authorization-code flow, token refresh, and recurring polling remain deferred. The command is a one-shot ingest/evaluate run, not a background daemon.
+`ingest-once` depends on configured access tokens but does not own the OAuth flow. Authorization URL building, code exchange, and token refresh should live in a separate local auth helper boundary.
+
+Even in this live-compatible path, recurring polling remains deferred. The command is a one-shot ingest/evaluate run, not a background daemon.
+
+Local auth helper commands may expose:
+
+- `py -m upwork_triage upwork-auth-url`
+- `py -m upwork_triage upwork-exchange-code CODE`
+- `py -m upwork_triage upwork-refresh-token`
+
+These helper commands may print secret token lines for local copy/paste into `.env`, but they should not write `.env` automatically or store tokens in SQLite in this MVP step.
 
 The first coding task should implement database initialization, schema, default settings, view, and tests.
 
@@ -516,7 +526,7 @@ Economics uniqueness can be revisited later because NULL handling around `ai_eva
 
 Future extensions:
 
-- Upwork OAuth/GraphQL refresh logic
+- recurring token-refresh policy and persistence workflow
 - recurring polling
 - notification channel
 - lightweight web dashboard
@@ -538,6 +548,8 @@ Expected runtime config areas:
 - placeholder OpenAI credentials/model selection
 - placeholder Upwork credentials/tokens
 - Upwork GraphQL endpoint URL
+- Upwork OAuth authorization/token endpoint URLs
+- Upwork redirect URI for authorization-code flow
 - search terms and poll limits
 - optional runtime economics knobs such as target rate and Connect cost
 

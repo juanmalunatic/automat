@@ -2,239 +2,245 @@
 
 ## Task name
 
-Implement a live-compatible batch ingestion and evaluation pipeline with dependency injection.
+Implement an Upwork OAuth/token-management boundary.
 
 ## Goal
 
-Connect the existing Upwork fetch boundary, normalizer, deterministic filters, AI evaluator boundary, economics, triage, SQLite persistence, and shortlist rendering into one reusable batch pipeline path.
+Add a local, testable OAuth/token layer that can:
 
-This task should add the first live-compatible one-shot ingest flow without changing the staged architecture or introducing real network/model calls into unit tests.
+- build an Upwork authorization URL
+- exchange an authorization code for tokens
+- refresh an access token
+- expose small helper CLI commands for those workflows
+
+This task should unblock real local token acquisition for `ingest-once` without changing the staged pipeline, the DB schema, or the existing fake/local demo flow.
 
 ## Files to modify or create
 
 Expected files:
 
-- `src/upwork_triage/run_pipeline.py`
+- `src/upwork_triage/upwork_auth.py`
+- `tests/test_upwork_auth.py`
+- `src/upwork_triage/config.py`
+- `tests/test_config.py`
 - `src/upwork_triage/cli.py`
-- `tests/test_pipeline.py` or `tests/test_live_pipeline.py`
 - `tests/test_cli.py`
+- `.env.example`
 - `docs/current_task.md`
+- `docs/testing.md`
+- `docs/design.md`
+- `docs/decisions.md` if a durable auth decision is made
+- `README.md` if setup/run instructions change
 
 Allowed supporting edits:
 
-- `src/upwork_triage/db.py` only if a small reusable DB helper is clearly needed and remains consistent with `docs/schema.md`
-- `docs/testing.md` if test expectations need clarification
-- `docs/design.md` if pipeline wording needs clarification
-- `docs/schema.md` only if a real schema-level issue is discovered
-- `docs/decisions.md` only if a durable pipeline/CLI decision is made
-- `README.md` if command docs change
+- `src/upwork_triage/upwork_client.py` only if a tiny compatibility change is needed
 - `pyproject.toml` only if needed for test/import configuration
+
+## Config requirements
+
+Extend `AppConfig` / `load_config()` with:
+
+- `upwork_authorize_url: str`
+- `upwork_token_url: str`
+- `upwork_redirect_uri: str | None`
+
+Supported env vars:
+
+- `UPWORK_AUTHORIZE_URL`
+- `UPWORK_TOKEN_URL`
+- `UPWORK_REDIRECT_URI`
+
+Use these defaults unless explicitly overridden:
+
+- `UPWORK_GRAPHQL_URL=https://api.upwork.com/graphql`
+- `UPWORK_AUTHORIZE_URL=https://www.upwork.com/ab/account-security/oauth2/authorize`
+- `UPWORK_TOKEN_URL=https://www.upwork.com/api/v3/oauth2/token`
+
+`UPWORK_REDIRECT_URI` may default to `None`.
+
+Do not require these auth fields in fake mode or at config-load time unless an auth/token function is actually called.
 
 ## Required public API
 
-Implement a reusable batch runner around the existing staged helpers.
+Implement a focused auth module such as:
 
-Suggested public API:
+- `UpworkAuthError`
+- `MissingUpworkAuthConfigError`
+- `UpworkTokenError`
+- `TokenResponse`
+- `FormPostTransport`
+- `UrllibFormPostTransport`
+- `build_authorization_url(...)`
+- `exchange_authorization_code(...)`
+- `refresh_upwork_access_token(...)`
 
-- `PipelineRunSummary`
-- `run_pipeline_for_raw_jobs(...)`
-- `run_live_ingest_once(...)`
+Equivalent clear names are acceptable if responsibilities remain obvious and typed.
 
-Equivalent clear names are acceptable if the responsibilities stay obvious and typed.
+## Auth-layer behavior
 
-Preferred responsibilities:
+### Authorization URL
 
-- `PipelineRunSummary` should expose:
-  - `ingestion_run_id`
-  - `jobs_seen_count`
-  - `jobs_new_count`
-  - `jobs_updated_count`
-  - `raw_snapshots_created_count`
-  - `normalized_snapshots_created_count`
-  - `filter_results_created_count`
-  - `ai_evaluations_created_count`
-  - `economics_results_created_count`
-  - `triage_results_created_count`
-  - `shortlist_rows_count`
-  - `status`
-  - `error_message`
-- `run_pipeline_for_raw_jobs(...)` should accept:
-  - a SQLite connection
-  - a list of raw payload dicts
-  - an injected AI evaluator callable
-  - optional source metadata such as `source_name` and `source_query`
-- `run_live_ingest_once(...)` should:
-  - accept a SQLite connection plus `AppConfig`
-  - fetch raw jobs through `fetch_upwork_jobs(...)`
-  - evaluate routed jobs through the AI client boundary
-  - reuse the batch runner
+`build_authorization_url(config, *, state=None, response_type="code")` should:
 
-The CLI should open the DB connection explicitly and pass it into the live wrapper.
+- require `UPWORK_CLIENT_ID`
+- require `UPWORK_REDIRECT_URI`
+- use `config.upwork_authorize_url`
+- include URL-encoded query params:
+  - `response_type=code`
+  - `client_id`
+  - `redirect_uri`
+  - `state` when provided
+- not require `UPWORK_CLIENT_SECRET`
+- make no network call
 
-## Architectural requirements
+### Code exchange
 
-Preserve the staged architecture. The new batch runner must not collapse the system into one opaque function.
+`exchange_authorization_code(config, code, *, transport=None)` should:
 
-It must still produce/store:
+- require `UPWORK_CLIENT_ID`
+- require `UPWORK_CLIENT_SECRET`
+- require `UPWORK_REDIRECT_URI`
+- require a non-empty `code`
+- POST form-encoded data to `config.upwork_token_url`:
+  - `grant_type=authorization_code`
+  - `client_id`
+  - `client_secret`
+  - `code`
+  - `redirect_uri`
+- parse the token response into `TokenResponse`
+- raise clear token/auth errors for malformed responses or transport failures
 
-- `ingestion_runs`
-- `jobs`
-- `raw_job_snapshots`
-- `job_snapshots_normalized`
-- `filter_results`
-- `ai_evaluations` when AI is needed and succeeds
-- `economics_results` when AI/economics are available
-- `triage_results`
-- shortlist rows via `v_decision_shortlist`
+### Token refresh
 
-Reuse the existing logic instead of duplicating it:
+`refresh_upwork_access_token(config, *, transport=None)` should:
 
-- `normalize_job_payload()`
-- `evaluate_filters()`
-- `build_ai_payload()`
-- `parse_ai_output()`
-- `serialize_ai_evaluation()`
-- `evaluate_with_ai_provider()` / `evaluate_with_openai()`
-- `calculate_economics()`
-- `evaluate_triage()`
-- `fetch_decision_shortlist()`
-- `render_decision_shortlist()`
+- require `UPWORK_CLIENT_ID`
+- require `UPWORK_CLIENT_SECRET`
+- require `UPWORK_REFRESH_TOKEN`
+- POST form-encoded data to `config.upwork_token_url`:
+  - `grant_type=refresh_token`
+  - `client_id`
+  - `client_secret`
+  - `refresh_token`
+- parse the token response into `TokenResponse`
 
-## Batch pipeline behavior
+### Token response parsing
 
-The batch runner should:
+Implement a helper such as `parse_token_response(...)` that:
 
-1. initialize the DB connection
-2. create exactly one `ingestion_runs` row for the batch
-3. process each raw payload in order
-4. normalize, upsert/store/reuse staged rows, and persist deterministic filter results for every payload
-5. skip AI/economics for hard rejects or `DISCARD` rows
-6. still create or reuse a final `triage_results` archive row for hard rejects, matching the existing fake-pipeline behavior
-7. call the injected AI evaluator only for jobs that need AI
-8. compute economics from the default DB settings row plus validated AI output
-9. persist final triage rows
-10. finish the ingestion run as `success` if the whole batch completes
+- requires a non-empty `access_token` on success
+- allows missing `token_type`, `expires_in`, and `refresh_token`
+- parses `expires_in` as an integer when present
+- detects OAuth-style error responses such as `{ "error": "...", "error_description": "..." }`
+- preserves the raw response mapping on the typed result
 
-Hard rejects are not errors.
+### Transport boundary
 
-## Failure and replay behavior
+`UrllibFormPostTransport` should:
 
-The first batch runner should stay simple and fail fast.
-
-If an unexpected per-job error occurs:
-
-- earlier committed staged rows may remain stored
-- the ingestion run must be marked `failed`
-- `error_message` should be useful
-- the error should be re-raised
-
-If an AI-routed job fails during AI evaluation:
-
-- pre-AI staged rows for that job should remain stored according to the existing transaction choice
-- no `ai_evaluations`, `economics_results`, or `triage_results` row should be inserted for that failed AI job
-
-Replay behavior should remain safe:
-
-- rerunning the same raw payloads with the same versions should not violate uniqueness constraints
-- each rerun may create a fresh `ingestion_runs` row
-- identical versioned downstream rows may be reused/skipped instead of duplicated
-
-The batch path should use generic stage-version labels such as `normalizer_v1`, `filter_v1`, `prompt_v1`, `economics_v1`, and `triage_v1` rather than fixture-specific names.
-
-If the implementation makes a durable replay or fail-fast decision, record it in `docs/decisions.md`.
-
-## Live-compatible wrapper behavior
-
-The live-compatible wrapper should:
-
-1. fetch raw payload dicts through `fetch_upwork_jobs(config, transport=...)`
-2. create/use an AI evaluator through `evaluate_with_openai(...)` or `evaluate_with_ai_provider(...)`
-3. run the batch pipeline with those raw payloads
-4. return a `PipelineRunSummary`
-
-It should not:
-
-- implement OAuth authorization-code flow
-- implement token refresh
-- implement recurring polling
-- normalize inside `upwork_client.py`
-- insert direct SDK objects into downstream stages
-
-Missing Upwork credentials or OpenAI credentials should fail clearly when the live path is actually requested.
+- use standard-library form POSTs
+- send `application/x-www-form-urlencoded`
+- decode JSON response bodies
+- return mapping objects
+- wrap HTTP/network/JSON problems in clear auth/token errors
+- avoid logging or printing secrets
 
 ## CLI behavior
 
-Add a new command without changing the existing fake behavior:
+Keep the existing commands intact:
 
+- `py -m upwork_triage fake-demo`
 - `py -m upwork_triage ingest-once`
 
-This command should:
+Add these local helper commands:
 
-1. load config with `load_config()`
-2. open SQLite with `connect_db(config.db_path)`
-3. ensure the parent DB directory exists
-4. fetch raw jobs using the Upwork client boundary
-5. evaluate routed jobs using the AI client boundary
-6. run the batch pipeline
-7. fetch shortlist rows with `fetch_decision_shortlist(conn)`
-8. print `render_decision_shortlist(rows)` to stdout
-9. close the DB connection
-10. return exit code `0` on success
+### `py -m upwork_triage upwork-auth-url`
 
-`fake-demo` must remain fake/local only and should not silently fall back to live behavior.
+- load config
+- build the authorization URL
+- print it to stdout
+- return `0`
+- fail clearly if `UPWORK_CLIENT_ID` or `UPWORK_REDIRECT_URI` is missing
 
-`ingest-once` must not silently fall back to fake data when credentials or client/provider setup are missing.
+### `py -m upwork_triage upwork-exchange-code CODE`
 
-`ingest-once` should use the normal SQLite connection behavior from `connect_db()` rather than demo-only durability tweaks such as forcing `PRAGMA journal_mode = MEMORY`.
+- load config
+- exchange the code for tokens
+- print `.env`-style secret lines such as:
+  - `UPWORK_ACCESS_TOKEN=...`
+  - `UPWORK_REFRESH_TOKEN=...` when present
+- include a warning comment that the values are secrets and must not be committed/shared
+- return `0`
+
+### `py -m upwork_triage upwork-refresh-token`
+
+- load config
+- refresh using `UPWORK_REFRESH_TOKEN`
+- print updated `.env`-style secret lines
+- include the same warning comment
+- return `0`
+
+These helper commands must not:
+
+- write `.env` automatically
+- store tokens in SQLite
+- trigger `ingest-once`
+
+## Security rules
+
+- Never commit real secrets or tokens.
+- Do not echo secret values in normal errors, logs, or debug output.
+- The token helper commands may print token lines deliberately because that is their purpose.
+- When they do, the output must be clearly marked as secret local-only material.
 
 ## Test requirements
 
 Add/update tests covering:
 
-1. multiple raw payloads processed inside one ingestion run
-2. a mixed batch with one strong AI job and one hard reject
-3. expected staged-row counts for the mixed batch
-4. shortlist visibility for the strong job only
-5. no AI evaluator call for hard rejects
-6. replay-safe reruns across the same batch
-7. fail-fast AI-evaluator errors with failed ingestion status and no post-AI rows for the failing job
-8. fake transport/provider tests for the live-compatible wrapper
-9. clear missing-credential errors for live fetch/AI paths
-10. `main(["ingest-once"])` returning `0` with monkeypatched fake fetch/evaluator behavior
-11. `ingest-once` printing the rendered shortlist
-12. `ingest-once` using the configured DB path and creating parent directories
-13. `fake-demo` behavior staying intact
-14. non-zero CLI exit plus a helpful message for missing credentials or client/provider failures
-15. no unit tests requiring real network, real Upwork credentials, or real OpenAI credentials
+1. authorization URL generation
+2. URL-encoding behavior
+3. missing config errors for auth-url / code exchange / token refresh
+4. correct form POST fields for authorization-code exchange
+5. correct form POST fields for refresh flow
+6. typed token-response parsing
+7. OAuth-style error-response parsing
+8. wrapped transport failures with no real network usage
+9. config defaults / overrides for the new Upwork auth URLs and redirect URI
+10. helper CLI command success paths using fake transports or monkeypatched functions
+11. helper CLI command failure paths with clear non-zero exits
+12. helper CLI output warning comments for secret token lines
+13. no fake secret values leaking through error output
+14. existing `fake-demo` behavior staying intact
+15. existing `ingest-once` behavior staying intact
+
+All auth and CLI tests must stay fully mocked / fake-only. No real Upwork credentials or network calls are allowed in unit tests.
 
 ## Out of scope
 
 Do not implement:
 
-- Upwork OAuth authorization-code flow
-- token refresh
-- recurring polling or daemon behavior
-- real network calls in unit tests
-- real OpenAI calls in unit tests
+- recurring polling
+- background daemon behavior
+- storing tokens in SQLite
+- real Upwork or OpenAI network calls in unit tests
 - DB schema changes unless a real blocking issue is discovered
-- normalization logic changes
-- deterministic filter logic changes
-- economics formula changes
-- triage rule changes
+- normalization, filter, AI, economics, or triage rule changes
 - queue-rendering semantic changes
-- dashboard/web UI
 - TSV export
+- dashboard/web UI
 - proposal generation or auto-apply
 
 ## Acceptance criteria
 
 The task is complete when:
 
-- a tested batch pipeline can process multiple raw payloads through the staged system
-- hard rejects skip AI/economics but still archive through triage
-- AI-routed jobs use an injected evaluator and persist AI/economics/triage rows
-- duplicate reruns are replay-safe
-- `py -m upwork_triage ingest-once` is wired and unit-tested with fakes only
-- `py -m upwork_triage fake-demo` still works unchanged
-- docs are updated and honest about the current live limitations
+- Upwork OAuth/token logic is isolated in `upwork_auth.py`
+- unit tests use fake transports only and make no network calls
+- helper CLI commands are implemented and tested
+- missing config fails clearly
+- token responses parse into a typed `TokenResponse`
+- normal error paths do not leak token/secret values
+- `fake-demo` and `ingest-once` still behave as before
+- docs are updated and honest about current token-storage and OAuth limitations
 - `py -m pytest` passes

@@ -43,7 +43,9 @@ Current development defaults are intentionally local-first:
 - no real OpenAI or Upwork secrets are required for the fake/local test workflow
 - SQLite defaults to `data/automat.sqlite3`
 - `OPENAI_API_KEY` is only needed for live AI-backed paths such as `ingest-once`, not for tests or `fake-demo`
-- `UPWORK_GRAPHQL_URL` defaults to a safe placeholder and should be set explicitly before live fetching
+- `UPWORK_GRAPHQL_URL` defaults to the current documented Upwork GraphQL endpoint and may still be overridden if Upwork changes it
+- `UPWORK_AUTHORIZE_URL` and `UPWORK_TOKEN_URL` default to the current documented Upwork OAuth endpoints
+- `UPWORK_REDIRECT_URI` is only needed for local OAuth helper commands
 
 See `docs/current_task.md` for the active bounded task and `docs/design.md` for the broader architecture.
 
@@ -68,7 +70,28 @@ py -m pytest
 This demo uses a local fake WooCommerce/plugin/API fixture plus a fake validated AI response. It does not perform real Upwork fetching or real AI calls yet.
 
 The repository now also includes a real AI client wrapper boundary for future live evaluation work, but the local demo remains fake-mode only.
-The repository also includes an Upwork GraphQL client boundary for future live ingestion work, but OAuth, token refresh, and recurring polling are not implemented yet.
+The repository also includes Upwork GraphQL and OAuth helper boundaries for future live ingestion work, but fake-demo remains fully local and requires no credentials.
+
+## Upwork auth helpers
+
+The repository now includes local helper commands for obtaining or refreshing Upwork tokens:
+
+```powershell
+py -m upwork_triage upwork-auth-url
+py -m upwork_triage upwork-exchange-code CODE
+py -m upwork_triage upwork-refresh-token
+```
+
+Suggested local flow:
+
+1. Copy `.env.example` to `.env` if desired.
+2. Set `UPWORK_CLIENT_ID`, `UPWORK_CLIENT_SECRET`, and `UPWORK_REDIRECT_URI`.
+3. Run `py -m upwork_triage upwork-auth-url` and open the printed URL.
+4. After Upwork redirects back with a code, run `py -m upwork_triage upwork-exchange-code CODE`.
+5. Copy the printed `UPWORK_ACCESS_TOKEN` and `UPWORK_REFRESH_TOKEN` lines into your local `.env`.
+6. Later, run `py -m upwork_triage upwork-refresh-token` to refresh them.
+
+Important: the token helper commands intentionally print secret token values for local copy/paste. Do not share that output or commit it.
 
 ## Live-compatible ingest once
 
@@ -89,12 +112,18 @@ This path is intended to bridge the real boundaries:
 For actual live use, this path needs:
 
 - `UPWORK_ACCESS_TOKEN`
-- `UPWORK_GRAPHQL_URL`
 - `OPENAI_API_KEY`
+
+It will use:
+
+- `UPWORK_GRAPHQL_URL` for the GraphQL endpoint
+- `OPENAI_MODEL` for the AI model name
+
+The OAuth helper commands above are how you obtain or refresh `UPWORK_ACCESS_TOKEN` locally in this MVP step.
 
 Unit tests do not use those live services. They monkeypatch fake fetch/AI boundaries instead, and `fake-demo` remains the no-credentials local path.
 
-OAuth authorization-code flow, token refresh, and recurring polling are still not implemented.
+Recurring polling, background refresh policy, and token persistence beyond local `.env` copy/paste are still not implemented.
 
 ## Development
 

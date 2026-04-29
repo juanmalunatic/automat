@@ -11,6 +11,13 @@ from upwork_triage.config import ConfigError, load_config
 from upwork_triage.db import connect_db
 from upwork_triage.queue_view import fetch_decision_shortlist, render_decision_shortlist
 from upwork_triage.run_pipeline import run_fake_pipeline, run_live_ingest_once
+from upwork_triage.upwork_auth import (
+    TokenResponse,
+    UpworkAuthError,
+    build_authorization_url,
+    exchange_authorization_code,
+    refresh_upwork_access_token,
+)
 
 __all__ = ["main"]
 
@@ -68,8 +75,17 @@ def main(
             return _run_fake_demo(stdout=out)
         if args.command == "ingest-once":
             return _run_ingest_once(stdout=out)
+        if args.command == "upwork-auth-url":
+            return _run_upwork_auth_url(stdout=out)
+        if args.command == "upwork-exchange-code":
+            return _run_upwork_exchange_code(args.code, stdout=out)
+        if args.command == "upwork-refresh-token":
+            return _run_upwork_refresh_token(stdout=out)
     except ConfigError as exc:
         err.write(f"Config error: {exc}\n")
+        return 1
+    except UpworkAuthError as exc:
+        err.write(f"Upwork auth error: {exc}\n")
         return 1
     except Exception as exc:
         err.write(f"CLI error: {exc}\n")
@@ -99,6 +115,19 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
     subparsers.add_parser(
         "ingest-once",
         help="Run one live-compatible ingest/evaluate batch and print the shortlist.",
+    )
+    subparsers.add_parser(
+        "upwork-auth-url",
+        help="Print the local Upwork OAuth authorization URL.",
+    )
+    exchange_parser = subparsers.add_parser(
+        "upwork-exchange-code",
+        help="Exchange an Upwork OAuth authorization code for token lines.",
+    )
+    exchange_parser.add_argument("code", help="Upwork OAuth authorization code")
+    subparsers.add_parser(
+        "upwork-refresh-token",
+        help="Refresh the configured Upwork access token and print token lines.",
     )
     return parser
 
@@ -136,6 +165,26 @@ def _run_ingest_once(*, stdout: TextIO) -> int:
     return 0
 
 
+def _run_upwork_auth_url(*, stdout: TextIO) -> int:
+    config = load_config()
+    print(build_authorization_url(config), file=stdout)
+    return 0
+
+
+def _run_upwork_exchange_code(code: str, *, stdout: TextIO) -> int:
+    config = load_config()
+    token_response = exchange_authorization_code(config, code)
+    _print_token_lines(token_response, stdout=stdout)
+    return 0
+
+
+def _run_upwork_refresh_token(*, stdout: TextIO) -> int:
+    config = load_config()
+    token_response = refresh_upwork_access_token(config)
+    _print_token_lines(token_response, stdout=stdout)
+    return 0
+
+
 def _ensure_parent_dir(path: str | Path) -> None:
     resolved = Path(path)
     if str(resolved) == ":memory:":
@@ -145,6 +194,17 @@ def _ensure_parent_dir(path: str | Path) -> None:
 
 def _configure_fake_demo_connection(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode = MEMORY")
+
+
+def _print_token_lines(token_response: TokenResponse, *, stdout: TextIO) -> None:
+    print("# WARNING: these token values are secrets. Do not share or commit them.", file=stdout)
+    print(f"UPWORK_ACCESS_TOKEN={token_response.access_token}", file=stdout)
+    if token_response.refresh_token:
+        print(f"UPWORK_REFRESH_TOKEN={token_response.refresh_token}", file=stdout)
+    if token_response.token_type:
+        print(f"UPWORK_TOKEN_TYPE={token_response.token_type}", file=stdout)
+    if token_response.expires_in is not None:
+        print(f"UPWORK_EXPIRES_IN={token_response.expires_in}", file=stdout)
 
 
 def _fake_raw_payload() -> dict[str, object]:
