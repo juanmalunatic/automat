@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Protocol
 from urllib import error, request
 
@@ -70,6 +71,14 @@ class UrllibHttpJsonTransport:
         return decoded
 
 
+@dataclass(frozen=True, slots=True)
+class ExactMarketplaceJobHydrationResult:
+    job_id: str
+    status: str
+    payload: dict[str, object] | None
+    error_message: str | None
+
+
 class UpworkGraphQlClient:
     def __init__(
         self,
@@ -118,6 +127,36 @@ class UpworkGraphQlClient:
         query, variables = build_exact_marketplace_job_query(job_id)
         response_json = self._execute(query, variables)
         return _extract_exact_marketplace_job_payload(response_json)
+
+    def fetch_exact_marketplace_jobs(
+        self,
+        job_ids: Sequence[str],
+    ) -> list[ExactMarketplaceJobHydrationResult]:
+        results: list[ExactMarketplaceJobHydrationResult] = []
+        for job_id in job_ids:
+            try:
+                payload = self.fetch_exact_marketplace_job(job_id)
+            except UpworkClientError as exc:
+                results.append(
+                    ExactMarketplaceJobHydrationResult(
+                        job_id=job_id,
+                        status="failed",
+                        payload=None,
+                        error_message=str(exc),
+                    )
+                )
+                continue
+
+            results.append(
+                ExactMarketplaceJobHydrationResult(
+                    job_id=job_id,
+                    status="success",
+                    payload=payload,
+                    error_message=None,
+                )
+            )
+
+        return results
 
     def probe_fields(
         self,
@@ -172,6 +211,7 @@ class UpworkGraphQlClient:
 
 
 __all__ = [
+    "ExactMarketplaceJobHydrationResult",
     "HttpJsonTransport",
     "MissingUpworkCredentialsError",
     "UpworkClientError",
@@ -185,6 +225,7 @@ __all__ = [
     "build_job_search_query",
     "extract_job_payloads",
     "fetch_exact_marketplace_job",
+    "fetch_exact_marketplace_jobs",
     "fetch_hybrid_upwork_jobs",
     "fetch_marketplace_upwork_jobs_for_term",
     "fetch_public_upwork_jobs_for_term",
@@ -576,6 +617,20 @@ def fetch_exact_marketplace_job(
         transport=transport,
     )
     return client.fetch_exact_marketplace_job(job_id)
+
+
+def fetch_exact_marketplace_jobs(
+    config: AppConfig,
+    job_ids: Sequence[str],
+    *,
+    transport: HttpJsonTransport | None = None,
+) -> list[ExactMarketplaceJobHydrationResult]:
+    client = UpworkGraphQlClient(
+        config.upwork_graphql_url,
+        config.upwork_access_token,
+        transport=transport,
+    )
+    return client.fetch_exact_marketplace_jobs(job_ids)
 
 
 def fetch_upwork_jobs(

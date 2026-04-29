@@ -17,6 +17,7 @@ from upwork_triage.upwork_client import (
     build_exact_marketplace_job_query,
     fetch_hybrid_upwork_jobs,
     fetch_exact_marketplace_job,
+    fetch_exact_marketplace_jobs,
     fetch_marketplace_upwork_jobs_for_term,
     build_public_job_search_query,
     build_probe_job_search_query,
@@ -287,6 +288,89 @@ def test_fetch_exact_marketplace_job_raises_graphql_error_for_exact_query() -> N
             "2049488018911397244",
             transport=transport,
         )
+
+
+def test_fetch_exact_marketplace_jobs_returns_success_results_in_input_order() -> None:
+    transport = SequentialFakeTransport(
+        responses=[
+            exact_marketplace_job_response("2049488018911397244"),
+            exact_marketplace_job_response("2049488018911397245"),
+        ]
+    )
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+        }
+    )
+
+    results = fetch_exact_marketplace_jobs(
+        config,
+        ["2049488018911397244", "2049488018911397245"],
+        transport=transport,
+    )
+
+    assert [result.job_id for result in results] == [
+        "2049488018911397244",
+        "2049488018911397245",
+    ]
+    assert [result.status for result in results] == ["success", "success"]
+    assert results[0].payload == exact_marketplace_job_response("2049488018911397244")["data"]["marketplaceJobPosting"]
+    assert results[1].payload == exact_marketplace_job_response("2049488018911397245")["data"]["marketplaceJobPosting"]
+    assert results[0].error_message is None
+    assert results[1].error_message is None
+    assert [call["payload"]["variables"] for call in transport.calls] == [
+        {"id": "2049488018911397244"},
+        {"id": "2049488018911397245"},
+    ]
+
+
+def test_fetch_exact_marketplace_jobs_records_per_job_failure_without_raising() -> None:
+    transport = SequentialFakeTransport(
+        responses=[
+            exact_marketplace_job_response("2049488018911397244"),
+            {"errors": [{"message": "job 2049488018911397245 unavailable"}]},
+        ]
+    )
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+        }
+    )
+
+    results = fetch_exact_marketplace_jobs(
+        config,
+        ["2049488018911397244", "2049488018911397245"],
+        transport=transport,
+    )
+
+    assert [result.job_id for result in results] == [
+        "2049488018911397244",
+        "2049488018911397245",
+    ]
+    assert results[0].status == "success"
+    assert results[0].payload == exact_marketplace_job_response("2049488018911397244")["data"]["marketplaceJobPosting"]
+    assert results[0].error_message is None
+    assert results[1].status == "failed"
+    assert results[1].payload is None
+    assert results[1].error_message is not None
+    assert "2049488018911397245 unavailable" in results[1].error_message
+
+
+def test_fetch_exact_marketplace_jobs_empty_list_returns_empty_results_and_no_calls() -> None:
+    transport = SequentialFakeTransport(responses=[])
+    config = load_config(
+        {
+            "UPWORK_ACCESS_TOKEN": "token-123",
+            "UPWORK_GRAPHQL_URL": "https://placeholder.invalid/custom-upwork-graphql",
+        }
+    )
+
+    results = fetch_exact_marketplace_jobs(config, [], transport=transport)
+
+    assert results == []
+    assert transport.calls == []
 
 
 def test_fetch_hybrid_upwork_jobs_merges_results_by_id_and_tracks_terms(
@@ -776,6 +860,29 @@ class FakeTransport:
         return self.response_json
 
 
+class SequentialFakeTransport:
+    def __init__(self, *, responses: list[dict[str, object]]) -> None:
+        self._responses = list(responses)
+        self.calls: list[dict[str, object]] = []
+
+    def post_json(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        self.calls.append(
+            {
+                "url": url,
+                "headers": dict(headers),
+                "payload": dict(payload),
+            }
+        )
+        if not self._responses:
+            raise AssertionError("No fake response left for SequentialFakeTransport")
+        return self._responses.pop(0)
+
+
 def jobs_edges_response() -> dict[str, object]:
     return {
         "data": {
@@ -843,11 +950,11 @@ def public_jobs_with_amount_response() -> dict[str, object]:
     }
 
 
-def exact_marketplace_job_response() -> dict[str, object]:
+def exact_marketplace_job_response(job_id: str = "2049488018911397244") -> dict[str, object]:
     return {
         "data": {
             "marketplaceJobPosting": {
-                "id": "2049488018911397244",
+                "id": job_id,
                 "content": {
                     "title": "Sanitized exact marketplace job",
                     "description": "Sanitized description for exact-job hydration coverage.",

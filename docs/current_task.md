@@ -2,13 +2,13 @@
 
 ## Task name
 
-Add exact-ID `marketplaceJobPosting(id)` hydration support to the Upwork client boundary.
+Add a safe multi-job exact marketplace hydration attempt helper.
 
 ## Goal
 
-Add a narrow exact-job query builder plus fake-transport extraction support so the repo can hydrate one marketplace job by its numeric marketplace id during later calibration work.
+Add a narrow safe batch helper on top of the existing exact-job query path so the repo can attempt exact marketplace hydration for multiple numeric job ids and record per-job success or failure.
 
-This task is additive only. It must not change live inspection, hybrid fetching, normalization, dry run, ingest, AI, DB, or CLI behavior yet.
+This task is additive only. It must not change live inspection, hybrid fetching, normalization, dry run, ingest, AI, DB, queue, or CLI behavior yet.
 
 ## Files to modify
 
@@ -21,11 +21,27 @@ Expected files:
 
 ## Required behavior
 
-1. Add a helper such as `build_exact_marketplace_job_query(job_id: str)`.
+1. Keep the existing single-job exact query builder and single-job fetch helper unchanged.
 
-2. The exact query must use `marketplaceJobPosting(id: $id)` and preserve the provided numeric id string exactly in `variables["id"]`.
+2. Add a small result shape, such as `ExactMarketplaceJobHydrationResult`, with at least:
 
-3. The exact query should request only the confirmed live fields:
+   - `job_id`
+   - `status`
+   - `payload`
+   - `error_message`
+
+3. Add a helper on `UpworkGraphQlClient`, such as `fetch_exact_marketplace_jobs(job_ids)`, that:
+
+   - loops over the provided numeric job ids in order
+   - calls the existing single-job exact hydration helper
+   - returns one result per input id in the same order
+   - records per-job `success` or `failed` status
+   - does not crash the whole batch when one job returns GraphQL errors, 403, 404, or transport-level `UpworkClientError` after the client has already been constructed
+   - still lets `MissingUpworkCredentialsError` surface normally before any network work
+
+4. Add a top-level convenience helper such as `fetch_exact_marketplace_jobs(config, job_ids, *, transport=None)`.
+
+5. Preserve the existing exact query field set, which should continue to request only the confirmed live fields:
 
    - `id`
    - `content { title description }`
@@ -34,23 +50,25 @@ Expected files:
    - `contractorSelection { proposalRequirement { coverLetterRequired freelancerMilestonesAllowed } qualification { contractorType englishProficiency hasPortfolio hoursWorked risingTalent jobSuccessScore minEarning } location { localCheckRequired localMarket notSureLocationPreference localDescription localFlexibilityDescription } }`
    - `clientCompanyPublic { country { name twoLetterAbbreviation threeLetterAbbreviation } city timezone paymentVerification { status paymentVerified } }`
 
-4. Add a helper on `UpworkGraphQlClient`, such as `fetch_exact_marketplace_job(job_id: str)`, that uses the new query builder and returns the single `marketplaceJobPosting` object as a dict.
+6. If needed, keep using the narrow private extractor for the single-object `data.marketplaceJobPosting` response shape rather than refactoring the generic multi-job extractor broadly.
 
-5. If needed, add a narrow private extractor for the single-object `data.marketplaceJobPosting` response shape without refactoring the generic multi-job extractor broadly.
+7. Preserve existing transport and GraphQL error behavior for the single-job helper.
 
-6. Preserve existing transport and GraphQL error behavior.
-
-7. Do not wire this helper into `fetch_upwork_jobs()`, `fetch_hybrid_upwork_jobs()`, `inspect-upwork-raw`, `ingest-once`, normalization, dry run, or any CLI command yet.
+8. Do not wire this helper into `fetch_upwork_jobs()`, `fetch_hybrid_upwork_jobs()`, `inspect-upwork-raw`, `ingest-once`, normalization, dry run, or any CLI command yet.
 
 ## Test requirements
 
 Update tests so they verify:
 
-- `build_exact_marketplace_job_query()` contains `marketplaceJobPosting(id: $id)`
-- variables preserve the provided numeric id string exactly
-- the exact query includes the confirmed `content`, `activityStat.jobActivity`, `contractTerms`, `contractorSelection`, and `clientCompanyPublic.paymentVerification` fields
-- a fake transport response with `data.marketplaceJobPosting` returns the exact job dict
-- GraphQL errors still raise `UpworkGraphQlError`
+- the existing exact query builder still contains `marketplaceJobPosting(id: $id)`
+- the existing exact query variables preserve the provided numeric id string exactly
+- the exact query still includes the confirmed `content`, `activityStat.jobActivity`, `contractTerms`, `contractorSelection`, and `clientCompanyPublic.paymentVerification` fields
+- a fake transport response with two exact-job successes returns two success results in input order
+- a mixed fake transport response with one success and one GraphQL error returns one success result and one failed result without raising for the whole batch
+- failed results include the original `job_id` and a useful `error_message`
+- an empty job-id list returns an empty result list and makes no transport calls
+- the top-level convenience helper uses the configured token, URL, and fake transport
+- existing single-job exact hydration tests still pass
 
 ## Out of scope
 
@@ -65,6 +83,8 @@ Do not implement:
 - normalization changes
 - dry-run changes
 - hybrid fetch changes
+- inspect-upwork-raw wiring
+- ingest-once wiring
 - broad refactors
 - polling / daemon behavior
 - real network calls in tests
@@ -75,8 +95,8 @@ Do not implement:
 
 The task is complete when:
 
-- an exact marketplace-job query builder exists in `upwork_client.py`
-- the client can fetch and extract a single `marketplaceJobPosting` object with fake transport coverage
+- the client can attempt exact marketplace hydration for multiple ids and return per-job success/failure results
+- the single-job exact hydration behavior remains unchanged
 - existing live search/hybrid paths remain unchanged
 - committed tests stay network-free
 - the full test suite still passes

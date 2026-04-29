@@ -292,6 +292,11 @@ Should verify:
 - `build_exact_marketplace_job_query()` uses `marketplaceJobPosting(id: $id)` and preserves the provided numeric id string in variables
 - the exact-job hydration query includes the confirmed `content`, `activityStat.jobActivity`, `contractTerms`, `contractorSelection`, and `clientCompanyPublic.paymentVerification` fields
 - the exact-job fetch helper returns a single `data.marketplaceJobPosting` object through fake transport
+- the safe multi-job exact-hydration helper returns one result per input job id in order
+- mixed success and GraphQL-error exact hydrations produce one success result and one failed result without raising for the whole batch
+- failed exact-hydration results retain the original `job_id` and a useful `error_message`
+- an empty exact-hydration batch returns an empty result list and makes no transport calls
+- the top-level exact-hydration batch convenience helper uses configured token, URL, and fake transport
 - GraphQL errors on the exact-job path still raise `UpworkGraphQlError`
 - public-job helper query construction uses `publicMarketplaceJobPostingsSearch` with `PublicMarketplaceJobPostingsSearchFilter!`, one narrow `searchExpression_eq` term, and no `searchType`, `sortAttributes`, or `totalCount`
 - the public-job helper query includes the confirmed live public fields including `publishedDateTime`, `duration`, `durationLabel`, `totalApplicants`, `hourlyBudgetType`, `hourlyBudgetMin`, `hourlyBudgetMax`, `amount { rawValue currency displayValue }`, and `weeklyBudget { rawValue currency displayValue }`
