@@ -140,6 +140,11 @@ Should verify:
 - `queue` on an empty initialized DB prints the empty-queue message
 - `queue` output includes `job_key`, local `user_status` when present, and a compact action hint
 - `queue` does not call fake-demo, ingest-once, raw inspection, Upwork fetch, OpenAI evaluation, or action recording
+- `main(["queue-enrichment"])` returns `0` and prints persisted official-stage candidates without requiring `triage_results`
+- `queue-enrichment` uses the configured `AUTOMAT_DB_PATH` and stays read-only aside from idempotent DB initialization
+- `queue-enrichment` excludes `DISCARD` and excludes jobs with `user_status` values `applied`, `skipped`, or `archived`
+- `queue-enrichment` includes `new`, `seen`, and `saved` jobs and prints the manual-final-check reminder plus the local action hint
+- `queue-enrichment` does not call fake-demo, ingest-once, raw inspection, Upwork fetch, OpenAI evaluation, or action recording
 - `main(["action", JOB_KEY, "seen"])` returns `0` and prints a confirmation
 - `main(["action", JOB_KEY, "applied", "--notes", "..."])` stores notes
 - `main(["action-by-upwork-id", UPWORK_JOB_ID, "skipped"])` resolves the correct job
@@ -471,6 +476,11 @@ Should verify:
 - missing / `None` values render as `â€”` and do not crash
 - empty shortlist input renders a clear empty-queue message
 - rendering works with a shortlist row produced by `run_fake_pipeline()`
+- `fetch_enrichment_queue()` returns persisted official-stage candidates written by the no-AI artifact-ingest path
+- `fetch_enrichment_queue()` does not require `triage_results` and does not read `v_decision_shortlist`
+- enrichment rows are ordered by `AI_EVAL`, `MANUAL_EXCEPTION`, then `LOW_PRIORITY_REVIEW`, with fresher jobs first inside a bucket and higher score as a tie-breaker
+- `render_enrichment_queue()` includes title, job key, URL, user status, bucket/score, pay, client official history, activity fields, missing manual fields, and the suggested local action command
+- empty enrichment rows render `Enrichment queue is empty.`
 
 ## Test data
 Use small local fixtures.

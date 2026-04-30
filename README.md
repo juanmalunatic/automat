@@ -187,6 +187,14 @@ py -m upwork_triage ingest-upwork-artifact data/debug/upwork_raw_hydrated_latest
 
 This command reads the saved local artifact, reruns normalization plus deterministic filters, persists only non-`DISCARD` candidates into SQLite, and keeps the manual-enrichment reminder explicit. It does not fetch live Upwork data and does not call OpenAI.
 
+If you want to see which persisted official-stage candidates should be opened and manually enriched next, use:
+
+```powershell
+py -m upwork_triage queue-enrichment
+```
+
+This command reads persisted candidates directly from SQLite, does not require `triage_results`, excludes `applied`, `skipped`, and `archived` jobs, and keeps the older final-decision `queue` command separate.
+
 ## Upwork auth helpers
 
 The repository now includes local helper commands for obtaining or refreshing Upwork tokens:

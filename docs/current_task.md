@@ -2,14 +2,14 @@
 
 ## Task name
 
-Persist official-stage candidates from an existing local raw artifact.
+Add the lean-MVP enrichment queue for persisted official-stage candidates.
 
 ## Product boundary
 
 This step should answer:
 
 ```text
-Persist the jobs from this local artifact that are worth manual enrichment.
+Which persisted jobs should I open and manually enrich?
 ```
 
 It should not answer:
@@ -18,23 +18,24 @@ It should not answer:
 Should I apply?
 ```
 
-It also should not do live fetching, AI, economics, or final triage.
+The existing final-decision queue over `v_decision_shortlist` stays separate.
 
 ## Implementation scope
 
 This task is limited to:
 
 ```text
-saved raw artifact
--> normalize
--> deterministic filters
--> persist candidate memory in SQLite
+persisted official-stage candidates
+-> read-only enrichment queue query
+-> compact terminal renderer
+-> queue-enrichment CLI command
 ```
 
 Add:
 
-- a no-AI persistence core for already-loaded raw job dicts
-- a CLI command that reads a saved local artifact and calls that persistence core
+- a query over `jobs`, latest normalized snapshots, and associated filter results
+- a compact enrichment-queue renderer
+- a `queue-enrichment` CLI command
 
 Do not add:
 
@@ -43,100 +44,99 @@ Do not add:
 - economics
 - `triage_results`
 - manual enrichment storage
-- enrichment queue behavior
+- enrichment import
 - prospect dump generation
 - DB schema changes unless truly unavoidable
 
-## Persistence behavior
+## Enrichment queue behavior
 
 Add a helper such as:
 
 ```python
-run_official_candidate_ingest_for_raw_jobs(
+fetch_enrichment_queue(
     conn,
-    raw_payloads,
-    source_name,
-    source_query=None,
+    limit=None,
+    include_low_priority=True,
+    include_statuses=None,
 )
 ```
 
-Behavior:
+It should:
 
-1. initialize the DB
-2. create an `ingestion_runs` row
-3. normalize each raw job
-4. evaluate deterministic filters
-5. count routing buckets for all jobs
-6. skip persistence for `DISCARD`
-7. persist only `AI_EVAL`, `MANUAL_EXCEPTION`, and `LOW_PRIORITY_REVIEW`
-8. for persisted candidates, write:
-   - `jobs`
-   - `raw_job_snapshots`
-   - `job_snapshots_normalized`
-   - `filter_results`
-9. update latest raw/normalized snapshot pointers on `jobs`
-10. finish `ingestion_runs` as `success` or `failed`
+1. read persisted official-stage candidates directly from SQLite
+2. use `jobs.latest_normalized_snapshot_id`
+3. join the corresponding `filter_results`
+4. not depend on `triage_results` or `v_decision_shortlist`
+5. exclude `DISCARD`
+6. exclude `jobs.user_status` values:
+   - `applied`
+   - `skipped`
+   - `archived`
+7. include `jobs.user_status` values:
+   - `new`
+   - `seen`
+   - `saved`
 
-The summary should include:
+Default ordering:
 
-- `ingestion_run_id`
-- `jobs_seen_count`
-- `jobs_processed_count`
-- `persisted_candidates_count`
-- `skipped_discarded_count`
-- `jobs_new_count`
-- `jobs_updated_count`
-- `raw_snapshots_created_count`
-- `normalized_snapshots_created_count`
-- `filter_results_created_count`
-- routing-bucket counts
-- `status`
-- `error_message`
+1. `AI_EVAL`
+2. `MANUAL_EXCEPTION`
+3. `LOW_PRIORITY_REVIEW`
+4. freshest jobs first within bucket using visible `j_mins_since_posted`
+5. higher score as a tie-breaker
 
-## Persistence safety rules
+## Rendering behavior
 
-- do not write `ai_evaluations`
-- do not write `economics_results`
-- do not write `triage_results`
-- re-ingesting an existing job must not erase `jobs.user_status`
-- re-ingesting the same raw hash must not create duplicate `raw_job_snapshots`
-- missing/unavailable normalized fields should remain nullable and status-marked
+Add a renderer such as:
+
+```python
+render_enrichment_queue(rows)
+```
+
+Requirements:
+
+- compact plain text
+- grouped by routing bucket
+- include `job_key`, `upwork_job_id`, `user_status`, score, title, URL, pay, client official history, activity, and manual final-check reminder
+- include the suggested local action command
+- if empty, return:
+
+```text
+Enrichment queue is empty.
+```
+
+Do not convert it into a rich terminal UI.
 
 ## CLI command
 
-Add a local command such as:
+Add:
 
 ```powershell
-py -m upwork_triage ingest-upwork-artifact data/debug/upwork_raw_hydrated_latest.json
+py -m upwork_triage queue-enrichment
 ```
 
 Behavior:
 
 1. load config and DB path
-2. read the local artifact path argument
-3. reuse the existing raw-artifact loader when possible
-4. call the new no-AI persistence core
-5. print a compact plain-text summary including:
-   - jobs loaded
-   - jobs processed
-   - persisted candidates
-   - skipped discarded
-   - new jobs
-   - updated jobs
-   - raw snapshots created
-   - normalized snapshots created
-   - filter results created
-   - routing bucket counts
-   - the manual-enrichment reminder list
+2. initialize the DB if needed
+3. fetch enrichment queue rows
+4. render the queue
+5. print plain text
+
+Optional flags are acceptable if small:
+
+- `--limit N`
+- `--no-low-priority`
+
+Default behavior should still include `LOW_PRIORITY_REVIEW`.
 
 ## Acceptance criteria for this step
 
 This step is done when:
 
-1. an existing local raw artifact can be persisted through a dedicated no-AI candidate-ingest core,
-2. only `jobs`, `raw_job_snapshots`, `job_snapshots_normalized`, and `filter_results` are written,
-3. `DISCARD` jobs are counted but skipped by default,
-4. re-ingesting the same persisted job preserves `jobs.user_status`,
-5. re-ingesting the same raw hash reuses the existing raw snapshot,
-6. the new CLI command prints a compact candidate-ingest summary,
-7. tests cover the persistence core, CLI command, discard skipping, and user-status preservation.
+1. persisted official-stage candidates can be listed without any `triage_results`,
+2. the new queue excludes `DISCARD` and excludes `applied` / `skipped` / `archived`,
+3. the renderer exposes title, URL, score, status, client official history, activity, and missing manual fields,
+4. `py -m upwork_triage queue-enrichment` works as a read-only local command,
+5. the existing final-decision `queue` command remains unchanged,
+6. tests cover the enrichment queue query, ordering, rendering, and CLI behavior.

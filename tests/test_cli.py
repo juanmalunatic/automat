@@ -1224,6 +1224,108 @@ def test_queue_command_does_not_call_pipeline_network_or_action_boundaries(
         shared_conn.close()
 
 
+def test_main_queue_enrichment_returns_zero_and_prints_persisted_candidates(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "queue-enrichment" / "automat.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_enrichment_queue(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = main(["queue-enrichment"], stdout=stdout, stderr=stderr)
+
+        output = stdout.getvalue()
+        assert exit_code == 0
+        assert stderr.getvalue() == ""
+        assert "[AI_EVAL]" in output
+        assert "WooCommerce order sync plugin bug fix" in output
+        assert "upwork:987654321" in output
+        assert "Missing manual:" in output
+        assert "Action: py -m upwork_triage action upwork:987654321 seen|skipped|saved" in output
+    finally:
+        shared_conn.close()
+
+
+def test_queue_enrichment_excludes_applied_skipped_and_archived_jobs(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "queue-enrichment" / "filtered.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_enrichment_queue(shared_conn)
+    shared_conn.execute("UPDATE jobs SET user_status = 'applied' WHERE job_key = 'upwork:987654321'")
+    shared_conn.execute("UPDATE jobs SET user_status = 'archived' WHERE job_key = 'upwork:222333444'")
+    shared_conn.execute("UPDATE jobs SET user_status = 'skipped' WHERE job_key = 'upwork:333444555'")
+    shared_conn.commit()
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = main(["queue-enrichment"], stdout=stdout, stderr=stderr)
+
+        assert exit_code == 0
+        assert stderr.getvalue() == ""
+        assert stdout.getvalue().strip() == "Enrichment queue is empty."
+    finally:
+        shared_conn.close()
+
+
+def test_queue_enrichment_command_does_not_call_pipeline_network_or_action_boundaries(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "queue-enrichment" / "readonly.sqlite3"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_enrichment_queue(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_fake_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("fake demo should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.run_live_ingest_once",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("live ingest should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.inspect_upwork_raw",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("raw inspection should not run")),
+    )
+    monkeypatch.setattr(
+        "upwork_triage.cli.record_user_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("action recording should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "fetch_upwork_jobs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("upwork fetch should not run")),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module,
+        "evaluate_with_openai",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("openai eval should not run")),
+    )
+
+    try:
+        exit_code = main(["queue-enrichment"], stdout=StringIO(), stderr=StringIO())
+        assert exit_code == 0
+    finally:
+        shared_conn.close()
+
+
 def test_main_action_returns_zero_and_prints_confirmation(
     workspace_tmp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1927,6 +2029,43 @@ def make_hard_reject_raw_payload() -> dict[str, object]:
     return payload
 
 
+def make_manual_exception_raw_payload() -> dict[str, object]:
+    payload = make_strong_raw_payload()
+    payload["id"] = "222333444"
+    payload["source_url"] = "https://www.upwork.com/jobs/~222333444"
+    payload["title"] = "WooCommerce checkout payment issue"
+    payload["description"] = "Need a custom plugin update for checkout behavior"
+    payload["skills"] = ["WooCommerce", "plugin"]
+    payload["qualifications"] = None
+    return payload
+
+
+def make_low_priority_review_raw_payload() -> dict[str, object]:
+    payload = make_strong_raw_payload()
+    payload["id"] = "333444555"
+    payload["source_url"] = "https://www.upwork.com/jobs/~333444555"
+    payload["title"] = "WordPress maintenance task"
+    payload["description"] = "Need a small content and settings update"
+    payload["budget"] = "$150"
+    payload["skills"] = ["WordPress"]
+    payload["qualifications"] = "WordPress experience"
+    payload["apply_cost_connects"] = "8"
+    payload["client"] = {
+        "payment_verified": "Payment verified",
+        "country": "US",
+        "hire_rate": None,
+        "total_spent": "$200",
+        "avg_hourly_rate": None,
+    }
+    payload["activity"] = {
+        "proposals": "20 to 50",
+        "interviewing": "1",
+        "invites_sent": "2",
+        "client_last_viewed": "20 minutes ago",
+    }
+    return payload
+
+
 def make_fake_ai_output() -> dict[str, object]:
     return {
         "ai_quality_client": "Strong",
@@ -1956,6 +2095,20 @@ def seed_queue_shortlist(conn: sqlite3.Connection, *, user_status: str = "new") 
         (user_status, "upwork:987654321"),
     )
     conn.commit()
+
+
+def seed_enrichment_queue(conn: sqlite3.Connection) -> None:
+    run_pipeline_module.run_official_candidate_ingest_for_raw_jobs(
+        conn,
+        [
+            make_strong_raw_payload(),
+            make_manual_exception_raw_payload(),
+            make_low_priority_review_raw_payload(),
+            make_hard_reject_raw_payload(),
+        ],
+        source_name="upwork_raw_artifact",
+        source_query="artifact.json",
+    )
 
 
 def write_cli_raw_artifact(path: Path, *, jobs: list[dict[str, object]]) -> None:

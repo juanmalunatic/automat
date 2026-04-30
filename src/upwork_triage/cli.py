@@ -25,7 +25,12 @@ from upwork_triage.inspect_upwork import (
     inspect_upwork_raw,
     render_raw_inspection_summary,
 )
-from upwork_triage.queue_view import fetch_decision_shortlist, render_decision_shortlist
+from upwork_triage.queue_view import (
+    fetch_decision_shortlist,
+    fetch_enrichment_queue,
+    render_decision_shortlist,
+    render_enrichment_queue,
+)
 from upwork_triage.run_pipeline import (
     run_fake_pipeline,
     run_live_ingest_once,
@@ -143,6 +148,12 @@ def main(
             )
         if args.command == "queue":
             return _run_queue(stdout=out)
+        if args.command == "queue-enrichment":
+            return _run_queue_enrichment(
+                limit=args.limit,
+                include_low_priority=not args.no_low_priority,
+                stdout=out,
+            )
         if args.command == "action":
             return _run_action_command(
                 job_key=args.job_key,
@@ -203,6 +214,20 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
     subparsers.add_parser(
         "queue",
         help="Render the current local decision shortlist without fetching again.",
+    )
+    enrichment_queue_parser = subparsers.add_parser(
+        "queue-enrichment",
+        help="Render the persisted official-stage enrichment queue without AI or live fetches.",
+    )
+    enrichment_queue_parser.add_argument(
+        "--limit",
+        type=_positive_int_arg,
+        help="Maximum number of enrichment-queue rows to render.",
+    )
+    enrichment_queue_parser.add_argument(
+        "--no-low-priority",
+        action="store_true",
+        help="Hide LOW_PRIORITY_REVIEW rows from the enrichment queue.",
     )
     subparsers.add_parser(
         "upwork-auth-url",
@@ -382,6 +407,31 @@ def _run_queue(*, stdout: TextIO) -> int:
         initialize_db(conn)
         rows = fetch_decision_shortlist(conn)
         print(render_decision_shortlist(rows), file=stdout)
+    finally:
+        conn.close()
+
+    return 0
+
+
+def _run_queue_enrichment(
+    *,
+    limit: int | None,
+    include_low_priority: bool,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        rows = fetch_enrichment_queue(
+            conn,
+            limit=limit,
+            include_low_priority=include_low_priority,
+        )
+        print(render_enrichment_queue(rows), file=stdout)
     finally:
         conn.close()
 

@@ -13,8 +13,13 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from upwork_triage.db import initialize_db
-from upwork_triage.queue_view import fetch_decision_shortlist, render_decision_shortlist
-from upwork_triage.run_pipeline import run_fake_pipeline
+from upwork_triage.queue_view import (
+    fetch_decision_shortlist,
+    fetch_enrichment_queue,
+    render_decision_shortlist,
+    render_enrichment_queue,
+)
+from upwork_triage.run_pipeline import run_fake_pipeline, run_official_candidate_ingest_for_raw_jobs
 
 
 @pytest.fixture
@@ -134,6 +139,148 @@ def test_rendering_works_with_row_produced_by_run_fake_pipeline(conn: sqlite3.Co
     assert "Angle:" in rendered
 
 
+def test_fetch_enrichment_queue_returns_persisted_official_stage_candidates_without_triage_rows(
+    conn: sqlite3.Connection,
+) -> None:
+    run_official_candidate_ingest_for_raw_jobs(
+        conn,
+        [make_strong_raw_payload(), make_manual_exception_raw_payload()],
+        source_name="upwork_raw_artifact",
+        source_query="artifact.json",
+    )
+
+    triage_count = conn.execute("SELECT COUNT(*) FROM triage_results").fetchone()
+    assert triage_count is not None
+    assert triage_count[0] == 0
+
+    rows = fetch_enrichment_queue(conn)
+
+    assert len(rows) == 2
+    assert {row["job_key"] for row in rows} == {"upwork:987654321", "upwork:222333444"}
+
+
+def test_fetch_enrichment_queue_excludes_discard_and_terminal_user_statuses(
+    conn: sqlite3.Connection,
+) -> None:
+    run_official_candidate_ingest_for_raw_jobs(
+        conn,
+        [
+            make_strong_raw_payload(),
+            make_manual_exception_raw_payload(),
+            make_low_priority_review_raw_payload(),
+            make_hard_reject_raw_payload(),
+        ],
+        source_name="upwork_raw_artifact",
+        source_query="artifact.json",
+    )
+    conn.execute("UPDATE jobs SET user_status = 'applied' WHERE job_key = 'upwork:987654321'")
+    conn.execute("UPDATE jobs SET user_status = 'archived' WHERE job_key = 'upwork:222333444'")
+    conn.commit()
+
+    rows = fetch_enrichment_queue(conn)
+
+    assert len(rows) == 1
+    assert rows[0]["job_key"] == "upwork:333444555"
+    assert rows[0]["user_status"] == "new"
+
+
+def test_fetch_enrichment_queue_includes_new_seen_and_saved_statuses(
+    conn: sqlite3.Connection,
+) -> None:
+    run_official_candidate_ingest_for_raw_jobs(
+        conn,
+        [
+            make_strong_raw_payload(),
+            make_manual_exception_raw_payload(),
+            make_low_priority_review_raw_payload(),
+        ],
+        source_name="upwork_raw_artifact",
+        source_query="artifact.json",
+    )
+    conn.execute("UPDATE jobs SET user_status = 'seen' WHERE job_key = 'upwork:222333444'")
+    conn.execute("UPDATE jobs SET user_status = 'saved' WHERE job_key = 'upwork:333444555'")
+    conn.commit()
+
+    rows = fetch_enrichment_queue(conn)
+
+    assert [row["user_status"] for row in rows] == ["new", "seen", "saved"]
+
+
+def test_fetch_enrichment_queue_orders_by_bucket_then_freshness_then_score(
+    conn: sqlite3.Connection,
+) -> None:
+    run_official_candidate_ingest_for_raw_jobs(
+        conn,
+        [
+            make_strong_raw_payload(id="111", source_url="https://www.upwork.com/jobs/~111", posted_minutes_ago="60 minutes ago", title="Older AI eval"),
+            make_strong_raw_payload(id="112", source_url="https://www.upwork.com/jobs/~112", posted_minutes_ago="10 minutes ago", title="Newer AI eval"),
+            make_manual_exception_raw_payload(),
+            make_low_priority_review_raw_payload(),
+        ],
+        source_name="upwork_raw_artifact",
+        source_query="artifact.json",
+    )
+
+    rows = fetch_enrichment_queue(conn)
+
+    assert [row["routing_bucket"] for row in rows] == [
+        "AI_EVAL",
+        "AI_EVAL",
+        "MANUAL_EXCEPTION",
+        "LOW_PRIORITY_REVIEW",
+    ]
+    assert rows[0]["j_title"] == "Newer AI eval"
+    assert rows[1]["j_title"] == "Older AI eval"
+
+
+def test_render_enrichment_queue_includes_high_signal_fields() -> None:
+    rendered = render_enrichment_queue(
+        [
+            {
+                "job_key": "upwork:2049604980239641346",
+                "upwork_job_id": "2049604980239641346",
+                "user_status": "new",
+                "routing_bucket": "AI_EVAL",
+                "score": 5,
+                "j_title": "WordPress + WooCommerce developer for booking-based marketplace",
+                "source_url": "https://www.upwork.com/jobs/~022049604980239641346",
+                "j_mins_since_posted": 42,
+                "j_contract_type": "hourly",
+                "j_pay_fixed": None,
+                "j_pay_hourly_low": 30.0,
+                "j_pay_hourly_high": 50.0,
+                "a_proposals": "5 to 10",
+                "a_interviewing": 0,
+                "a_invites_sent": 0,
+                "c_verified_payment": 1,
+                "c_country": "US",
+                "c_hist_total_spent": 1200.0,
+                "c_hist_hires_total": 6,
+                "c_hist_jobs_posted": 4,
+                "c_hist_hire_rate": 150.0,
+                "positive_flags": ["lane_keyword_woocommerce"],
+                "negative_flags": ["client_financial_privacy"],
+                "reject_reasons": [],
+            }
+        ]
+    )
+
+    assert "WordPress + WooCommerce developer for booking-based marketplace" in rendered
+    assert "upwork:2049604980239641346" in rendered
+    assert "https://www.upwork.com/jobs/~022049604980239641346" in rendered
+    assert "Status: new" in rendered
+    assert "Score 5" in rendered
+    assert "hourly $30.00-$50.00" in rendered
+    assert "payment yes | US | spent $1,200.00 | hires/posts 6/4 | hire rate 150.0%" in rendered
+    assert "Proposals: 5 to 10 | Interviewing: 0 | Invites: 0" in rendered
+    assert "Missing manual: connectsRequired, client recent reviews, member since, active hires, avg hourly paid, hours hired, open jobs" in rendered
+    assert "Action: py -m upwork_triage action upwork:2049604980239641346 seen|skipped|saved" in rendered
+
+
+def test_render_enrichment_queue_empty_rows_render_clear_message() -> None:
+    assert render_enrichment_queue([]) == "Enrichment queue is empty."
+
+
 def make_shortlist_row(**overrides: object) -> dict[str, object]:
     row: dict[str, object] = {
         "job_key": "upwork:987654321",
@@ -232,6 +379,44 @@ def make_strong_fake_ai_output(**overrides: object) -> dict[str, object]:
     }
     payload.update(overrides)
     return payload
+
+
+def make_manual_exception_raw_payload() -> dict[str, object]:
+    return make_strong_raw_payload(
+        id="222333444",
+        source_url="https://www.upwork.com/jobs/~222333444",
+        title="WooCommerce checkout payment issue",
+        description="Need a custom plugin update for checkout behavior",
+        skills=["WooCommerce", "plugin"],
+        qualifications=None,
+    )
+
+
+def make_low_priority_review_raw_payload() -> dict[str, object]:
+    return make_strong_raw_payload(
+        id="333444555",
+        source_url="https://www.upwork.com/jobs/~333444555",
+        title="WordPress maintenance task",
+        description="Need a small content and settings update",
+        budget="$150",
+        skills=["WordPress"],
+        qualifications="WordPress experience",
+        apply_cost_connects="8",
+        client={
+            "total_spent": "$200",
+            "avg_hourly_rate": None,
+            "hire_rate": None,
+        },
+        activity={"proposals": "20 to 50"},
+    )
+
+
+def make_hard_reject_raw_payload() -> dict[str, object]:
+    return make_strong_raw_payload(
+        id="111222333",
+        source_url="https://www.upwork.com/jobs/~111222333",
+        client={"payment_verified": "payment unverified"},
+    )
 
 
 def _merge_payload(
