@@ -460,6 +460,7 @@ Should verify:
 - import accepts UTF-8 with BOM, plain UTF-8, and Windows-1252 / cp1252 CSV files
 - BOM-prefixed and whitespace-padded headers still validate as the required four worksheet columns
 - import accepts comma-, semicolon-, and tab-delimited files
+- import works with both `sqlite3.Row` test connections and default tuple-returning SQLite connections matching the real CLI path
 - import stores nonblank `manual_ui_text` rows in `manual_job_enrichments`
 - quoted multiline `manual_ui_text` is preserved safely
 - blank rows are skipped and do not erase existing data

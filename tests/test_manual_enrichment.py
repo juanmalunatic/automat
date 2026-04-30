@@ -125,6 +125,45 @@ def test_import_enrichment_csv_stores_multiline_text_and_raw_imported_status(
     assert row["is_latest"] == 1
 
 
+def test_import_enrichment_csv_works_with_default_tuple_returning_sqlite_connection(
+    workspace_tmp_dir: Path,
+) -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        initialize_db(connection)
+        _seed_enrichment_candidates(connection)
+        worksheet_path = workspace_tmp_dir / "manual" / "tuple_rows.csv"
+        _write_csv_rows(
+            worksheet_path,
+            [
+                {
+                    "job_key": "upwork:987654321",
+                    "url": "https://www.upwork.com/jobs/~987654321",
+                    "title": "WooCommerce order sync plugin bug fix",
+                    "manual_ui_text": MULTILINE_MANUAL_TEXT,
+                }
+            ],
+        )
+
+        summary = import_enrichment_csv(connection, worksheet_path)
+        row = connection.execute(
+            """
+            SELECT job_key, raw_manual_text, parse_status
+            FROM manual_job_enrichments
+            WHERE job_key = ?
+            """,
+            ("upwork:987654321",),
+        ).fetchone()
+
+        assert summary.imported_new_enrichments_count == 1
+        assert row is not None
+        assert row[0] == "upwork:987654321"
+        assert row[1] == MULTILINE_MANUAL_TEXT.strip()
+        assert row[2] == "raw_imported"
+    finally:
+        connection.close()
+
+
 def test_import_enrichment_csv_accepts_utf8_bom_and_normalizes_bom_header(
     conn: sqlite3.Connection,
     workspace_tmp_dir: Path,

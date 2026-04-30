@@ -125,6 +125,7 @@ def import_enrichment_csv(
             if job_row is None:
                 unknown_job_key_rows_count += 1
                 continue
+            job_key_value, upwork_job_id, source_url = job_row
 
             text_hash = _stable_text_hash(normalized_text)
             duplicate_row = conn.execute(
@@ -175,9 +176,9 @@ def import_enrichment_csv(
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    job_row["job_key"],
-                    job_row["upwork_job_id"],
-                    job_row["source_url"] or str(row.get("url") or "").strip() or None,
+                    job_key_value,
+                    upwork_job_id,
+                    source_url or str(row.get("url") or "").strip() or None,
                     _utc_now_iso(),
                     normalized_text,
                     text_hash,
