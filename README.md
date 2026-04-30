@@ -6,9 +6,142 @@ It ingests job data, preserves raw and normalized snapshots, filters obvious bad
 
 Current status: local staged MVP modules are being implemented incrementally. The active bounded task always lives in `docs/current_task.md`.
 
+## Daily MVP workflow
+
+This is the current usable MVP loop:
+
+```text
+official discovery
+-> official-data sanity filter
+-> persistence / memory
+-> manual enrichment bridge
+-> manual enrichment parser v1
+-> second-stage enriched deterministic scoring
+-> enriched prospect dump
+-> external AI/manual assessment
+-> local action tracking
+```
+
+What the tool currently does:
+
+- previews fresh official Upwork jobs without DB writes
+- persists non-`DISCARD` official-stage candidates into local SQLite
+- exports a CSV worksheet for manual Upwork UI/client enrichment
+- preserves raw manual text and derives parsed manual fields
+- computes a second-stage enriched score when rendering the prospect dump
+- keeps local action history so already-handled jobs stop clogging daily work
+
+What the tool does not do:
+
+- it does not apply to jobs automatically
+- it does not generate proposals
+- it does not call internal AI for the current MVP decision loop
+- it does not replace manual review
+
+Run this from the repo root in Windows PowerShell:
+
+```powershell
+$env:PYTHONPATH = "$PWD\src"
+$env:PYTHONIOENCODING = "utf-8"
+
+py -m upwork_triage preview-upwork `
+  --limit 50 `
+  --sample-limit 50 `
+  --output data/debug/upwork_raw_hydrated_latest.json `
+  --json-output data/debug/dry_run_latest.json
+
+py -m upwork_triage ingest-upwork-artifact `
+  data/debug/upwork_raw_hydrated_latest.json
+
+py -m upwork_triage queue-enrichment
+
+py -m upwork_triage export-enrichment-csv `
+  --output data/manual/enrichment_queue.csv
+
+# Open data/manual/enrichment_queue.csv.
+# For promising rows, open the URL, copy the Upwork UI/client block,
+# paste it into manual_ui_text, save the CSV.
+
+py -m upwork_triage import-enrichment-csv `
+  data/manual/enrichment_queue.csv
+
+py -X utf8 -m upwork_triage dump-prospects |
+  Out-File -Encoding utf8 data/manual/prospects_dump_enriched.txt
+```
+
+Generated files to expect:
+
+- `data/debug/upwork_raw_hydrated_latest.json`
+- `data/debug/dry_run_latest.json`
+- `data/manual/enrichment_queue.csv`
+- timestamped `data/manual/*remaining*.csv`
+- `data/manual/prospects_dump_enriched.txt`
+- `data/automat.sqlite3`
+
+Manual steps you still do yourself:
+
+1. open the exported CSV
+2. choose promising rows
+3. open each Upwork URL manually
+4. copy the relevant Upwork UI/client block
+5. paste it into `manual_ui_text`
+6. import the edited CSV
+7. review the enriched dump
+8. decide whether to apply
+9. log the local action
+
+How to use the enriched dump:
+
+- start with `STRONG_PROSPECT`
+- then inspect `REVIEW`
+- use `WEAK_REVIEW` only if you are still searching
+- ignore `ENRICHED_DISCARD` during normal application flow unless you are auditing/tuning the scorer
+- paste only `STRONG_PROSPECT` plus `REVIEW` into external AI/manual review, not necessarily the entire dump
+
+Optional audit and count commands:
+
+```powershell
+Select-String -Path data/manual/prospects_dump_enriched.txt `
+  -Pattern "^- enriched_bucket:" |
+  Group-Object { $_.Line.Trim() } |
+  Sort-Object Count -Descending |
+  Format-Table Count, Name
+```
+
+```powershell
+Select-String -Path data/manual/prospects_dump_enriched.txt `
+  -Pattern "ENRICHED FILTER|enriched_bucket|enriched_score|enriched_negative_flags|enriched_reject_reasons" `
+  -Context 0,4
+```
+
+Local action tracking examples:
+
+```powershell
+py -m upwork_triage action upwork:JOB_ID seen
+py -m upwork_triage action upwork:JOB_ID saved --notes "Worth checking later"
+py -m upwork_triage action upwork:JOB_ID skipped --notes "Weak client / high connects"
+py -m upwork_triage action upwork:JOB_ID applied --notes "Applied with WooCommerce integration angle"
+py -m upwork_triage action-by-upwork-id JOB_ID saved --notes "Visible Upwork id path"
+```
+
+Action tracking is local only:
+
+- it does not apply on Upwork
+- it helps future queues avoid already-handled jobs
+- it keeps local notes about why you saved, skipped, or applied
+
+## Known MVP caveats
+
+- The enriched score is still calibration-grade and should be audited during real usage.
+- Some missing fields appear as an em dash; PowerShell may show that as mojibake such as `ΓÇö` in grep-like output.
+- Manual enrichment quality depends on pasting the correct Upwork UI block into the correct CSV row.
+- The title mismatch guard exists, but it is not perfect.
+- `ENRICHED_DISCARD` rows can still show strong positive flags if a hard reject applies, such as `manual_hires_on_job_at_least_1`.
+- Local `data/` artifacts and the SQLite DB should usually stay uncommitted.
+
 ## Architecture
 
-Pipeline:
+Longer-term architecture:
 
 1. Fetch jobs from Upwork GraphQL or a fixture source.
 2. Create/update stable job identity.
@@ -20,6 +153,8 @@ Pipeline:
 8. Compute final triage verdict and final reason.
 9. Display `v_decision_shortlist`.
 10. Record user actions.
+
+Current daily MVP use is narrower than that longer-term architecture. For the actual command sequence to run now, use `Daily MVP workflow` above.
 
 ## MVP scope
 
@@ -339,191 +474,6 @@ py -m pytest
 - `docs/decisions.md` — durable architecture decisions
 - `docs/testing.md` — test expectations
 
-
-## Daily MVP workflow: discovery memory + enrichment packet generation (2026-04-29)
-
-This is the current lean MVP loop.
-
-Purpose:
-
-```text
-official discovery
--> official-data sanity filter
--> persistence / memory
--> manual enrichment bridge
--> enriched prospect dump
--> external AI/manual assessment
-```
-
-This workflow does not call OpenAI internally, does not submit proposals, and does not mutate Upwork. It only fetches official job data, stores promising candidates locally, helps collect UI-only manual client signals, and generates a paste-ready prospect packet.
-
-### 0. Use the local source tree
-
-On Windows PowerShell, run this from the repository root:
-
-```powershell
-$env:PYTHONPATH = "$PWD\src"
-```
-
-### 1. Preview fresh Upwork jobs without DB writes
-
-```powershell
-py -m upwork_triage preview-upwork `
-  --limit 50 `
-  --sample-limit 50 `
-  --output data/debug/upwork_raw_hydrated_latest.json `
-  --json-output data/debug/dry_run_latest.json
-```
-
-This command:
-
-- fetches official Upwork job data
-- exact-hydrates jobs where possible
-- writes a local raw artifact
-- runs no-AI deterministic dry-run diagnostics
-- does not write to SQLite
-
-### 2. Persist non-discarded official candidates
-
-```powershell
-py -m upwork_triage ingest-upwork-artifact `
-  data/debug/upwork_raw_hydrated_latest.json
-```
-
-This command:
-
-- reads the saved local artifact
-- normalizes and filters jobs
-- persists only non-`DISCARD` candidates
-- does not call AI
-- does not create final triage verdicts
-
-### 3. See what still needs manual enrichment
-
-```powershell
-py -m upwork_triage queue-enrichment
-```
-
-Optional narrow view:
-
-```powershell
-py -m upwork_triage queue-enrichment --no-low-priority
-```
-
-This command shows persisted candidates that still need UI-only client/job data.
-
-### 4. Export the manual enrichment worksheet
-
-```powershell
-py -m upwork_triage export-enrichment-csv `
-  --output data/manual/enrichment_queue.csv
-```
-
-Open `data/manual/enrichment_queue.csv` in Excel or another CSV editor. The CSV has exactly these columns:
-
-```text
-job_key,url,title,manual_ui_text
-```
-
-Only edit `manual_ui_text`.
-
-For each promising row:
-
-1. open the `url`,
-2. copy the relevant Upwork page/client block,
-3. paste it into the `manual_ui_text` cell,
-4. leave rows blank if you do not want to enrich them yet,
-5. save the CSV.
-
-### 5. Import the edited worksheet
-
-```powershell
-py -m upwork_triage import-enrichment-csv `
-  data/manual/enrichment_queue.csv
-```
-
-This command:
-
-- imports nonblank `manual_ui_text`
-- skips blank rows
-- preserves raw pasted text in SQLite
-- treats identical re-imports as no-ops
-- creates a new latest enrichment version if text changes
-- derives parsed manual fields automatically for the new latest enrichment rows
-- writes a timestamped remaining worksheet, without overwriting the input CSV
-
-### 6. Dump enriched prospects for external review
-
-```powershell
-py -m upwork_triage dump-prospects `
-  > data/manual/prospects_dump.txt
-```
-
-Optional:
-
-```powershell
-py -m upwork_triage dump-prospects --limit 3
-```
-
-Use `data/manual/prospects_dump.txt` as the packet to paste into ChatGPT or another external AI for ranking/appraisal against your profile.
-
-`dump-prospects` now renders:
-
-- official normalized/filter context
-- `ENRICHED FILTER` with second-stage deterministic bucket/score/flags/reject reasons computed from parsed manual fields plus official fallbacks
-- `PARSED MANUAL SIGNALS` derived from the pasted Upwork UI text
-- a loud warning when the pasted manual title appears to mismatch the official job title
-- the original raw manual text below the parsed section for auditability
-
-Important:
-
-- the official-stage ingest filter still decides what gets persisted from official data
-- the enriched-stage filter is a separate second pass used only for better prospect review
-- no internal AI appraisal was added here
-
-### 7. Record local actions after deciding
-
-```powershell
-py -m upwork_triage action upwork:JOB_ID seen
-py -m upwork_triage action upwork:JOB_ID saved
-py -m upwork_triage action upwork:JOB_ID skipped
-py -m upwork_triage action upwork:JOB_ID applied --notes "Applied with WooCommerce/multisite angle"
-```
-
-Action tracking is local only. It does not apply on Upwork.
-
-
-### 8. All together now
-
-The workflow chain is:
-
-```
-$env:PYTHONPATH = "$PWD\src"
-
-py -m upwork_triage preview-upwork `
-  --limit 50 `
-  --sample-limit 50 `
-  --output data/debug/upwork_raw_hydrated_latest.json `
-  --json-output data/debug/dry_run_latest.json
-
-py -m upwork_triage ingest-upwork-artifact `
-  data/debug/upwork_raw_hydrated_latest.json
-
-py -m upwork_triage queue-enrichment
-
-py -m upwork_triage export-enrichment-csv `
-  --output data/manual/enrichment_queue.csv
-
-# Open CSV, paste Upwork UI text into manual_ui_text, save.
-
-py -m upwork_triage import-enrichment-csv `
-  data/manual/enrichment_queue.csv
-
-py -m upwork_triage dump-prospects `
-  > data/manual/prospects_dump.txt
-```
-
-Then paste data/manual/prospects_dump.txt into external ChatGPT for assessment.
 
 For cleanup, run from repo root:
 ```

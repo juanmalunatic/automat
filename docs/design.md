@@ -88,6 +88,8 @@ It does not answer:
 Should I apply?
 ```
 
+This first-pass filter should stay broad enough to avoid missing promising jobs before manual enrichment exists.
+
 Official fields and derived proxies should be used as early signals, especially:
 
 - payment verification
@@ -194,6 +196,8 @@ Rules:
 - re-importing identical text is a no-op
 - changed text creates a new latest enrichment version
 
+This CSV bridge is intentionally operational, not elegant. Its job is to get UI-only client/job signals into local SQLite reliably.
+
 The stored enrichment record should preserve:
 
 - stable `job_key`
@@ -233,6 +237,8 @@ Rules:
 - let enriched-stage client quality dominate over keyword stacking
 - use parsed manual fields first and official normalized fallbacks second
 - do not add internal AI appraisal in this slice
+
+This enriched-stage score is for review prioritization, not for automatic application decisions.
 
 Important enriched-stage examples:
 
@@ -288,6 +294,13 @@ It should include both official and manual data:
 - manual member-since observation
 - raw manual text
 
+The rendered dump should make the stage boundaries obvious:
+
+- `OFFICIAL FILTER`
+- `ENRICHED FILTER`
+- `PARSED MANUAL SIGNALS`
+- `MANUAL UI TEXT`
+
 This output is the MVP decision handoff.
 
 The user may then ask an external AI to rank/appraise the prospects against their profile.
@@ -326,12 +339,12 @@ Rules:
 - useful for calibration and ad hoc checking
 - should not become the durable memory surface
 
-### Future official persisted intake command
+### Current official persisted intake command
 
-Likely command name:
+Current command name:
 
 ```powershell
-py -m upwork_triage ingest-upwork --limit 50
+py -m upwork_triage ingest-upwork-artifact data/debug/upwork_raw_hydrated_latest.json
 ```
 
 Purpose:
@@ -343,8 +356,7 @@ Store official-stage candidates so manual enrichment is not wasted.
 Behavior:
 
 ```text
-fetch official jobs
--> exact hydrate
+read saved local raw artifact
 -> normalize
 -> derive official client-quality proxies
 -> first sanity filter
@@ -355,14 +367,14 @@ Rules:
 
 - write jobs/raw/normalized/filter rows
 - preserve existing `jobs.user_status`
-- no OpenAI by default
+- no OpenAI
 - no internal final appraisal
 - no auto-apply
 - no browser scraping
 
-### Future enrichment queue command
+### Current enrichment queue command
 
-Likely command name:
+Current command name:
 
 ```powershell
 py -m upwork_triage queue-enrichment
@@ -406,9 +418,9 @@ Rules:
 - do not store this only in `user_actions.notes`
 - do not require a complex interactive UI
 
-### Future enriched prospect dump command
+### Current enriched prospect dump command
 
-Likely command name:
+Current command name:
 
 ```powershell
 py -m upwork_triage dump-prospects

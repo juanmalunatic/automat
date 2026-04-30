@@ -29,6 +29,44 @@ If using Windows PowerShell from the repo root:
 py -m pytest
 ```
 
+## MVP smoke testing
+
+For the current operational MVP loop, use this PowerShell setup first:
+
+```powershell
+$env:PYTHONPATH = "$PWD\src"
+$env:PYTHONIOENCODING = "utf-8"
+```
+
+Focused regression tests:
+
+```powershell
+py -m pytest tests/test_enriched_filters.py tests/test_manual_parse.py tests/test_manual_enrichment.py tests/test_cli.py
+```
+
+Full suite:
+
+```powershell
+py -m pytest
+```
+
+Real dump smoke test:
+
+```powershell
+py -X utf8 -m upwork_triage dump-prospects |
+  Out-File -Encoding utf8 data/manual/prospects_dump_enriched.txt
+```
+
+Optional enriched-bucket count audit:
+
+```powershell
+Select-String -Path data/manual/prospects_dump_enriched.txt `
+  -Pattern "^- enriched_bucket:" |
+  Group-Object { $_.Line.Trim() } |
+  Sort-Object Count -Descending |
+  Format-Table Count, Name
+```
+
 ## Initial test scope
 
 ### `tests/test_db.py`
