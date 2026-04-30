@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date
 from typing import Any, Mapping
 
+from upwork_triage.enriched_filters import EnrichedFilterInput, evaluate_enriched_filters
 from upwork_triage.manual_parse import upsert_manual_parse_for_latest_enrichments
 
 PROSPECT_BUCKET_ORDER = ("AI_EVAL", "MANUAL_EXCEPTION", "LOW_PRIORITY_REVIEW")
+ENRICHED_BUCKET_ORDER = ("STRONG_PROSPECT", "REVIEW", "WEAK_REVIEW", "ENRICHED_DISCARD")
 DEFAULT_PROSPECT_USER_STATUSES = ("new", "seen", "saved")
 MISSING = "\N{EM DASH}"
 
@@ -79,6 +82,8 @@ def fetch_enriched_prospects(
             manual_parse.manual_title_match_warning,
             manual_parse.connects_required,
             manual_parse.manual_proposals,
+            manual_parse.manual_proposals_low,
+            manual_parse.manual_proposals_high,
             manual_parse.manual_last_viewed_by_client,
             manual_parse.manual_hires_on_job,
             manual_parse.manual_interviewing,
@@ -125,7 +130,7 @@ def fetch_enriched_prospects(
 
     cursor = conn.execute(query, statuses)
     rows = [
-        _decode_row(_row_to_dict(row, cursor.description))
+        _attach_enriched_filter(_decode_row(_row_to_dict(row, cursor.description)))
         for row in cursor.fetchall()
     ]
     rows.sort(key=_prospect_sort_key)
@@ -165,6 +170,11 @@ def _render_prospect(index: int, row: Mapping[str, object]) -> list[str]:
     positive_flags = _format_string_list(row.get("positive_flags"))
     negative_flags = _format_string_list(row.get("negative_flags"))
     reject_reasons = _format_string_list(row.get("reject_reasons"))
+    enriched_bucket = _string_value(row.get("enriched_bucket"))
+    enriched_score = _format_score(row.get("enriched_score"))
+    enriched_positive_flags = _format_string_list(row.get("enriched_positive_flags"))
+    enriched_negative_flags = _format_string_list(row.get("enriched_negative_flags"))
+    enriched_reject_reasons = _format_string_list(row.get("enriched_reject_reasons"))
 
     contract_type = _string_value(row.get("j_contract_type"))
     pay = _format_pay_summary(row)
@@ -240,6 +250,13 @@ def _render_prospect(index: int, row: Mapping[str, object]) -> list[str]:
         f"- positive_flags: {positive_flags}",
         f"- negative_flags: {negative_flags}",
         f"- reject_reasons: {reject_reasons}",
+        "",
+        "ENRICHED FILTER",
+        f"- enriched_bucket: {enriched_bucket}",
+        f"- enriched_score: {enriched_score}",
+        f"- enriched_positive_flags: {enriched_positive_flags}",
+        f"- enriched_negative_flags: {enriched_negative_flags}",
+        f"- enriched_reject_reasons: {enriched_reject_reasons}",
         "",
         "JOB / SCOPE",
         f"- contract_type: {contract_type}",
@@ -338,6 +355,18 @@ def _parse_json_string_list(value: object | None) -> list[str]:
 
 
 def _prospect_sort_key(row: Mapping[str, object]) -> tuple[int, int, float, float]:
+    enriched_bucket = str(row.get("enriched_bucket") or "")
+    enriched_bucket_index = (
+        ENRICHED_BUCKET_ORDER.index(enriched_bucket)
+        if enriched_bucket in ENRICHED_BUCKET_ORDER
+        else len(ENRICHED_BUCKET_ORDER)
+    )
+    enriched_score = row.get("enriched_score")
+    enriched_score_value = (
+        float(enriched_score)
+        if isinstance(enriched_score, int | float) and not isinstance(enriched_score, bool)
+        else float("-inf")
+    )
     bucket = str(row.get("routing_bucket") or "")
     bucket_index = (
         PROSPECT_BUCKET_ORDER.index(bucket)
@@ -351,7 +380,14 @@ def _prospect_sort_key(row: Mapping[str, object]) -> tuple[int, int, float, floa
     posted_value = float(posted_minutes) if isinstance(posted_minutes, int | float) else float("inf")
     score = row.get("score")
     score_value = float(score) if isinstance(score, int | float) and not isinstance(score, bool) else float("-inf")
-    return (bucket_index, posted_missing, posted_value, -score_value)
+    return (
+        enriched_bucket_index,
+        -enriched_score_value,
+        bucket_index,
+        posted_missing,
+        posted_value,
+        -score_value,
+    )
 
 
 def _format_pay_summary(row: Mapping[str, object]) -> str:
@@ -448,3 +484,89 @@ def _row_to_dict(row: Any, description: Any | None = None) -> dict[str, object]:
         raise TypeError("expected row-like object with keys() or cursor metadata")
     column_names = [column[0] for column in description]
     return dict(zip(column_names, row, strict=True))
+
+
+def _attach_enriched_filter(row: dict[str, object]) -> dict[str, object]:
+    data = EnrichedFilterInput(
+        official_bucket=_optional_str(row.get("routing_bucket")),
+        official_score=_numeric_or_none(row.get("score")),
+        j_title=_optional_str(row.get("j_title")),
+        j_description=_optional_str(row.get("j_description")),
+        j_skills=_optional_str(row.get("j_skills")),
+        j_qualifications=_optional_str(row.get("j_qualifications")),
+        raw_manual_text=_optional_str(row.get("raw_manual_text")),
+        j_contract_type=_optional_str(row.get("j_contract_type")),
+        j_pay_fixed=_numeric_or_none(row.get("j_pay_fixed")),
+        j_pay_hourly_low=_numeric_or_none(row.get("j_pay_hourly_low")),
+        j_pay_hourly_high=_numeric_or_none(row.get("j_pay_hourly_high")),
+        j_apply_cost_connects=_int_or_none(row.get("j_apply_cost_connects")),
+        a_proposals=_optional_str(row.get("a_proposals")),
+        c_verified_payment=_int_or_none(row.get("c_verified_payment")),
+        c_verified_phone=_int_or_none(row.get("c_verified_phone")),
+        c_country=_optional_str(row.get("c_country")),
+        c_hist_jobs_posted=_int_or_none(row.get("c_hist_jobs_posted")),
+        c_hist_jobs_open=_int_or_none(row.get("c_hist_jobs_open")),
+        c_hist_hire_rate=_numeric_or_none(row.get("c_hist_hire_rate")),
+        c_hist_total_spent=_numeric_or_none(row.get("c_hist_total_spent")),
+        c_hist_hires_total=_int_or_none(row.get("c_hist_hires_total")),
+        c_hist_hires_active=_int_or_none(row.get("c_hist_hires_active")),
+        c_hist_avg_hourly_rate=_numeric_or_none(row.get("c_hist_avg_hourly_rate")),
+        c_hist_hours_hired=_numeric_or_none(row.get("c_hist_hours_hired")),
+        c_hist_member_since=_optional_str(row.get("c_hist_member_since")),
+        manual_parse_status=_optional_str(row.get("manual_parse_status")),
+        connects_required=_int_or_none(row.get("connects_required")),
+        manual_proposals_low=_int_or_none(row.get("manual_proposals_low")),
+        manual_proposals_high=_int_or_none(row.get("manual_proposals_high")),
+        manual_last_viewed_by_client=_optional_str(row.get("manual_last_viewed_by_client")),
+        manual_hires_on_job=_int_or_none(row.get("manual_hires_on_job")),
+        client_payment_verified=_int_or_none(row.get("client_payment_verified")),
+        client_phone_verified=_int_or_none(row.get("client_phone_verified")),
+        client_reviews_count=_int_or_none(row.get("client_reviews_count")),
+        client_country_normalized=_optional_str(row.get("client_country_normalized")),
+        client_jobs_posted=_int_or_none(row.get("client_jobs_posted")),
+        client_hire_rate=_numeric_or_none(row.get("client_hire_rate")),
+        client_open_jobs=_int_or_none(row.get("client_open_jobs")),
+        client_total_spent=_numeric_or_none(row.get("client_total_spent")),
+        client_hires_total=_int_or_none(row.get("client_hires_total")),
+        client_hires_active=_int_or_none(row.get("client_hires_active")),
+        client_avg_hourly_paid=_numeric_or_none(row.get("client_avg_hourly_paid")),
+        client_hours_hired=_int_or_none(row.get("client_hours_hired")),
+        client_member_since=_optional_str(row.get("client_member_since")),
+        today=date.today(),
+    )
+    result = evaluate_enriched_filters(data)
+    row["enriched_bucket"] = result.enriched_bucket
+    row["enriched_score"] = result.enriched_score
+    row["enriched_positive_flags"] = result.enriched_positive_flags
+    row["enriched_negative_flags"] = result.enriched_negative_flags
+    row["enriched_reject_reasons"] = result.enriched_reject_reasons
+    return row
+
+
+def _optional_str(value: object | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _int_or_none(value: object | None) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    text = str(value).strip()
+    return int(text) if text.isdigit() else None
+
+
+def _numeric_or_none(value: object | None) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    try:
+        return float(str(value).strip())
+    except ValueError:
+        return None

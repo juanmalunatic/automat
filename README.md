@@ -470,9 +470,16 @@ Use `data/manual/prospects_dump.txt` as the packet to paste into ChatGPT or anot
 `dump-prospects` now renders:
 
 - official normalized/filter context
+- `ENRICHED FILTER` with second-stage deterministic bucket/score/flags/reject reasons computed from parsed manual fields plus official fallbacks
 - `PARSED MANUAL SIGNALS` derived from the pasted Upwork UI text
 - a loud warning when the pasted manual title appears to mismatch the official job title
 - the original raw manual text below the parsed section for auditability
+
+Important:
+
+- the official-stage ingest filter still decides what gets persisted from official data
+- the enriched-stage filter is a separate second pass used only for better prospect review
+- no internal AI appraisal was added here
 
 ### 7. Record local actions after deciding
 

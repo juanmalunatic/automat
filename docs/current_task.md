@@ -2,47 +2,47 @@
 
 ## Task name
 
-Manual enrichment parser v1 plus parsed manual fields in `dump-prospects`.
+Second-stage enriched deterministic scoring using parsed manual fields.
 
 ## Product boundary
 
 This step should answer:
 
 ```text
-Can Automat convert pasted Upwork UI text into reliable derived manual fields and expose them in the enriched prospect dump?
+Can Automat turn parsed manual client/job signals into a more decision-useful second-stage deterministic assessment?
 ```
 
 It should not answer:
 
 ```text
-Should I apply?
+Should I auto-apply?
 ```
 
-Raw manual text remains source-preserved input. Parsed manual fields are derived data.
+Raw manual text remains source-preserved input. Parsed manual fields remain derived data. External AI/manual review still remains the final decision step.
 
 ## Implementation scope
 
 This task is limited to:
 
 ```text
-manual enrichment raw text
--> derived parse rows
--> parsed manual field display in dump-prospects
+official-stage persisted candidates
+-> manual enrichment parse rows
+-> enriched deterministic assessment
+-> enriched prospect dump
 ```
 
 Add:
 
-- a narrow parser for the highest-value manual client/activity fields
-- a derived parse table separate from `manual_job_enrichments`
-- title-mismatch detection using first-line manual title vs official title
-- automatic parsing after manual CSV import
-- dump-time backfill for missing latest parse rows
-- parsed manual signals rendered before raw manual text in `dump-prospects`
+- a separate enriched-stage evaluator that uses parsed manual client/activity fields
+- enriched bucket, score, positive flags, negative flags, and reject reasons
+- compute-on-read enriched results in `dump-prospects`
+- enriched output rendered alongside the existing official filter output
+- modest sorting by enriched bucket/score when practical
 
 Do not add:
 
-- scoring or filter changes
-- AI appraisal
+- changes to the official-stage ingest filter used before manual enrichment
+- internal AI appraisal
 - economics
 - proposal generation
 - live fetching changes
@@ -51,94 +51,100 @@ Do not add:
 - broad refactors
 - automatic apply decisions
 
-## Storage contract
+## Architecture rule
 
-Keep the existing raw manual enrichment record unchanged as preserved input:
+Keep the first official filter separate.
 
-- `manual_job_enrichments.raw_manual_text` stays the audit/source field
-- duplicate identical imports remain no-ops
-- changed text still creates a new latest enrichment version
+The official filter still answers:
 
-Store derived parsed output separately in `manual_job_enrichment_parses`.
+```text
+Is this worth persisting and opening manually?
+```
 
-One parse row should correspond to one manual enrichment row, keyed by `manual_enrichment_id`.
+The enriched filter now answers:
 
-## Title guard
+```text
+Given parsed manual client/job signals, how strong is this prospect for review?
+```
 
-Parse the first nonblank line as a likely manual title when it looks title-like.
+This second-stage evaluator must not silently change what gets persisted during official ingest.
 
-Normalize official and manual titles by:
+## Scoring intent
 
-- lowercasing
-- removing punctuation
-- collapsing whitespace
-- stripping a leading `Title:` prefix when present
+The enriched-stage score should be much more client-quality weighted than the official-stage score.
 
-If title overlap is obviously weak and neither normalized title contains the other:
-
-- create a parse row with `parse_status = title_mismatch`
-- set `manual_title_match_status = mismatch`
-- set `manual_title_match_warning`
-- skip derived decision-field parsing for that raw text
-- keep raw manual text unchanged
-- show a loud warning in `dump-prospects`
-
-If the manual first line is absent or not title-like, do not block parsing only for that reason. Use `manual_title_match_status = unknown` and continue.
-
-## Field scope for parser v1
-
-Parse when present:
+Parsed/manual-first signals:
 
 - connects required
-- proposals band plus low/high split
-- last viewed by client
-- hires on job
-- interviewing
-- invites sent
-- unanswered invites
-- bid high/avg/low
-- payment verified
-- phone verified
-- client rating and review count
-- client country raw plus normalized country
-- client location text when obvious
-- jobs posted
+- proposals band
+- hires already made on the job
+- client last viewed
+- payment / phone verification
+- country normalization
+- total spent
+- avg hourly paid
+- hours hired
 - hire rate
 - open jobs
-- total spent
-- hires total
-- hires active
-- average hourly paid
-- hours hired
+- active hires
 - member since
 
-Rules:
+Fallbacks may use official normalized fields when parsed manual values are missing.
 
-- normalize only obvious country aliases such as US/USA/United States and UK/England/United Kingdom
-- parse money deterministically, including K suffixes and comma numbers
-- handle singular/plural count text such as `1 hire` / `33 hires`
-- if a field is ambiguous or not confidently parseable, leave it null
+Keyword/lane matching may still help, but it must be capped so it cannot dominate weak client quality.
+
+## Core rules
+
+Implement these behaviors:
+
+- hard reject `manual_hires_on_job >= 1` unless title/description/manual text clearly suggests multiple hires
+- hard reject fixed budget below 50
+- hard reject fixed budget below 100 when proposals low is at least 20
+- penalize 20+ proposals and 50+ proposals, but do not auto-reject only for 50+
+- boost low proposal bands when high is at most 10
+- boost preferred countries modestly: United States, Canada, United Kingdom
+- penalize high Connect cost at 16+, 20+, and 24+
+- penalize stale client-last-viewed strings such as weeks/months ago
+- use official bucket only as a small prior, not as the main driver
+
+## Storage rule
+
+Do not add persisted enriched-result storage in this step unless it becomes trivial.
+
+Preferred behavior:
+
+- compute enriched results on read in `dump-prospects`
+- keep `manual_job_enrichments` and `manual_job_enrichment_parses` unchanged
 
 ## Dump behavior
 
-`dump-prospects` should:
+`dump-prospects` should now show:
 
-1. ensure latest manual parse rows exist before rendering,
-2. render a `PARSED MANUAL SIGNALS` section before raw manual text,
-3. show parse status and title-match status,
-4. show a loud warning when `parse_status = title_mismatch`,
-5. keep raw manual text visible below the parsed section for auditability.
+1. `OFFICIAL FILTER`
+2. `ENRICHED FILTER`
+3. `PARSED MANUAL SIGNALS`
+4. raw manual text below both derived sections
+
+The enriched section should include:
+
+- `enriched_bucket`
+- `enriched_score`
+- `enriched_positive_flags`
+- `enriched_negative_flags`
+- `enriched_reject_reasons`
+
+Title mismatch warnings from the parser should still remain loud and raw text should still remain visible.
 
 ## Acceptance criteria for this step
 
 This step is done when:
 
-1. raw manual text remains preserved in `manual_job_enrichments`,
-2. derived parse rows are stored in `manual_job_enrichment_parses`,
-3. import automatically parses newly inserted manual enrichment rows,
-4. `dump-prospects` backfills and displays parsed manual signals,
-5. title mismatches are flagged and parsed fields are skipped for that row,
+1. official-stage ingest filter behavior is unchanged,
+2. enriched-stage scoring is implemented in a separate evaluator,
+3. enriched results are computed for `dump-prospects`,
+4. `dump-prospects` displays enriched bucket/score/flags/reasons,
+5. parsed manual data influences enriched-stage scoring,
 6. raw manual text still appears in the dump,
-7. no scoring/filtering behavior has changed,
-8. focused parser/integration tests pass,
+7. no internal AI appraisal was added,
+8. focused enriched-filter and dump integration tests pass,
 9. the full test suite still passes.

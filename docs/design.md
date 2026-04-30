@@ -57,6 +57,8 @@ official discovery
 -> official-data sanity filter
 -> persistence / memory
 -> manual enrichment bridge
+-> manual enrichment parser
+-> enriched deterministic filter
 -> enriched prospect dump
 ```
 
@@ -213,7 +215,35 @@ Rules for this derived parse layer:
 
 These decision inputs should be stored separately from `user_actions.notes`, because they are not merely action history.
 
-### Stage 5: enriched prospect dump
+### Stage 5: manual enrichment parser plus enriched deterministic filter
+
+After raw manual text is stored, the app should derive parsed manual fields and then run a second deterministic assessment that is separate from the official ingest filter.
+
+This enriched-stage filter should answer:
+
+```text
+Given parsed manual client/job signals, how promising is this prospect for review?
+```
+
+Rules:
+
+- keep `manual_job_enrichments.raw_manual_text` as preserved source input
+- keep parsed fields in `manual_job_enrichment_parses` as derived data
+- keep the official first-pass filter unchanged as the persistence gate
+- let enriched-stage client quality dominate over keyword stacking
+- use parsed manual fields first and official normalized fallbacks second
+- do not add internal AI appraisal in this slice
+
+Important enriched-stage examples:
+
+- reject `manual_hires_on_job >= 1` unless the text clearly suggests multiple hires
+- penalize high Connect cost more when client quality is weak
+- penalize 20+ / 50+ proposal competition
+- reward preferred countries, established spend, good avg hourly, strong hire-rate, and longer client history
+
+This stage may compute on read inside `dump-prospects` instead of persisting a new result table.
+
+### Stage 6: enriched prospect dump
 
 The final MVP output is an enriched prospect packet, not an internal final verdict.
 
@@ -244,6 +274,7 @@ It should include both official and manual data:
 - derived spend per post
 - derived review rate
 - parsed manual status and title-match warning when relevant
+- enriched deterministic bucket / score / flags / reject reasons
 - manual Connects required
 - manual proposals / last viewed / hires / interviewing / invites
 - manual bid high / avg / low
@@ -498,7 +529,9 @@ The enrichment structure should preserve:
 
 Manual enrichment is an input to the decision process, not merely an action log.
 
-Parsed manual fields are still display/support data in this slice. They must not silently change deterministic filters or scoring until a later bounded task does that explicitly.
+Parsed manual fields now feed a separate enriched-stage deterministic assessment in `dump-prospects`.
+
+They still must not silently change the earlier official ingest filter that decides what gets persisted from official data alone.
 
 ### Deterministic filter result
 

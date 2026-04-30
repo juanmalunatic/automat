@@ -1517,7 +1517,7 @@ def test_import_enrichment_csv_duplicate_then_updated_text_behaves_correctly(
         shared_conn.close()
 
 
-def test_dump_prospects_includes_parsed_manual_signals_and_raw_text(
+def test_dump_prospects_includes_enriched_filter_parsed_manual_signals_and_raw_text(
     workspace_tmp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1559,6 +1559,9 @@ def test_dump_prospects_includes_parsed_manual_signals_and_raw_text(
         output = stdout.getvalue()
         assert exit_code == 0
         assert stderr.getvalue() == ""
+        assert "ENRICHED FILTER" in output
+        assert "- enriched_bucket:" in output
+        assert "- enriched_positive_flags:" in output
         assert "PARSED MANUAL SIGNALS" in output
         assert "- parse_status: parsed_ok" in output
         assert "- connects_required: 20" in output
@@ -1566,6 +1569,52 @@ def test_dump_prospects_includes_parsed_manual_signals_and_raw_text(
         assert "- client_total_spent: $12,000.00" in output
         assert "MANUAL UI TEXT" in output
         assert "Send a proposal for: 20 Connects" in output
+    finally:
+        shared_conn.close()
+
+
+def test_dump_prospects_includes_enriched_reject_reasons_for_manual_hires_on_job(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "manual" / "automat.sqlite3"
+    input_path = workspace_tmp_dir / "manual" / "enrichment_queue.csv"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_enrichment_queue(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+    write_manual_enrichment_csv(
+        input_path,
+        rows=[
+            {
+                "job_key": "upwork:987654321",
+                "url": "https://www.upwork.com/jobs/~987654321",
+                "title": "WooCommerce order sync plugin bug fix",
+                "manual_ui_text": (
+                    "WooCommerce order sync plugin bug fix\n"
+                    "Hires:\n1\n"
+                    "Proposals:\n10 to 15\n"
+                    "Send a proposal for: 20 Connects\n"
+                    "About the client\n"
+                    "Payment method verified\n"
+                    "United States\n"
+                ),
+            }
+        ],
+    )
+
+    try:
+        assert main(["import-enrichment-csv", str(input_path)], stdout=StringIO(), stderr=StringIO()) == 0
+
+        stdout = StringIO()
+        exit_code = main(["dump-prospects", "--limit", "1"], stdout=stdout, stderr=StringIO())
+
+        output = stdout.getvalue()
+        assert exit_code == 0
+        assert "- enriched_bucket: ENRICHED_DISCARD" in output
+        assert "manual_hires_on_job_at_least_1" in output
+        assert "MANUAL UI TEXT" in output
     finally:
         shared_conn.close()
 

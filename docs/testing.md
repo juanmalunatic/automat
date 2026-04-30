@@ -152,7 +152,7 @@ Should verify:
 - `export-enrichment-csv` reuses the enrichment-candidate worklist, excludes terminal user statuses, and excludes already-enriched jobs by default
 - `main(["import-enrichment-csv", PATH])` imports nonblank manual text, supports quoted multiline CSV cells, accepts BOM/whitespace-normalized headers plus comma/semicolon/tab delimiters, prints a compact summary, and writes a remaining unenriched worksheet without overwriting the input CSV
 - import CLI should auto-create/update derived manual parse rows for newly inserted enrichments
-- `main(["dump-prospects"])` should include `PARSED MANUAL SIGNALS`, preserve raw manual text, and show a loud warning on title mismatch
+- `main(["dump-prospects"])` should include `ENRICHED FILTER` plus `PARSED MANUAL SIGNALS`, preserve raw manual text, and show a loud warning on title mismatch
 - import CLI duplicate rows are no-ops, changed text creates a new latest version, and unknown `job_key` rows are skipped and counted
 - `main(["action", JOB_KEY, "seen"])` returns `0` and prints a confirmation
 - `main(["action", JOB_KEY, "applied", "--notes", "..."])` stores notes
@@ -229,6 +229,24 @@ Should verify:
 - a borderline but non-rejected job routes to `LOW_PRIORITY_REVIEW`
 - a low-score non-exact-fit job routes to `DISCARD`
 - result flags/reject reasons are returned as lists
+
+### `tests/test_enriched_filters.py`
+
+Should verify:
+
+- a strong client-quality-rich prospect can route to `STRONG_PROSPECT`
+- hired-on-job rejects unless multi-hire wording softens it
+- fixed budget below 50 hard-rejects
+- fixed budget below 100 with 20+ proposals hard-rejects
+- fixed budget below 100 with low proposals is not rejected solely for budget
+- hire rate below 50 is a major negative flag but not an automatic hard reject
+- low avg hourly paid adds negative flags
+- Connect cost penalties escalate at 16+, 20+, and 24+
+- preferred countries get a modest positive flag
+- keyword stacking is capped and weak clients still downgrade
+- official `AI_EVAL` prior alone does not dominate weak client quality
+- 50+ proposals are a penalty, not an automatic reject
+- stale client-last-viewed strings add a stale flag
 
 ### `tests/test_normalize.py`
 
