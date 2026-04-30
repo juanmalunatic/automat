@@ -4,6 +4,8 @@ import json
 import sqlite3
 from typing import Any, Mapping
 
+from upwork_triage.manual_parse import upsert_manual_parse_for_latest_enrichments
+
 PROSPECT_BUCKET_ORDER = ("AI_EVAL", "MANUAL_EXCEPTION", "LOW_PRIORITY_REVIEW")
 DEFAULT_PROSPECT_USER_STATUSES = ("new", "seen", "saved")
 MISSING = "\N{EM DASH}"
@@ -20,6 +22,8 @@ def fetch_enriched_prospects(
     statuses = tuple(include_statuses) if include_statuses is not None else DEFAULT_PROSPECT_USER_STATUSES
     if not statuses:
         return []
+    with conn:
+        upsert_manual_parse_for_latest_enrichments(conn)
 
     status_placeholders = ", ".join("?" for _ in statuses)
     query = f"""
@@ -70,7 +74,33 @@ def fetch_enriched_prospects(
 
             enrichment.created_at AS manual_enriched_at,
             enrichment.raw_manual_text,
-            enrichment.parse_status
+            manual_parse.parse_status AS manual_parse_status,
+            manual_parse.manual_title_match_status,
+            manual_parse.manual_title_match_warning,
+            manual_parse.connects_required,
+            manual_parse.manual_proposals,
+            manual_parse.manual_last_viewed_by_client,
+            manual_parse.manual_hires_on_job,
+            manual_parse.manual_interviewing,
+            manual_parse.manual_invites_sent,
+            manual_parse.manual_unanswered_invites,
+            manual_parse.bid_high,
+            manual_parse.bid_avg,
+            manual_parse.bid_low,
+            manual_parse.client_payment_verified,
+            manual_parse.client_phone_verified,
+            manual_parse.client_rating,
+            manual_parse.client_reviews_count,
+            manual_parse.client_country_normalized,
+            manual_parse.client_jobs_posted,
+            manual_parse.client_hire_rate,
+            manual_parse.client_open_jobs,
+            manual_parse.client_total_spent,
+            manual_parse.client_hires_total,
+            manual_parse.client_hires_active,
+            manual_parse.client_avg_hourly_paid,
+            manual_parse.client_hours_hired,
+            manual_parse.client_member_since
         FROM jobs
         JOIN job_snapshots_normalized AS normalized
             ON normalized.id = jobs.latest_normalized_snapshot_id
@@ -85,6 +115,8 @@ def fetch_enriched_prospects(
         JOIN manual_job_enrichments AS enrichment
             ON enrichment.job_key = jobs.job_key
             AND enrichment.is_latest = 1
+        LEFT JOIN manual_job_enrichment_parses AS manual_parse
+            ON manual_parse.manual_enrichment_id = enrichment.id
         WHERE
             jobs.latest_normalized_snapshot_id IS NOT NULL
             AND jobs.user_status IN ({status_placeholders})
@@ -163,10 +195,38 @@ def _render_prospect(index: int, row: Mapping[str, object]) -> list[str]:
     last_viewed = _format_minutes(row.get("a_mins_since_cli_viewed"))
 
     manual_enriched_at = _string_value(row.get("manual_enriched_at"))
-    parse_status = _string_value(row.get("parse_status"))
+    manual_parse_status = _string_value(row.get("manual_parse_status"))
+    manual_title_match_status = _string_value(row.get("manual_title_match_status"))
+    manual_title_match_warning = _string_value(row.get("manual_title_match_warning"))
     raw_manual_text = _string_value(row.get("raw_manual_text"))
+    manual_connects = _string_value(row.get("connects_required"))
+    manual_proposals = _string_value(row.get("manual_proposals"))
+    manual_last_viewed = _string_value(row.get("manual_last_viewed_by_client"))
+    manual_hires = _string_value(row.get("manual_hires_on_job"))
+    manual_interviewing = _string_value(row.get("manual_interviewing"))
+    manual_invites = _string_value(row.get("manual_invites_sent"))
+    manual_unanswered_invites = _string_value(row.get("manual_unanswered_invites"))
+    bid_summary = f"{_format_money(row.get('bid_high'))} / {_format_money(row.get('bid_avg'))} / {_format_money(row.get('bid_low'))}"
+    manual_payment_verified = _format_bool_yes_no(row.get("client_payment_verified"))
+    manual_phone_verified = _format_bool_yes_no(row.get("client_phone_verified"))
+    manual_reviews = f"{_string_value(row.get('client_rating'))} / {_string_value(row.get('client_reviews_count'))}"
+    manual_country = _string_value(row.get("client_country_normalized"))
+    manual_jobs_posted = _string_value(row.get("client_jobs_posted"))
+    manual_hire_rate = _format_percent(row.get("client_hire_rate"))
+    manual_open_jobs = _string_value(row.get("client_open_jobs"))
+    manual_total_spent = _format_money(row.get("client_total_spent"))
+    manual_hires_total = _string_value(row.get("client_hires_total"))
+    manual_hires_active = _string_value(row.get("client_hires_active"))
+    manual_avg_hourly_paid = _format_money(row.get("client_avg_hourly_paid"))
+    manual_hours_hired = _string_value(row.get("client_hours_hired"))
+    manual_member_since = _string_value(row.get("client_member_since"))
+    title_mismatch_warning = (
+        "WARNING: manual text title appears to mismatch official job title; parsed fields skipped."
+        if row.get("manual_parse_status") == "title_mismatch"
+        else None
+    )
 
-    return [
+    rendered = [
         f"--- PROSPECT {index} ---",
         f"TITLE: {title}",
         f"URL: {source_url}",
@@ -213,9 +273,34 @@ def _render_prospect(index: int, row: Mapping[str, object]) -> list[str]:
         f"- unanswered_invites: {unanswered_invites}",
         f"- client_last_viewed: {last_viewed}",
         "",
+        "PARSED MANUAL SIGNALS",
+        f"- parse_status: {manual_parse_status}",
+        f"- manual_title_match_status: {manual_title_match_status}",
+        f"- manual_title_match_warning: {manual_title_match_warning}",
+        f"- connects_required: {manual_connects}",
+        f"- proposals: {manual_proposals}",
+        f"- last_viewed_by_client: {manual_last_viewed}",
+        f"- hires_on_job: {manual_hires}",
+        f"- interviewing: {manual_interviewing}",
+        f"- invites_sent: {manual_invites}",
+        f"- unanswered_invites: {manual_unanswered_invites}",
+        f"- bid_high / bid_avg / bid_low: {bid_summary}",
+        f"- client_payment_verified: {manual_payment_verified}",
+        f"- client_phone_verified: {manual_phone_verified}",
+        f"- client_rating / client_reviews_count: {manual_reviews}",
+        f"- client_country_normalized: {manual_country}",
+        f"- client_jobs_posted: {manual_jobs_posted}",
+        f"- client_hire_rate: {manual_hire_rate}",
+        f"- client_open_jobs: {manual_open_jobs}",
+        f"- client_total_spent: {manual_total_spent}",
+        f"- client_hires_total: {manual_hires_total}",
+        f"- client_hires_active: {manual_hires_active}",
+        f"- client_avg_hourly_paid: {manual_avg_hourly_paid}",
+        f"- client_hours_hired: {manual_hours_hired}",
+        f"- client_member_since: {manual_member_since}",
+        "",
         "MANUAL UI TEXT",
         f"- enriched_at: {manual_enriched_at}",
-        f"- parse_status: {parse_status}",
         "- raw_manual_text:",
         _indent_block(raw_manual_text),
         "",
@@ -224,6 +309,10 @@ def _render_prospect(index: int, row: Mapping[str, object]) -> list[str]:
         f"- mark skipped: py -m upwork_triage action {job_key} skipped",
         f"- mark saved: py -m upwork_triage action {job_key} saved",
     ]
+    if title_mismatch_warning is not None:
+        warning_index = rendered.index("PARSED MANUAL SIGNALS") + 1
+        rendered.insert(warning_index, title_mismatch_warning)
+    return rendered
 
 
 def _decode_row(row: dict[str, object]) -> dict[str, object]:

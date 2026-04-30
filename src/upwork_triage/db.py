@@ -261,6 +261,52 @@ CREATE TABLE IF NOT EXISTS manual_job_enrichments (
     UNIQUE(job_key, raw_manual_text_hash)
 );
 
+CREATE TABLE IF NOT EXISTS manual_job_enrichment_parses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    manual_enrichment_id INTEGER NOT NULL REFERENCES manual_job_enrichments(id),
+    job_key TEXT NOT NULL REFERENCES jobs(job_key),
+    created_at TEXT NOT NULL,
+    parse_status TEXT NOT NULL
+        CHECK (parse_status IN ('parsed_ok', 'parsed_partial', 'title_mismatch', 'parse_failed')),
+    parse_warnings_json TEXT,
+    manual_title TEXT,
+    manual_title_match_status TEXT
+        CHECK (manual_title_match_status IN ('match', 'unknown', 'mismatch') OR manual_title_match_status IS NULL),
+    manual_title_match_warning TEXT,
+    connects_required INTEGER,
+    manual_proposals TEXT,
+    manual_proposals_low INTEGER,
+    manual_proposals_high INTEGER,
+    manual_last_viewed_by_client TEXT,
+    manual_hires_on_job INTEGER,
+    manual_interviewing INTEGER,
+    manual_invites_sent INTEGER,
+    manual_unanswered_invites INTEGER,
+    bid_high REAL,
+    bid_avg REAL,
+    bid_low REAL,
+    client_payment_verified INTEGER
+        CHECK (client_payment_verified IN (0, 1) OR client_payment_verified IS NULL),
+    client_phone_verified INTEGER
+        CHECK (client_phone_verified IN (0, 1) OR client_phone_verified IS NULL),
+    client_rating REAL,
+    client_reviews_count INTEGER,
+    client_country_raw TEXT,
+    client_country_normalized TEXT,
+    client_location_text TEXT,
+    client_jobs_posted INTEGER,
+    client_hire_rate REAL,
+    client_open_jobs INTEGER,
+    client_total_spent REAL,
+    client_hires_total INTEGER,
+    client_hires_active INTEGER,
+    client_avg_hourly_paid REAL,
+    client_hours_hired INTEGER,
+    client_member_since TEXT,
+    raw_fields_json TEXT,
+    UNIQUE(manual_enrichment_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_upwork_job_id
     ON jobs(upwork_job_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen_at
@@ -316,6 +362,10 @@ CREATE INDEX IF NOT EXISTS idx_manual_job_enrichments_upwork_job_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_job_enrichments_one_latest
     ON manual_job_enrichments(job_key)
     WHERE is_latest = 1;
+CREATE INDEX IF NOT EXISTS idx_manual_job_enrichment_parses_job_key
+    ON manual_job_enrichment_parses(job_key);
+CREATE INDEX IF NOT EXISTS idx_manual_job_enrichment_parses_manual_enrichment_id
+    ON manual_job_enrichment_parses(manual_enrichment_id);
 
 DROP VIEW IF EXISTS v_decision_shortlist;
 CREATE VIEW v_decision_shortlist AS

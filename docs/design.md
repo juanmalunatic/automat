@@ -201,7 +201,15 @@ The stored enrichment record should preserve:
 - `parse_status = raw_imported`
 - latest-version selection per job
 
-Parsing structured fields such as Connects required, member since, active hires, average hourly paid, hours hired, open jobs, and recent client review text is intentionally deferred to a later task.
+Structured parsing now belongs to a derived follow-on table, not to the raw import row itself.
+
+Rules for this derived parse layer:
+
+- preserve `raw_manual_text` unchanged as the source-preserved audit field
+- store parsed manual fields separately from `manual_job_enrichments`
+- use a title-mismatch guard so obviously wrong pasted job text is flagged instead of silently parsed
+- skip parsed decision fields when the manual title and official title obviously mismatch
+- keep raw manual text visible even when parsing fails or mismatches
 
 These decision inputs should be stored separately from `user_actions.notes`, because they are not merely action history.
 
@@ -235,14 +243,19 @@ It should include both official and manual data:
 - derived spend per hire
 - derived spend per post
 - derived review rate
+- parsed manual status and title-match warning when relevant
 - manual Connects required
-- manual member-since observation
-- manual active hires
+- manual proposals / last viewed / hires / interviewing / invites
+- manual bid high / avg / low
+- manual payment / phone verification
+- manual client rating / reviews
+- manual normalized country
+- manual jobs posted / hire rate / open jobs
+- manual total spent / hires total / hires active
 - manual average hourly paid
 - manual hours hired
-- manual open jobs
-- manual recent review text
-- manual notes
+- manual member-since observation
+- raw manual text
 
 This output is the MVP decision handoff.
 
@@ -470,6 +483,11 @@ Manual UI-only decision inputs should live in their own enrichment table or equi
 
 They should not be stored only as freeform action notes.
 
+The current MVP split is:
+
+- `manual_job_enrichments` for source-preserved raw pasted text
+- `manual_job_enrichment_parses` for derived parsed manual fields
+
 The enrichment structure should preserve:
 
 - structured fields that can be filtered or displayed
@@ -479,6 +497,8 @@ The enrichment structure should preserve:
 - optional source URL / Upwork id
 
 Manual enrichment is an input to the decision process, not merely an action log.
+
+Parsed manual fields are still display/support data in this slice. They must not silently change deterministic filters or scoring until a later bounded task does that explicitly.
 
 ### Deterministic filter result
 
@@ -578,6 +598,13 @@ These proxies are first-stage signals. They do not replace manual UI-only checks
 Some important fields remain manual final-check inputs unless a safe official source is later confirmed:
 
 - connects required
+- proposals
+- client last viewed
+- hires / interviewing / invites
+- market bid range
+- payment / phone verification when only visible in pasted UI context
+- client rating / reviews
+- client country normalization
 - client recent review text / work-history comments
 - member since
 - active hires
@@ -589,7 +616,7 @@ The system must not invent these fields.
 
 The enrichment queue should explicitly show which manual fields are still missing.
 
-The enriched prospect dump should include these fields when present.
+The enriched prospect dump should include parsed manual fields when present, retain raw manual text for auditability, and show a loud warning when manual pasted text appears to belong to a different job title.
 
 ## 8. Fit context
 

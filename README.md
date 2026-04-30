@@ -214,6 +214,8 @@ This bridge is intentionally minimal:
 - blank rows do not erase data
 - identical re-imports are no-ops
 - changed text creates a new latest enrichment version
+- raw manual text remains preserved exactly as imported
+- import also derives parsed manual fields into a separate parse table
 - import writes a new remaining unenriched worksheet instead of overwriting the input CSV
 
 ## Upwork auth helpers
@@ -447,6 +449,7 @@ This command:
 - preserves raw pasted text in SQLite
 - treats identical re-imports as no-ops
 - creates a new latest enrichment version if text changes
+- derives parsed manual fields automatically for the new latest enrichment rows
 - writes a timestamped remaining worksheet, without overwriting the input CSV
 
 ### 6. Dump enriched prospects for external review
@@ -463,6 +466,13 @@ py -m upwork_triage dump-prospects --limit 3
 ```
 
 Use `data/manual/prospects_dump.txt` as the packet to paste into ChatGPT or another external AI for ranking/appraisal against your profile.
+
+`dump-prospects` now renders:
+
+- official normalized/filter context
+- `PARSED MANUAL SIGNALS` derived from the pasted Upwork UI text
+- a loud warning when the pasted manual title appears to mismatch the official job title
+- the original raw manual text below the parsed section for auditability
 
 ### 7. Record local actions after deciding
 

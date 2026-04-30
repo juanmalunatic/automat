@@ -116,6 +116,14 @@ def test_import_enrichment_csv_stores_multiline_text_and_raw_imported_status(
         """,
         ("upwork:987654321",),
     ).fetchone()
+    parse_row = conn.execute(
+        """
+        SELECT parse_status, connects_required, client_total_spent, client_member_since
+        FROM manual_job_enrichment_parses
+        WHERE job_key = ?
+        """,
+        ("upwork:987654321",),
+    ).fetchone()
 
     assert summary.rows_read_count == 1
     assert summary.imported_new_enrichments_count == 1
@@ -123,6 +131,51 @@ def test_import_enrichment_csv_stores_multiline_text_and_raw_imported_status(
     assert row["raw_manual_text"] == MULTILINE_MANUAL_TEXT.strip()
     assert row["parse_status"] == "raw_imported"
     assert row["is_latest"] == 1
+    assert parse_row is not None
+    assert parse_row["parse_status"] in {"parsed_ok", "parsed_partial"}
+    assert parse_row["connects_required"] == 18
+    assert parse_row["client_total_spent"] == pytest.approx(4200.0)
+    assert parse_row["client_member_since"] == "Dec 28, 2004"
+
+
+def test_import_enrichment_csv_creates_title_mismatch_parse_row(
+    conn: sqlite3.Connection,
+    workspace_tmp_dir: Path,
+) -> None:
+    _seed_enrichment_candidates(conn)
+    worksheet_path = workspace_tmp_dir / "manual" / "mismatch.csv"
+    _write_csv_rows(
+        worksheet_path,
+        [
+            {
+                "job_key": "upwork:987654321",
+                "url": "https://www.upwork.com/jobs/~987654321",
+                "title": "WooCommerce order sync plugin bug fix",
+                "manual_ui_text": (
+                    "Joomla to WordPress migration\n"
+                    "Send a proposal for: 10 Connects\n"
+                    "Payment method verified"
+                ),
+            }
+        ],
+    )
+
+    import_enrichment_csv(conn, worksheet_path)
+
+    parse_row = conn.execute(
+        """
+        SELECT parse_status, manual_title_match_status, manual_title_match_warning, connects_required
+        FROM manual_job_enrichment_parses
+        WHERE job_key = ?
+        """,
+        ("upwork:987654321",),
+    ).fetchone()
+
+    assert parse_row is not None
+    assert parse_row["parse_status"] == "title_mismatch"
+    assert parse_row["manual_title_match_status"] == "mismatch"
+    assert parse_row["manual_title_match_warning"] is not None
+    assert parse_row["connects_required"] is None
 
 
 def test_import_enrichment_csv_works_with_default_tuple_returning_sqlite_connection(

@@ -66,6 +66,7 @@ def test_initialize_db_creates_all_required_tables(conn: sqlite3.Connection) -> 
         "economics_results",
         "triage_results",
         "manual_job_enrichments",
+        "manual_job_enrichment_parses",
         "user_actions",
     }
     rows = conn.execute(

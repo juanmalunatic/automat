@@ -1517,6 +1517,101 @@ def test_import_enrichment_csv_duplicate_then_updated_text_behaves_correctly(
         shared_conn.close()
 
 
+def test_dump_prospects_includes_parsed_manual_signals_and_raw_text(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "manual" / "automat.sqlite3"
+    input_path = workspace_tmp_dir / "manual" / "enrichment_queue.csv"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_enrichment_queue(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+    write_manual_enrichment_csv(
+        input_path,
+        rows=[
+            {
+                "job_key": "upwork:987654321",
+                "url": "https://www.upwork.com/jobs/~987654321",
+                "title": "WooCommerce order sync plugin bug fix",
+                "manual_ui_text": (
+                    "WooCommerce order sync plugin bug fix\n"
+                    "Proposals:\n10 to 15\n"
+                    "Send a proposal for: 20 Connects\n"
+                    "About the client\n"
+                    "Payment method verified\n"
+                    "United States\n"
+                    "$12K total spent\n"
+                    "Member since Apr 2, 2018\n"
+                ),
+            }
+        ],
+    )
+
+    try:
+        assert main(["import-enrichment-csv", str(input_path)], stdout=StringIO(), stderr=StringIO()) == 0
+
+        stdout = StringIO()
+        stderr = StringIO()
+        exit_code = main(["dump-prospects", "--limit", "1"], stdout=stdout, stderr=stderr)
+
+        output = stdout.getvalue()
+        assert exit_code == 0
+        assert stderr.getvalue() == ""
+        assert "PARSED MANUAL SIGNALS" in output
+        assert "- parse_status: parsed_ok" in output
+        assert "- connects_required: 20" in output
+        assert "- proposals: 10 to 15" in output
+        assert "- client_total_spent: $12,000.00" in output
+        assert "MANUAL UI TEXT" in output
+        assert "Send a proposal for: 20 Connects" in output
+    finally:
+        shared_conn.close()
+
+
+def test_dump_prospects_includes_title_mismatch_warning(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "manual" / "automat.sqlite3"
+    input_path = workspace_tmp_dir / "manual" / "enrichment_queue.csv"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_enrichment_queue(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+    write_manual_enrichment_csv(
+        input_path,
+        rows=[
+            {
+                "job_key": "upwork:987654321",
+                "url": "https://www.upwork.com/jobs/~987654321",
+                "title": "WooCommerce order sync plugin bug fix",
+                "manual_ui_text": (
+                    "Joomla to WordPress migration\n"
+                    "Send a proposal for: 10 Connects\n"
+                    "Payment method verified\n"
+                ),
+            }
+        ],
+    )
+
+    try:
+        assert main(["import-enrichment-csv", str(input_path)], stdout=StringIO(), stderr=StringIO()) == 0
+
+        stdout = StringIO()
+        exit_code = main(["dump-prospects", "--limit", "1"], stdout=stdout, stderr=StringIO())
+
+        output = stdout.getvalue()
+        assert exit_code == 0
+        assert "WARNING: manual text title appears to mismatch official job title; parsed fields skipped." in output
+        assert "- parse_status: title_mismatch" in output
+        assert "Joomla to WordPress migration" in output
+    finally:
+        shared_conn.close()
+
+
 def test_main_action_returns_zero_and_prints_confirmation(
     workspace_tmp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,

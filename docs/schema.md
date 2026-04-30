@@ -415,11 +415,71 @@ Mandatory uniqueness:
 
 Notes:
 
-- this task stores raw manual text only
-- structured parsing of Connects, member since, active hires, average hourly paid, hours hired, open jobs, and recent review text is intentionally deferred
+- this table preserves raw manual text only
+- derived structured parsing lives in `manual_job_enrichment_parses`
 - blank CSV rows must not erase existing enrichment
 - identical re-imports are no-ops
 - changed text creates a new latest version
+
+## 10b. `manual_job_enrichment_parses`
+
+Stores derived parsed manual fields for one imported raw manual enrichment row.
+
+Fields:
+
+- `id INTEGER PRIMARY KEY AUTOINCREMENT`
+- `manual_enrichment_id INTEGER NOT NULL REFERENCES manual_job_enrichments(id)`
+- `job_key TEXT NOT NULL REFERENCES jobs(job_key)`
+- `created_at TEXT NOT NULL`
+- `parse_status TEXT NOT NULL CHECK (parse_status IN ('parsed_ok', 'parsed_partial', 'title_mismatch', 'parse_failed'))`
+- `parse_warnings_json TEXT`
+- `manual_title TEXT`
+- `manual_title_match_status TEXT CHECK (manual_title_match_status IN ('match', 'unknown', 'mismatch') OR manual_title_match_status IS NULL)`
+- `manual_title_match_warning TEXT`
+- `connects_required INTEGER`
+- `manual_proposals TEXT`
+- `manual_proposals_low INTEGER`
+- `manual_proposals_high INTEGER`
+- `manual_last_viewed_by_client TEXT`
+- `manual_hires_on_job INTEGER`
+- `manual_interviewing INTEGER`
+- `manual_invites_sent INTEGER`
+- `manual_unanswered_invites INTEGER`
+- `bid_high REAL`
+- `bid_avg REAL`
+- `bid_low REAL`
+- `client_payment_verified INTEGER CHECK (client_payment_verified IN (0, 1) OR client_payment_verified IS NULL)`
+- `client_phone_verified INTEGER CHECK (client_phone_verified IN (0, 1) OR client_phone_verified IS NULL)`
+- `client_rating REAL`
+- `client_reviews_count INTEGER`
+- `client_country_raw TEXT`
+- `client_country_normalized TEXT`
+- `client_location_text TEXT`
+- `client_jobs_posted INTEGER`
+- `client_hire_rate REAL`
+- `client_open_jobs INTEGER`
+- `client_total_spent REAL`
+- `client_hires_total INTEGER`
+- `client_hires_active INTEGER`
+- `client_avg_hourly_paid REAL`
+- `client_hours_hired INTEGER`
+- `client_member_since TEXT`
+- `raw_fields_json TEXT`
+
+Indexes:
+
+- `idx_manual_job_enrichment_parses_job_key`
+- `idx_manual_job_enrichment_parses_manual_enrichment_id`
+
+Mandatory uniqueness:
+
+- `UNIQUE(manual_enrichment_id)`
+
+Notes:
+
+- this is derived data, not the source-preserved manual input
+- title mismatch should produce `parse_status = 'title_mismatch'` and skip parsed decision fields
+- raw manual text remains visible/auditable even when parsing fails or mismatches
 
 ## 11. `user_actions`
 

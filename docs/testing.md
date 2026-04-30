@@ -41,6 +41,7 @@ Should verify:
 - DB tests verify actual foreign-key enforcement, not only `PRAGMA foreign_keys`
 - all tables exist
 - `manual_job_enrichments` exists
+- `manual_job_enrichment_parses` exists
 - `v_decision_shortlist` exists
 - default settings row is inserted by `initialize_db`
 - initialization is idempotent
@@ -150,6 +151,8 @@ Should verify:
 - exported enrichment CSVs should be readable as UTF-8 with BOM for Excel/Windows compatibility
 - `export-enrichment-csv` reuses the enrichment-candidate worklist, excludes terminal user statuses, and excludes already-enriched jobs by default
 - `main(["import-enrichment-csv", PATH])` imports nonblank manual text, supports quoted multiline CSV cells, accepts BOM/whitespace-normalized headers plus comma/semicolon/tab delimiters, prints a compact summary, and writes a remaining unenriched worksheet without overwriting the input CSV
+- import CLI should auto-create/update derived manual parse rows for newly inserted enrichments
+- `main(["dump-prospects"])` should include `PARSED MANUAL SIGNALS`, preserve raw manual text, and show a loud warning on title mismatch
 - import CLI duplicate rows are no-ops, changed text creates a new latest version, and unknown `job_key` rows are skipped and counted
 - `main(["action", JOB_KEY, "seen"])` returns `0` and prints a confirmation
 - `main(["action", JOB_KEY, "applied", "--notes", "..."])` stores notes
@@ -450,6 +453,22 @@ Should verify:
 - the no-AI helper does not create `ai_evaluations`, `economics_results`, or `triage_results`
 - rerunning the same persisted raw payload preserves `jobs.user_status` and reuses the existing raw snapshot, normalized snapshot, and filter result
 
+### `tests/test_manual_parse.py`
+
+Should verify:
+
+- manual parser reads both Connects line variants
+- proposal bands parse into raw text plus low/high split
+- bid range parses into high/avg/low
+- total spent parses from plain dollars, K-suffixed dollars, and comma numbers
+- hires/active, avg hourly, hours hired, and member since parse when visible
+- country normalization handles obvious US/Canada/UK variants and leaves unknown values alone
+- payment verified / not verified parse deterministically
+- missing fields stay null instead of guessed
+- matching or substring titles parse normally
+- obvious title mismatch returns `title_mismatch` and skips parsed decision fields
+- missing/ambiguous first-line titles do not crash and can still produce partial parses
+
 ### `tests/test_manual_enrichment.py`
 
 Should verify:
@@ -462,12 +481,14 @@ Should verify:
 - import accepts comma-, semicolon-, and tab-delimited files
 - import works with both `sqlite3.Row` test connections and default tuple-returning SQLite connections matching the real CLI path
 - import stores nonblank `manual_ui_text` rows in `manual_job_enrichments`
+- import automatically creates a derived parse row in `manual_job_enrichment_parses`
 - quoted multiline `manual_ui_text` is preserved safely
 - blank rows are skipped and do not erase existing data
 - unknown `job_key` rows are skipped and counted
 - re-importing identical text for the same `job_key` is a no-op
 - importing changed text for the same `job_key` creates a new latest version and marks the old row non-latest
 - imported rows store `parse_status = 'raw_imported'`
+- title-mismatch raw imports still remain stored while the derived parse row records `title_mismatch`
 - import writes a remaining unenriched CSV and does not overwrite the input CSV
 
 ### `tests/test_pipeline.py`

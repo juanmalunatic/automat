@@ -2,14 +2,14 @@
 
 ## Task name
 
-Make the manual-enrichment CSV bridge robust for common Windows and Excel CSV files.
+Manual enrichment parser v1 plus parsed manual fields in `dump-prospects`.
 
 ## Product boundary
 
 This step should answer:
 
 ```text
-Can the user export a worksheet, edit it in Excel or another Windows CSV tool, and import it back safely?
+Can Automat convert pasted Upwork UI text into reliable derived manual fields and expose them in the enriched prospect dump?
 ```
 
 It should not answer:
@@ -18,100 +18,127 @@ It should not answer:
 Should I apply?
 ```
 
-SQLite remains the source of truth. The CSV remains only an editable worksheet.
+Raw manual text remains source-preserved input. Parsed manual fields are derived data.
 
 ## Implementation scope
 
 This task is limited to:
 
 ```text
-manual enrichment worksheet export/import
--> Excel-friendly encoding on export
--> tolerant decoding/header parsing/delimiter handling on import
+manual enrichment raw text
+-> derived parse rows
+-> parsed manual field display in dump-prospects
 ```
 
 Add:
 
-- export with UTF-8 BOM for Excel compatibility
-- import fallback decoding for common CSV encodings
-- header normalization for BOM and surrounding whitespace
-- delimiter tolerance for comma, semicolon, and tab
-- continued safe handling of quoted multiline `manual_ui_text`
+- a narrow parser for the highest-value manual client/activity fields
+- a derived parse table separate from `manual_job_enrichments`
+- title-mismatch detection using first-line manual title vs official title
+- automatic parsing after manual CSV import
+- dump-time backfill for missing latest parse rows
+- parsed manual signals rendered before raw manual text in `dump-prospects`
 
 Do not add:
 
-- parsing of Connects/member-since/avg-hourly/open-jobs fields
-- enriched prospect dump generation
-- OpenAI or any AI provider calls
+- scoring or filter changes
+- AI appraisal
 - economics
-- live network fetching
+- proposal generation
+- live fetching changes
+- scheduled/background runs
+- dashboards
 - broad refactors
+- automatic apply decisions
 
-## CSV contract
+## Storage contract
 
-The worksheet shape stays exactly:
+Keep the existing raw manual enrichment record unchanged as preserved input:
 
-```text
-job_key,url,title,manual_ui_text
-```
+- `manual_job_enrichments.raw_manual_text` stays the audit/source field
+- duplicate identical imports remain no-ops
+- changed text still creates a new latest enrichment version
+
+Store derived parsed output separately in `manual_job_enrichment_parses`.
+
+One parse row should correspond to one manual enrichment row, keyed by `manual_enrichment_id`.
+
+## Title guard
+
+Parse the first nonblank line as a likely manual title when it looks title-like.
+
+Normalize official and manual titles by:
+
+- lowercasing
+- removing punctuation
+- collapsing whitespace
+- stripping a leading `Title:` prefix when present
+
+If title overlap is obviously weak and neither normalized title contains the other:
+
+- create a parse row with `parse_status = title_mismatch`
+- set `manual_title_match_status = mismatch`
+- set `manual_title_match_warning`
+- skip derived decision-field parsing for that raw text
+- keep raw manual text unchanged
+- show a loud warning in `dump-prospects`
+
+If the manual first line is absent or not title-like, do not block parsing only for that reason. Use `manual_title_match_status = unknown` and continue.
+
+## Field scope for parser v1
+
+Parse when present:
+
+- connects required
+- proposals band plus low/high split
+- last viewed by client
+- hires on job
+- interviewing
+- invites sent
+- unanswered invites
+- bid high/avg/low
+- payment verified
+- phone verified
+- client rating and review count
+- client country raw plus normalized country
+- client location text when obvious
+- jobs posted
+- hire rate
+- open jobs
+- total spent
+- hires total
+- hires active
+- average hourly paid
+- hours hired
+- member since
 
 Rules:
 
-- only `manual_ui_text` is intended to be edited
-- multiline pasted text must continue to work through normal CSV quoting
-- blank `manual_ui_text` rows remain no-ops
-- repeated identical imports remain no-ops
-- changed text still creates a new latest enrichment version
+- normalize only obvious country aliases such as US/USA/United States and UK/England/United Kingdom
+- parse money deterministically, including K suffixes and comma numbers
+- handle singular/plural count text such as `1 hire` / `33 hires`
+- if a field is ambiguous or not confidently parseable, leave it null
 
-## Export requirements
+## Dump behavior
 
-`export-enrichment-csv` should:
+`dump-prospects` should:
 
-1. keep `newline=""`
-2. write with `encoding="utf-8-sig"`
-3. keep the same four worksheet columns
-4. keep `manual_ui_text` blank by default
-5. keep existing candidate-selection behavior
-
-## Import requirements
-
-`import-enrichment-csv` should accept common spreadsheet/editor variants:
-
-- UTF-8 with BOM
-- UTF-8 without BOM
-- Windows-1252 / cp1252
-
-Header validation should tolerate:
-
-- BOM on the first header cell
-- leading/trailing header whitespace
-
-Delimiter handling should support:
-
-- comma
-- semicolon
-- tab
-
-If delimiter sniffing fails, default back to comma.
-
-The importer may ignore extra columns, but it must still require and use:
-
-- `job_key`
-- `url`
-- `title`
-- `manual_ui_text`
+1. ensure latest manual parse rows exist before rendering,
+2. render a `PARSED MANUAL SIGNALS` section before raw manual text,
+3. show parse status and title-match status,
+4. show a loud warning when `parse_status = title_mismatch`,
+5. keep raw manual text visible below the parsed section for auditability.
 
 ## Acceptance criteria for this step
 
 This step is done when:
 
-1. export writes an Excel-friendly UTF-8-with-BOM worksheet,
-2. import accepts UTF-8 BOM, plain UTF-8, and cp1252 CSV files,
-3. BOM-prefixed and whitespace-padded headers still validate as `job_key,url,title,manual_ui_text`,
-4. semicolon- and tab-delimited files import correctly,
-5. quoted multiline `manual_ui_text` still imports correctly,
-6. blank rows remain no-ops,
-7. duplicate identical imports remain no-ops,
-8. changed text still creates a new latest enrichment version,
-9. the remaining unenriched worksheet is still generated after import,
-10. the current preview, artifact-ingest, queue, queue-enrichment, and action flows keep working.
+1. raw manual text remains preserved in `manual_job_enrichments`,
+2. derived parse rows are stored in `manual_job_enrichment_parses`,
+3. import automatically parses newly inserted manual enrichment rows,
+4. `dump-prospects` backfills and displays parsed manual signals,
+5. title mismatches are flagged and parsed fields are skipped for that row,
+6. raw manual text still appears in the dump,
+7. no scoring/filtering behavior has changed,
+8. focused parser/integration tests pass,
+9. the full test suite still passes.

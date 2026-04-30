@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+from upwork_triage.manual_parse import upsert_manual_parse_for_enrichment_ids
 from upwork_triage.queue_view import fetch_enrichment_queue
 
 MANUAL_ENRICHMENT_CSV_COLUMNS = ("job_key", "url", "title", "manual_ui_text")
@@ -92,6 +93,7 @@ def import_enrichment_csv(
     unchanged_duplicate_rows_count = 0
     updated_versions_count = 0
     unknown_job_key_rows_count = 0
+    inserted_manual_enrichment_ids: list[int] = []
 
     csv_text, detected_encoding = _read_csv_text_with_fallback(input_csv)
     detected_delimiter = _detect_csv_delimiter(csv_text)
@@ -161,7 +163,7 @@ def import_enrichment_csv(
                     (job_key,),
                 )
 
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO manual_job_enrichments (
                     job_key,
@@ -187,6 +189,10 @@ def import_enrichment_csv(
                     1,
                 ),
             )
+            inserted_manual_enrichment_ids.append(int(cursor.lastrowid))
+
+        if inserted_manual_enrichment_ids:
+            upsert_manual_parse_for_enrichment_ids(conn, inserted_manual_enrichment_ids)
 
     remaining_csv_path = _build_remaining_csv_path(input_csv)
     remaining_summary = export_enrichment_csv(
