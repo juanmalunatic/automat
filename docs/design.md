@@ -166,50 +166,42 @@ It should show enough context to decide whether manual enrichment is worth doing
 - activity/competition signals
 - missing manual enrichment fields
 
+By default, the remaining-worklist queue should hide jobs that already have latest manual enrichment stored.
+
 ### Stage 4: manual enrichment bridge
 
 Do not build a complex interactive UI for manual enrichment in the first MVP.
 
-Use a structured plain-text bridge.
+Use a minimal CSV worksheet bridge.
 
-The user can copy data from the Upwork page, format it into a small local text file, and import it.
-
-Example format:
+The CSV is intentionally tiny and editable:
 
 ```text
-job_key: upwork:2049588347231477717
-connects_required: 16
-member_since: 2021
-active_hires: 2
-avg_hourly_paid: 28
-hours_hired: 430
-open_jobs: 3
-
-client_recent_reviews:
-- Great client, clear instructions, paid promptly.
-- Good communication, reasonable expectations.
-
-manual_notes:
-Recent work history is mostly technical/WordPress-adjacent.
+job_key,url,title,manual_ui_text
 ```
 
-The parser should be permissive enough for practical use, but deterministic and testable.
+Rules:
 
-The manual enrichment record should preserve both structured fields and raw/freeform text.
+- SQLite is the source of truth
+- the CSV is only a bulk input surface
+- only `manual_ui_text` is intended to be edited
+- multiline pasted Upwork UI text is allowed as long as the editor preserves valid CSV quoting
+- blank rows do not erase existing enrichment
+- re-importing identical text is a no-op
+- changed text creates a new latest enrichment version
 
-Suggested manual fields:
+The stored enrichment record should preserve:
 
-- connects required
-- client recent review text / work-history comments
-- member since
-- active hires
-- average hourly paid
-- total hours hired
-- open jobs
-- manual notes
+- stable `job_key`
+- optional Upwork id / source URL
 - raw pasted text
+- a stable text hash
+- `parse_status = raw_imported`
+- latest-version selection per job
 
-These fields should be stored separately from `user_actions.notes`, because they are decision inputs, not merely action history.
+Parsing structured fields such as Connects required, member since, active hires, average hourly paid, hours hired, open jobs, and recent client review text is intentionally deferred to a later task.
+
+These decision inputs should be stored separately from `user_actions.notes`, because they are not merely action history.
 
 ### Stage 5: enriched prospect dump
 
@@ -345,25 +337,26 @@ read persisted official-stage survivors
 -> show URL and official client-quality summary
 ```
 
-### Future manual enrichment import command
+### Manual enrichment bridge commands
 
-Likely command name:
+Current lean-MVP commands:
 
 ```powershell
-py -m upwork_triage enrich-from-file data/manual/upwork_2049588347231477717.txt
+py -m upwork_triage export-enrichment-csv --output data/manual/enrichment_queue.csv
+py -m upwork_triage import-enrichment-csv data/manual/enrichment_queue.csv
 ```
 
 Purpose:
 
 ```text
-Import structured manual UI-only client data into SQLite.
+Export the remaining manual-enrichment worklist, then import raw pasted UI text back into SQLite safely.
 ```
 
 Rules:
 
-- parse structured text
-- store structured fields
-- preserve raw/freeform text
+- export only the minimal worksheet columns
+- import raw text only in the first step
+- preserve version history by `job_key` + text hash
 - do not store this only in `user_actions.notes`
 - do not require a complex interactive UI
 

@@ -40,6 +40,7 @@ Should verify:
 - `initialize_db(conn)` enables foreign keys even when `conn` came from raw `sqlite3.connect(...)`
 - DB tests verify actual foreign-key enforcement, not only `PRAGMA foreign_keys`
 - all tables exist
+- `manual_job_enrichments` exists
 - `v_decision_shortlist` exists
 - default settings row is inserted by `initialize_db`
 - initialization is idempotent
@@ -145,6 +146,10 @@ Should verify:
 - `queue-enrichment` excludes `DISCARD` and excludes jobs with `user_status` values `applied`, `skipped`, or `archived`
 - `queue-enrichment` includes `new`, `seen`, and `saved` jobs and prints the manual-final-check reminder plus the local action hint
 - `queue-enrichment` does not call fake-demo, ingest-once, raw inspection, Upwork fetch, OpenAI evaluation, or action recording
+- `main(["export-enrichment-csv", "--output", PATH])` writes a CSV worksheet with exactly `job_key`, `url`, `title`, and `manual_ui_text`
+- `export-enrichment-csv` reuses the enrichment-candidate worklist, excludes terminal user statuses, and excludes already-enriched jobs by default
+- `main(["import-enrichment-csv", PATH])` imports nonblank manual text, supports quoted multiline CSV cells, prints a compact summary, and writes a remaining unenriched worksheet without overwriting the input CSV
+- import CLI duplicate rows are no-ops, changed text creates a new latest version, and unknown `job_key` rows are skipped and counted
 - `main(["action", JOB_KEY, "seen"])` returns `0` and prints a confirmation
 - `main(["action", JOB_KEY, "applied", "--notes", "..."])` stores notes
 - `main(["action-by-upwork-id", UPWORK_JOB_ID, "skipped"])` resolves the correct job
@@ -444,6 +449,21 @@ Should verify:
 - the no-AI helper does not create `ai_evaluations`, `economics_results`, or `triage_results`
 - rerunning the same persisted raw payload preserves `jobs.user_status` and reuses the existing raw snapshot, normalized snapshot, and filter result
 
+### `tests/test_manual_enrichment.py`
+
+Should verify:
+
+- `export_enrichment_csv()` writes exactly `job_key`, `url`, `title`, and `manual_ui_text`
+- export includes persisted non-`DISCARD` enrichment candidates and excludes terminal user statuses
+- import stores nonblank `manual_ui_text` rows in `manual_job_enrichments`
+- quoted multiline `manual_ui_text` is preserved safely
+- blank rows are skipped and do not erase existing data
+- unknown `job_key` rows are skipped and counted
+- re-importing identical text for the same `job_key` is a no-op
+- importing changed text for the same `job_key` creates a new latest version and marks the old row non-latest
+- imported rows store `parse_status = 'raw_imported'`
+- import writes a remaining unenriched CSV and does not overwrite the input CSV
+
 ### `tests/test_pipeline.py`
 
 Should verify:
@@ -478,6 +498,7 @@ Should verify:
 - rendering works with a shortlist row produced by `run_fake_pipeline()`
 - `fetch_enrichment_queue()` returns persisted official-stage candidates written by the no-AI artifact-ingest path
 - `fetch_enrichment_queue()` does not require `triage_results` and does not read `v_decision_shortlist`
+- `fetch_enrichment_queue()` hides jobs with latest manual enrichment by default so the queue remains a remaining-worklist view
 - enrichment rows are ordered by `AI_EVAL`, `MANUAL_EXCEPTION`, then `LOW_PRIORITY_REVIEW`, with fresher jobs first inside a bucket and higher score as a tie-breaker
 - `render_enrichment_queue()` includes title, job key, URL, user status, bucket/score, pay, client official history, activity fields, missing manual fields, and the suggested local action command
 - empty enrichment rows render `Enrichment queue is empty.`

@@ -384,7 +384,44 @@ Indexes:
 - `idx_triage_results_job_snapshot_id`
 - `idx_triage_results_created_at`
 
-## 10. `user_actions`
+## 10. `manual_job_enrichments`
+
+Stores raw manual UI-only enrichment text imported from the editable CSV worksheet.
+
+The DB remains the source of truth. The CSV is only a bulk input surface.
+
+Fields:
+
+- `id INTEGER PRIMARY KEY AUTOINCREMENT`
+- `job_key TEXT NOT NULL REFERENCES jobs(job_key)`
+- `upwork_job_id TEXT`
+- `source_url TEXT`
+- `created_at TEXT NOT NULL`
+- `raw_manual_text TEXT NOT NULL`
+- `raw_manual_text_hash TEXT NOT NULL`
+- `parse_status TEXT NOT NULL CHECK (parse_status IN ('raw_imported'))`
+- `parse_warnings_json TEXT`
+- `is_latest INTEGER NOT NULL CHECK (is_latest IN (0, 1))`
+
+Indexes:
+
+- `idx_manual_job_enrichments_job_key`
+- `idx_manual_job_enrichments_upwork_job_id`
+
+Mandatory uniqueness:
+
+- `UNIQUE(job_key, raw_manual_text_hash)`
+- partial unique index allowing only one latest row per `job_key`
+
+Notes:
+
+- this task stores raw manual text only
+- structured parsing of Connects, member since, active hires, average hourly paid, hours hired, open jobs, and recent review text is intentionally deferred
+- blank CSV rows must not erase existing enrichment
+- identical re-imports are no-ops
+- changed text creates a new latest version
+
+## 11. `user_actions`
 
 Tracks what the user actually did.
 
@@ -404,7 +441,7 @@ Indexes:
 - `idx_user_actions_upwork_job_id`
 - `idx_user_actions_job_snapshot_id`
 
-## 11. `v_decision_shortlist`
+## 12. `v_decision_shortlist`
 
 Main user-facing view.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from io import StringIO
 import shutil
@@ -1326,6 +1327,194 @@ def test_queue_enrichment_command_does_not_call_pipeline_network_or_action_bound
         shared_conn.close()
 
 
+def test_export_enrichment_csv_writes_exact_columns(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "manual" / "automat.sqlite3"
+    output_path = workspace_tmp_dir / "manual" / "enrichment_queue.csv"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_enrichment_queue(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = main(
+            ["export-enrichment-csv", "--output", str(output_path)],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        assert exit_code == 0
+        assert stderr.getvalue() == ""
+        with output_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            assert reader.fieldnames == ["job_key", "url", "title", "manual_ui_text"]
+            rows = list(reader)
+        assert len(rows) == 3
+        assert "Enrichment CSV exported:" in stdout.getvalue()
+        assert "Rows written: 3" in stdout.getvalue()
+    finally:
+        shared_conn.close()
+
+
+def test_import_enrichment_csv_imports_multiline_text_and_writes_remaining_csv(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "manual" / "automat.sqlite3"
+    input_path = workspace_tmp_dir / "manual" / "enrichment_queue.csv"
+    multiline_text = (
+        "Payment method verified\n"
+        "Rating is 5.0 out of 5.\n"
+        "Required Connects to submit a proposal: 18\n"
+        "$4.2K total spent\n"
+        "31 hires, 2 active\n"
+        "$113.50 /hr avg hourly rate paid\n"
+        "11 hours\n"
+        "Member since Dec 28, 2004\n"
+        "Client's recent history (19)\n"
+        "Great work! Recommended!\n"
+    )
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_enrichment_queue(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+    write_manual_enrichment_csv(
+        input_path,
+        rows=[
+            {
+                "job_key": "upwork:987654321",
+                "url": "https://www.upwork.com/jobs/~987654321",
+                "title": "WooCommerce order sync plugin bug fix",
+                "manual_ui_text": multiline_text,
+            },
+            {
+                "job_key": "upwork:unknown",
+                "url": "https://www.upwork.com/jobs/~unknown",
+                "title": "Unknown job",
+                "manual_ui_text": "Unknown text",
+            },
+            {
+                "job_key": "upwork:333444555",
+                "url": "https://www.upwork.com/jobs/~333444555",
+                "title": "WordPress maintenance task",
+                "manual_ui_text": "   ",
+            },
+        ],
+    )
+
+    try:
+        stdout = StringIO()
+        stderr = StringIO()
+
+        exit_code = main(
+            ["import-enrichment-csv", str(input_path)],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        output = stdout.getvalue()
+        assert exit_code == 0
+        assert stderr.getvalue() == ""
+        stored_row = shared_conn.execute(
+            """
+            SELECT raw_manual_text, parse_status, is_latest
+            FROM manual_job_enrichments
+            WHERE job_key = ?
+            """,
+            ("upwork:987654321",),
+        ).fetchone()
+        assert stored_row is not None
+        assert stored_row["raw_manual_text"] == multiline_text.strip()
+        assert stored_row["parse_status"] == "raw_imported"
+        assert stored_row["is_latest"] == 1
+        assert "Rows read: 3" in output
+        assert "Blank rows skipped: 1" in output
+        assert "Imported new enrichments: 1" in output
+        assert "Unknown job_key rows: 1" in output
+        assert "Remaining unenriched candidates: 2" in output
+
+        remaining_path = None
+        for line in output.splitlines():
+            if line.startswith("Remaining CSV: "):
+                remaining_path = Path(line.removeprefix("Remaining CSV: ").strip())
+                break
+        assert remaining_path is not None
+        assert remaining_path.exists()
+        assert remaining_path != input_path
+    finally:
+        shared_conn.close()
+
+
+def test_import_enrichment_csv_duplicate_then_updated_text_behaves_correctly(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "manual" / "automat.sqlite3"
+    input_path = workspace_tmp_dir / "manual" / "enrichment_queue.csv"
+    shared_conn = sqlite3.connect(":memory:")
+    shared_conn.row_factory = sqlite3.Row
+    seed_enrichment_queue(shared_conn)
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    install_in_memory_cli_connection(monkeypatch, db_path, shared_connection=shared_conn)
+
+    try:
+        write_manual_enrichment_csv(
+            input_path,
+            rows=[
+                {
+                    "job_key": "upwork:987654321",
+                    "url": "https://www.upwork.com/jobs/~987654321",
+                    "title": "WooCommerce order sync plugin bug fix",
+                    "manual_ui_text": "First version",
+                }
+            ],
+        )
+        assert main(["import-enrichment-csv", str(input_path)], stdout=StringIO(), stderr=StringIO()) == 0
+
+        duplicate_stdout = StringIO()
+        assert main(["import-enrichment-csv", str(input_path)], stdout=duplicate_stdout, stderr=StringIO()) == 0
+        assert "Unchanged duplicate rows: 1" in duplicate_stdout.getvalue()
+
+        write_manual_enrichment_csv(
+            input_path,
+            rows=[
+                {
+                    "job_key": "upwork:987654321",
+                    "url": "https://www.upwork.com/jobs/~987654321",
+                    "title": "WooCommerce order sync plugin bug fix",
+                    "manual_ui_text": "Second version",
+                }
+            ],
+        )
+        update_stdout = StringIO()
+        assert main(["import-enrichment-csv", str(input_path)], stdout=update_stdout, stderr=StringIO()) == 0
+        assert "Updated enrichment versions: 1" in update_stdout.getvalue()
+
+        rows = shared_conn.execute(
+            """
+            SELECT raw_manual_text, is_latest
+            FROM manual_job_enrichments
+            WHERE job_key = ?
+            ORDER BY id
+            """,
+            ("upwork:987654321",),
+        ).fetchall()
+        assert len(rows) == 2
+        assert rows[0]["raw_manual_text"] == "First version"
+        assert rows[0]["is_latest"] == 0
+        assert rows[1]["raw_manual_text"] == "Second version"
+        assert rows[1]["is_latest"] == 1
+    finally:
+        shared_conn.close()
+
+
 def test_main_action_returns_zero_and_prints_confirmation(
     workspace_tmp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2128,6 +2317,17 @@ def write_cli_raw_artifact(path: Path, *, jobs: list[dict[str, object]]) -> None
         "jobs": jobs,
     }
     path.write_text(json.dumps(document, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def write_manual_enrichment_csv(path: Path, *, rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["job_key", "url", "title", "manual_ui_text"],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def seed_cli_job(conn: sqlite3.Connection, *, job_key: str, upwork_job_id: str) -> None:

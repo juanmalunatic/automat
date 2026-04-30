@@ -37,6 +37,7 @@ def fetch_enrichment_queue(
     limit: int | None = None,
     *,
     include_low_priority: bool = True,
+    include_enriched: bool = False,
     include_statuses: tuple[str, ...] | list[str] | None = None,
 ) -> list[dict[str, object]]:
     statuses = tuple(include_statuses) if include_statuses is not None else DEFAULT_ENRICHMENT_USER_STATUSES
@@ -70,7 +71,8 @@ def fetch_enrichment_queue(
             filter.score,
             filter.reject_reasons_json,
             filter.positive_flags_json,
-            filter.negative_flags_json
+            filter.negative_flags_json,
+            enrichment.id AS latest_manual_enrichment_id
         FROM jobs
         JOIN job_snapshots_normalized AS normalized
             ON normalized.id = jobs.latest_normalized_snapshot_id
@@ -82,6 +84,9 @@ def fetch_enrichment_queue(
                 ORDER BY latest_filter.id DESC
                 LIMIT 1
             )
+        LEFT JOIN manual_job_enrichments AS enrichment
+            ON enrichment.job_key = jobs.job_key
+            AND enrichment.is_latest = 1
         WHERE
             jobs.latest_normalized_snapshot_id IS NOT NULL
             AND jobs.user_status IN ({status_placeholders})
@@ -95,6 +100,8 @@ def fetch_enrichment_queue(
 
     if not include_low_priority:
         rows = [row for row in rows if row.get("routing_bucket") != "LOW_PRIORITY_REVIEW"]
+    if not include_enriched:
+        rows = [row for row in rows if row.get("latest_manual_enrichment_id") is None]
 
     rows.sort(key=_enrichment_sort_key)
     if limit is not None:

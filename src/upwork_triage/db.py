@@ -247,6 +247,20 @@ CREATE TABLE IF NOT EXISTS user_actions (
     notes TEXT
 );
 
+CREATE TABLE IF NOT EXISTS manual_job_enrichments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key TEXT NOT NULL REFERENCES jobs(job_key),
+    upwork_job_id TEXT,
+    source_url TEXT,
+    created_at TEXT NOT NULL,
+    raw_manual_text TEXT NOT NULL,
+    raw_manual_text_hash TEXT NOT NULL,
+    parse_status TEXT NOT NULL CHECK (parse_status IN ('raw_imported')),
+    parse_warnings_json TEXT,
+    is_latest INTEGER NOT NULL CHECK (is_latest IN (0, 1)),
+    UNIQUE(job_key, raw_manual_text_hash)
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_upwork_job_id
     ON jobs(upwork_job_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen_at
@@ -294,6 +308,14 @@ CREATE INDEX IF NOT EXISTS idx_user_actions_upwork_job_id
     ON user_actions(upwork_job_id);
 CREATE INDEX IF NOT EXISTS idx_user_actions_job_snapshot_id
     ON user_actions(job_snapshot_id);
+
+CREATE INDEX IF NOT EXISTS idx_manual_job_enrichments_job_key
+    ON manual_job_enrichments(job_key);
+CREATE INDEX IF NOT EXISTS idx_manual_job_enrichments_upwork_job_id
+    ON manual_job_enrichments(upwork_job_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_manual_job_enrichments_one_latest
+    ON manual_job_enrichments(job_key)
+    WHERE is_latest = 1;
 
 DROP VIEW IF EXISTS v_decision_shortlist;
 CREATE VIEW v_decision_shortlist AS

@@ -2,14 +2,14 @@
 
 ## Task name
 
-Add the lean-MVP enrichment queue for persisted official-stage candidates.
+Add the lean-MVP CSV manual-enrichment bridge.
 
 ## Product boundary
 
 This step should answer:
 
 ```text
-Which persisted jobs should I open and manually enrich?
+How can the user bulk-paste UI-only client/job text into persisted candidates safely?
 ```
 
 It should not answer:
@@ -18,7 +18,7 @@ It should not answer:
 Should I apply?
 ```
 
-The existing final-decision queue over `v_decision_shortlist` stays separate.
+The CSV is an editable worksheet, not the source of truth. SQLite remains the source of truth.
 
 ## Implementation scope
 
@@ -26,117 +26,121 @@ This task is limited to:
 
 ```text
 persisted official-stage candidates
--> read-only enrichment queue query
--> compact terminal renderer
--> queue-enrichment CLI command
+-> tiny CSV export worksheet
+-> raw manual-text import/versioning
+-> remaining unenriched worklist
 ```
 
 Add:
 
-- a query over `jobs`, latest normalized snapshots, and associated filter results
-- a compact enrichment-queue renderer
-- a `queue-enrichment` CLI command
+- explicit persisted storage for raw manual enrichment text
+- a CSV export command
+- a CSV import command
+- version-safe latest-row behavior per job
+- a regenerated “remaining enrichment worklist” CSV after import
 
 Do not add:
 
 - live network fetching
 - OpenAI or any AI provider calls
 - economics
-- `triage_results`
-- manual enrichment storage
-- enrichment import
-- prospect dump generation
-- DB schema changes unless truly unavoidable
+- final apply/maybe/skip verdicts
+- parsing of Connects/member-since/avg-hourly/open-jobs fields
+- enriched prospect dump generation
+- background polling
 
-## Enrichment queue behavior
+## Manual enrichment storage
 
-Add a helper such as:
+Add a dedicated table such as `manual_job_enrichments`.
 
-```python
-fetch_enrichment_queue(
-    conn,
-    limit=None,
-    include_low_priority=True,
-    include_statuses=None,
-)
-```
+The stored row should preserve:
 
-It should:
+- `job_key`
+- optional `upwork_job_id`
+- optional `source_url`
+- `created_at`
+- `raw_manual_text`
+- `raw_manual_text_hash`
+- `parse_status`
+- optional `parse_warnings_json`
+- `is_latest`
 
-1. read persisted official-stage candidates directly from SQLite
-2. use `jobs.latest_normalized_snapshot_id`
-3. join the corresponding `filter_results`
-4. not depend on `triage_results` or `v_decision_shortlist`
-5. exclude `DISCARD`
-6. exclude `jobs.user_status` values:
-   - `applied`
-   - `skipped`
-   - `archived`
-7. include `jobs.user_status` values:
-   - `new`
-   - `seen`
-   - `saved`
+For this step:
 
-Default ordering:
+- `parse_status` is always `raw_imported`
+- parsing structured unavailable fields is intentionally deferred
+- identical re-imports for the same `job_key` and text hash are no-ops
+- changed text creates a new version and becomes the latest row
 
-1. `AI_EVAL`
-2. `MANUAL_EXCEPTION`
-3. `LOW_PRIORITY_REVIEW`
-4. freshest jobs first within bucket using visible `j_mins_since_posted`
-5. higher score as a tie-breaker
+## CSV format
 
-## Rendering behavior
-
-Add a renderer such as:
-
-```python
-render_enrichment_queue(rows)
-```
-
-Requirements:
-
-- compact plain text
-- grouped by routing bucket
-- include `job_key`, `upwork_job_id`, `user_status`, score, title, URL, pay, client official history, activity, and manual final-check reminder
-- include the suggested local action command
-- if empty, return:
+The worksheet columns must be exactly:
 
 ```text
-Enrichment queue is empty.
+job_key,url,title,manual_ui_text
 ```
 
-Do not convert it into a rich terminal UI.
+Rules:
 
-## CLI command
+- only `manual_ui_text` is intended to be edited
+- multiline pasted text must be supported through normal CSV quoting
+- blank `manual_ui_text` rows do not erase existing enrichment
+- repeated identical imports do not create duplicate rows
+
+## CLI commands
 
 Add:
 
 ```powershell
-py -m upwork_triage queue-enrichment
+py -m upwork_triage export-enrichment-csv --output data/manual/enrichment_queue.csv
+py -m upwork_triage import-enrichment-csv data/manual/enrichment_queue.csv
 ```
 
-Behavior:
+Export behavior:
 
 1. load config and DB path
-2. initialize the DB if needed
-3. fetch enrichment queue rows
-4. render the queue
-5. print plain text
+2. initialize DB if needed
+3. reuse the enrichment-queue candidate set
+4. write CSV columns exactly:
+   - `job_key`
+   - `url`
+   - `title`
+   - `manual_ui_text`
+5. leave `manual_ui_text` blank on export
+6. exclude already-enriched candidates by default
 
-Optional flags are acceptable if small:
+Import behavior:
 
-- `--limit N`
-- `--no-low-priority`
+1. load config and DB path
+2. initialize DB if needed
+3. require the same four CSV columns
+4. skip blank rows
+5. skip unknown `job_key` rows
+6. store nonblank text as raw imported enrichment
+7. no-op on identical re-import
+8. create a new latest version when the text changes
+9. write a new remaining unenriched worksheet without overwriting the input CSV
 
-Default behavior should still include `LOW_PRIORITY_REVIEW`.
+## Queue interaction
+
+If a job already has latest manual enrichment, it should be hidden from the default enrichment worklist.
+
+It is acceptable for this step to enforce that through:
+
+- `fetch_enrichment_queue(...)` default behavior, and
+- `export-enrichment-csv` using that default worklist
+
+No final-decision queue changes are in scope.
 
 ## Acceptance criteria for this step
 
 This step is done when:
 
-1. persisted official-stage candidates can be listed without any `triage_results`,
-2. the new queue excludes `DISCARD` and excludes `applied` / `skipped` / `archived`,
-3. the renderer exposes title, URL, score, status, client official history, activity, and missing manual fields,
-4. `py -m upwork_triage queue-enrichment` works as a read-only local command,
-5. the existing final-decision `queue` command remains unchanged,
-6. tests cover the enrichment queue query, ordering, rendering, and CLI behavior.
+1. DB initialization creates a durable `manual_job_enrichments` storage table,
+2. `export-enrichment-csv` writes exactly `job_key,url,title,manual_ui_text`,
+3. `import-enrichment-csv` stores quoted multiline raw manual text safely,
+4. identical imports are no-ops,
+5. changed text creates a new latest enrichment version,
+6. blank rows do not erase data,
+7. a remaining unenriched worksheet is generated after import,
+8. the current preview, artifact-ingest, queue, queue-enrichment, and action flows keep working.

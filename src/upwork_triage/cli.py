@@ -25,6 +25,10 @@ from upwork_triage.inspect_upwork import (
     inspect_upwork_raw,
     render_raw_inspection_summary,
 )
+from upwork_triage.manual_enrichment import (
+    export_enrichment_csv,
+    import_enrichment_csv,
+)
 from upwork_triage.queue_view import (
     fetch_decision_shortlist,
     fetch_enrichment_queue,
@@ -154,6 +158,16 @@ def main(
                 include_low_priority=not args.no_low_priority,
                 stdout=out,
             )
+        if args.command == "export-enrichment-csv":
+            return _run_export_enrichment_csv(
+                output_path=args.output,
+                stdout=out,
+            )
+        if args.command == "import-enrichment-csv":
+            return _run_import_enrichment_csv(
+                input_path=args.input_path,
+                stdout=out,
+            )
         if args.command == "action":
             return _run_action_command(
                 job_key=args.job_key,
@@ -181,6 +195,9 @@ def main(
         return 1
     except ActionError as exc:
         err.write(f"Action error: {exc}\n")
+        return 1
+    except ValueError as exc:
+        err.write(f"CLI error: {exc}\n")
         return 1
     except Exception as exc:
         err.write(f"CLI error: {exc}\n")
@@ -228,6 +245,23 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "--no-low-priority",
         action="store_true",
         help="Hide LOW_PRIORITY_REVIEW rows from the enrichment queue.",
+    )
+    export_enrichment_parser = subparsers.add_parser(
+        "export-enrichment-csv",
+        help="Export the remaining manual-enrichment worklist as a CSV worksheet.",
+    )
+    export_enrichment_parser.add_argument(
+        "--output",
+        required=True,
+        help="CSV output path for the editable enrichment worksheet.",
+    )
+    import_enrichment_parser = subparsers.add_parser(
+        "import-enrichment-csv",
+        help="Import manual-enrichment CSV text back into SQLite and write a remaining worksheet.",
+    )
+    import_enrichment_parser.add_argument(
+        "input_path",
+        help="Path to the edited enrichment CSV worksheet.",
     )
     subparsers.add_parser(
         "upwork-auth-url",
@@ -435,6 +469,49 @@ def _run_queue_enrichment(
     finally:
         conn.close()
 
+    return 0
+
+
+def _run_export_enrichment_csv(*, output_path: str, stdout: TextIO) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+    _ensure_parent_dir(output_path)
+
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        summary = export_enrichment_csv(conn, output_path)
+    finally:
+        conn.close()
+
+    print(f"Enrichment CSV exported: {summary.output_path}", file=stdout)
+    print(f"Rows written: {summary.rows_written}", file=stdout)
+    return 0
+
+
+def _run_import_enrichment_csv(*, input_path: str, stdout: TextIO) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        summary = import_enrichment_csv(conn, input_path)
+    finally:
+        conn.close()
+
+    print("Manual enrichment CSV import complete.", file=stdout)
+    print(f"Input: {summary.input_path}", file=stdout)
+    print(f"Rows read: {summary.rows_read_count}", file=stdout)
+    print(f"Blank rows skipped: {summary.blank_rows_skipped_count}", file=stdout)
+    print(f"Imported new enrichments: {summary.imported_new_enrichments_count}", file=stdout)
+    print(f"Unchanged duplicate rows: {summary.unchanged_duplicate_rows_count}", file=stdout)
+    print(f"Updated enrichment versions: {summary.updated_versions_count}", file=stdout)
+    print(f"Unknown job_key rows: {summary.unknown_job_key_rows_count}", file=stdout)
+    print(f"Remaining unenriched candidates: {summary.remaining_unenriched_candidates_count}", file=stdout)
+    print(f"Remaining CSV: {summary.remaining_csv_path}", file=stdout)
     return 0
 
 

@@ -195,6 +195,24 @@ py -m upwork_triage queue-enrichment
 
 This command reads persisted candidates directly from SQLite, does not require `triage_results`, excludes `applied`, `skipped`, and `archived` jobs, and keeps the older final-decision `queue` command separate.
 
+If you want a bulk worksheet for pasting UI-only Upwork text back into those persisted candidates, use:
+
+```powershell
+py -m upwork_triage export-enrichment-csv --output data/manual/enrichment_queue.csv
+py -m upwork_triage import-enrichment-csv data/manual/enrichment_queue.csv
+```
+
+This bridge is intentionally minimal:
+
+- the CSV is an editable worksheet, not the source of truth
+- SQLite remains the source of truth
+- the columns are exactly `job_key,url,title,manual_ui_text`
+- multiline quoted `manual_ui_text` is supported if your CSV editor preserves valid quoting
+- blank rows do not erase data
+- identical re-imports are no-ops
+- changed text creates a new latest enrichment version
+- import writes a new remaining unenriched worksheet instead of overwriting the input CSV
+
 ## Upwork auth helpers
 
 The repository now includes local helper commands for obtaining or refreshing Upwork tokens:

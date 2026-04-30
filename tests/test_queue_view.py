@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import copy
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
 from typing import Mapping
+from uuid import uuid4
 
 import pytest
 
@@ -13,6 +15,7 @@ if str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from upwork_triage.db import initialize_db
+from upwork_triage.manual_enrichment import import_enrichment_csv
 from upwork_triage.queue_view import (
     fetch_decision_shortlist,
     fetch_enrichment_queue,
@@ -29,6 +32,16 @@ def conn() -> sqlite3.Connection:
     initialize_db(connection)
     yield connection
     connection.close()
+
+
+@pytest.fixture
+def workspace_tmp_dir() -> Path:
+    tmp_root = Path(__file__).resolve().parents[1] / "pytest_tmp"
+    tmp_root.mkdir(exist_ok=True)
+    temp_dir = tmp_root / f"queue_view_{uuid4().hex}"
+    temp_dir.mkdir()
+    yield temp_dir
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def test_fetch_decision_shortlist_returns_rows_from_view(conn: sqlite3.Connection) -> None:
@@ -204,6 +217,35 @@ def test_fetch_enrichment_queue_includes_new_seen_and_saved_statuses(
     rows = fetch_enrichment_queue(conn)
 
     assert [row["user_status"] for row in rows] == ["new", "seen", "saved"]
+
+
+def test_fetch_enrichment_queue_excludes_latest_manual_enrichments_by_default(
+    conn: sqlite3.Connection,
+    workspace_tmp_dir: Path,
+) -> None:
+    run_official_candidate_ingest_for_raw_jobs(
+        conn,
+        [
+            make_strong_raw_payload(),
+            make_manual_exception_raw_payload(),
+        ],
+        source_name="upwork_raw_artifact",
+        source_query="artifact.json",
+    )
+    worksheet_path = workspace_tmp_dir / "enrichment.csv"
+    worksheet_path.write_text(
+        "job_key,url,title,manual_ui_text\n"
+        "\"upwork:987654321\",\"https://www.upwork.com/jobs/~987654321\",\"WooCommerce order sync plugin bug fix\",\"First line\nSecond line\"\n",
+        encoding="utf-8",
+        newline="",
+    )
+
+    import_enrichment_csv(conn, worksheet_path)
+
+    rows = fetch_enrichment_queue(conn)
+
+    assert len(rows) == 1
+    assert rows[0]["job_key"] == "upwork:222333444"
 
 
 def test_fetch_enrichment_queue_orders_by_bucket_then_freshness_then_score(
