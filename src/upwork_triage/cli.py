@@ -29,6 +29,10 @@ from upwork_triage.manual_enrichment import (
     export_enrichment_csv,
     import_enrichment_csv,
 )
+from upwork_triage.prospects import (
+    fetch_enriched_prospects,
+    render_enriched_prospects,
+)
 from upwork_triage.queue_view import (
     fetch_decision_shortlist,
     fetch_enrichment_queue,
@@ -166,6 +170,11 @@ def main(
         if args.command == "import-enrichment-csv":
             return _run_import_enrichment_csv(
                 input_path=args.input_path,
+                stdout=out,
+            )
+        if args.command == "dump-prospects":
+            return _run_dump_prospects(
+                limit=args.limit,
                 stdout=out,
             )
         if args.command == "action":
@@ -514,6 +523,22 @@ def _run_import_enrichment_csv(*, input_path: str, stdout: TextIO) -> int:
     print(f"Unknown job_key rows: {summary.unknown_job_key_rows_count}", file=stdout)
     print(f"Remaining unenriched candidates: {summary.remaining_unenriched_candidates_count}", file=stdout)
     print(f"Remaining CSV: {summary.remaining_csv_path}", file=stdout)
+    return 0
+
+
+def _run_dump_prospects(*, limit: int | None, stdout: TextIO) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        rows = fetch_enriched_prospects(conn, limit=limit)
+        print(render_enriched_prospects(rows), file=stdout)
+    finally:
+        conn.close()
+
     return 0
 
 

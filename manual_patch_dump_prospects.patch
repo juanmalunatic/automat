@@ -1,0 +1,435 @@
+diff --git a/src/upwork_triage/cli.py b/src/upwork_triage/cli.py
+index d26fcdb..manual-dump 100644
+--- a/src/upwork_triage/cli.py
++++ b/src/upwork_triage/cli.py
+@@ -26,6 +26,10 @@ from upwork_triage.manual_enrichment import (
+     export_enrichment_csv,
+     import_enrichment_csv,
+ )
++from upwork_triage.prospects import (
++    fetch_enriched_prospects,
++    render_enriched_prospects,
++)
+ from upwork_triage.queue_view import (
+     fetch_decision_shortlist,
+     fetch_enrichment_queue,
+@@ -131,6 +135,11 @@ def main(
+             return _run_import_enrichment_csv(
+                 input_path=args.input_path,
+                 stdout=out,
+             )
++        if args.command == "dump-prospects":
++            return _run_dump_prospects(
++                limit=args.limit,
++                stdout=out,
++            )
+         if args.command == "action":
+             return _run_action_command(
+                 job_key=args.job_key,
+@@ -232,6 +241,16 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
+         "input_path",
+         help="Path to the edited enrichment CSV worksheet.",
+     )
++    dump_prospects_parser = subparsers.add_parser(
++        "dump-prospects",
++        help="Render enriched prospect packets for manual or external-AI review.",
++    )
++    dump_prospects_parser.add_argument(
++        "--limit",
++        type=_positive_int_arg,
++        help="Maximum number of enriched prospects to render.",
++    )
+     subparsers.add_parser(
+         "upwork-auth-url",
+         help="Print the local Upwork OAuth authorization URL.",
+@@ -402,6 +421,25 @@ def _run_import_enrichment_csv(*, input_path: str, stdout: TextIO) -> int:
+     print(f"Remaining CSV: {summary.remaining_csv_path}", file=stdout)
+     return 0
+
++
++def _run_dump_prospects(*, limit: int | None, stdout: TextIO) -> int:
++    config = load_config()
++    db_path = Path(config.db_path)
++    _ensure_parent_dir(db_path)
++
++    conn = connect_db(db_path)
++    try:
++        initialize_db(conn)
++        rows = fetch_enriched_prospects(conn, limit=limit)
++        print(render_enriched_prospects(rows), file=stdout)
++    finally:
++        conn.close()
++
++    return 0
++
+
+ def _run_upwork_auth_url(*, stdout: TextIO) -> int:
+     config = load_config()
+     print(build_authorization_url(config), file=stdout)
+diff --git a/src/upwork_triage/prospects.py b/src/upwork_triage/prospects.py
+new file mode 100644
+index 0000000..manual-dump
+--- /dev/null
++++ b/src/upwork_triage/prospects.py
+@@ -0,0 +1,298 @@
++from __future__ import annotations
++
++import json
++import sqlite3
++from typing import Any, Mapping
++
++PROSPECT_BUCKET_ORDER = ("AI_EVAL", "MANUAL_EXCEPTION", "LOW_PRIORITY_REVIEW")
++DEFAULT_PROSPECT_USER_STATUSES = ("new", "seen", "saved")
++MISSING = "\N{EM DASH}"
++
++__all__ = ["fetch_enriched_prospects", "render_enriched_prospects"]
++
++
++def fetch_enriched_prospects(
++    conn: sqlite3.Connection,
++    limit: int | None = None,
++    *,
++    include_statuses: tuple[str, ...] | list[str] | None = None,
++) -> list[dict[str, object]]:
++    statuses = tuple(include_statuses) if include_statuses is not None else DEFAULT_PROSPECT_USER_STATUSES
++    if not statuses:
++        return []
++
++    status_placeholders = ", ".join("?" for _ in statuses)
++    query = f"""
++        SELECT
++            jobs.job_key,
++            jobs.upwork_job_id,
++            jobs.user_status,
++            COALESCE(normalized.source_url, jobs.source_url) AS source_url,
++
++            normalized.j_title,
++            normalized.j_description,
++            normalized.j_mins_since_posted,
++            normalized.j_posted_at,
++            normalized.j_project_type,
++            normalized.j_contract_type,
++            normalized.j_pay_fixed,
++            normalized.j_pay_hourly_low,
++            normalized.j_pay_hourly_high,
++            normalized.j_skills,
++            normalized.j_qualifications,
++            normalized.j_apply_cost_connects,
++
++            normalized.c_verified_payment,
++            normalized.c_verified_phone,
++            normalized.c_country,
++            normalized.c_hist_jobs_posted,
++            normalized.c_hist_jobs_open,
++            normalized.c_hist_hire_rate,
++            normalized.c_hist_total_spent,
++            normalized.c_hist_hires_total,
++            normalized.c_hist_hires_active,
++            normalized.c_hist_avg_hourly_rate,
++            normalized.c_hist_hours_hired,
++            normalized.c_hist_member_since,
++
++            normalized.a_proposals,
++            normalized.a_hires,
++            normalized.a_interviewing,
++            normalized.a_invites_sent,
++            normalized.a_invites_unanswered,
++            normalized.a_mins_since_cli_viewed,
++
++            filter.routing_bucket,
++            filter.score,
++            filter.reject_reasons_json,
++            filter.positive_flags_json,
++            filter.negative_flags_json,
++
++            enrichment.created_at AS manual_enriched_at,
++            enrichment.raw_manual_text,
++            enrichment.parse_status
++        FROM jobs
++        JOIN job_snapshots_normalized AS normalized
++            ON normalized.id = jobs.latest_normalized_snapshot_id
++        JOIN filter_results AS filter
++            ON filter.id = (
++                SELECT latest_filter.id
++                FROM filter_results AS latest_filter
++                WHERE latest_filter.job_snapshot_id = normalized.id
++                ORDER BY latest_filter.id DESC
++                LIMIT 1
++            )
++        JOIN manual_job_enrichments AS enrichment
++            ON enrichment.job_key = jobs.job_key
++            AND enrichment.is_latest = 1
++        WHERE
++            jobs.latest_normalized_snapshot_id IS NOT NULL
++            AND jobs.user_status IN ({status_placeholders})
++            AND filter.routing_bucket != 'DISCARD'
++        """
++
++    cursor = conn.execute(query, statuses)
++    rows = [
++        _decode_row(_row_to_dict(row, cursor.description))
++        for row in cursor.fetchall()
++    ]
++    rows.sort(key=_prospect_sort_key)
++    if limit is not None:
++        return rows[:limit]
++    return rows
++
++
++def render_enriched_prospects(rows: list[Mapping[str, object]]) -> str:
++    if not rows:
++        return "No enriched prospects found."
++
++    lines: list[str] = [
++        "ENRICHED PROSPECTS",
++        "",
++        "Use this dump for manual review or paste it into ChatGPT/external AI.",
++        "No internal AI verdict has been generated by Automat.",
++        "",
++    ]
++
++    for index, row in enumerate(rows, start=1):
++        lines.extend(_render_prospect(index, row))
++        lines.append("")
++
++    return "\n".join(lines).rstrip()
++
++
++def _render_prospect(index: int, row: Mapping[str, object]) -> list[str]:
++    title = _string_value(row.get("j_title"))
++    job_key = _string_value(row.get("job_key"))
++    upwork_job_id = _string_value(row.get("upwork_job_id"))
++    user_status = _string_value(row.get("user_status"))
++    source_url = _string_value(row.get("source_url"))
++
++    bucket = _string_value(row.get("routing_bucket"))
++    score = _format_score(row.get("score"))
++    positive_flags = _format_string_list(row.get("positive_flags"))
++    negative_flags = _format_string_list(row.get("negative_flags"))
++    reject_reasons = _format_string_list(row.get("reject_reasons"))
++
++    contract_type = _string_value(row.get("j_contract_type"))
++    pay = _format_pay_summary(row)
++    posted_age = _format_minutes(row.get("j_mins_since_posted"))
++    posted_at = _string_value(row.get("j_posted_at"))
++    skills = _string_value(row.get("j_skills"))
++    qualifications = _string_value(row.get("j_qualifications"))
++    description = _string_value(row.get("j_description"))
++
++    verified_payment = _format_bool_yes_no(row.get("c_verified_payment"))
++    verified_phone = _format_bool_yes_no(row.get("c_verified_phone"))
++    country = _string_value(row.get("c_country"))
++    total_spent = _format_money(row.get("c_hist_total_spent"))
++    total_hires = _string_value(row.get("c_hist_hires_total"))
++    jobs_posted = _string_value(row.get("c_hist_jobs_posted"))
++    hire_rate = _format_percent(row.get("c_hist_hire_rate"))
++    jobs_open = _string_value(row.get("c_hist_jobs_open"))
++    active_hires = _string_value(row.get("c_hist_hires_active"))
++    avg_hourly = _format_money(row.get("c_hist_avg_hourly_rate"))
++    hours_hired = _string_value(row.get("c_hist_hours_hired"))
++    member_since = _string_value(row.get("c_hist_member_since"))
++
++    proposals = _string_value(row.get("a_proposals"))
++    hires = _string_value(row.get("a_hires"))
++    interviewing = _string_value(row.get("a_interviewing"))
++    invites = _string_value(row.get("a_invites_sent"))
++    unanswered_invites = _string_value(row.get("a_invites_unanswered"))
++    last_viewed = _format_minutes(row.get("a_mins_since_cli_viewed"))
++
++    manual_enriched_at = _string_value(row.get("manual_enriched_at"))
++    parse_status = _string_value(row.get("parse_status"))
++    raw_manual_text = _string_value(row.get("raw_manual_text"))
++
++    return [
++        f"--- PROSPECT {index} ---",
++        f"TITLE: {title}",
++        f"URL: {source_url}",
++        f"JOB_KEY: {job_key}",
++        f"UPWORK_ID: {upwork_job_id}",
++        f"USER_STATUS: {user_status}",
++        "",
++        "OFFICIAL FILTER",
++        f"- bucket: {bucket}",
++        f"- score: {score}",
++        f"- positive_flags: {positive_flags}",
++        f"- negative_flags: {negative_flags}",
++        f"- reject_reasons: {reject_reasons}",
++        "",
++        "JOB / SCOPE",
++        f"- contract_type: {contract_type}",
++        f"- pay: {pay}",
++        f"- posted_age: {posted_age}",
++        f"- posted_at: {posted_at}",
++        f"- skills: {skills}",
++        f"- qualifications: {qualifications}",
++        "- description:",
++        _indent_block(description),
++        "",
++        "OFFICIAL CLIENT SIGNALS",
++        f"- payment_verified: {verified_payment}",
++        f"- phone_verified: {verified_phone}",
++        f"- country: {country}",
++        f"- total_spent: {total_spent}",
++        f"- hires_total: {total_hires}",
++        f"- jobs_posted: {jobs_posted}",
++        f"- hire_rate: {hire_rate}",
++        f"- jobs_open: {jobs_open}",
++        f"- active_hires: {active_hires}",
++        f"- avg_hourly_rate: {avg_hourly}",
++        f"- hours_hired: {hours_hired}",
++        f"- member_since: {member_since}",
++        "",
++        "ACTIVITY / COMPETITION",
++        f"- proposals: {proposals}",
++        f"- hires_on_job: {hires}",
++        f"- interviewing: {interviewing}",
++        f"- invites_sent: {invites}",
++        f"- unanswered_invites: {unanswered_invites}",
++        f"- client_last_viewed: {last_viewed}",
++        "",
++        "MANUAL UI TEXT",
++        f"- enriched_at: {manual_enriched_at}",
++        f"- parse_status: {parse_status}",
++        "- raw_manual_text:",
++        _indent_block(raw_manual_text),
++        "",
++        "LOCAL ACTIONS",
++        f"- mark seen: py -m upwork_triage action {job_key} seen",
++        f"- mark skipped: py -m upwork_triage action {job_key} skipped",
++        f"- mark saved: py -m upwork_triage action {job_key} saved",
++    ]
++
++
++def _decode_row(row: dict[str, object]) -> dict[str, object]:
++    row["positive_flags"] = _parse_json_string_list(row.get("positive_flags_json"))
++    row["negative_flags"] = _parse_json_string_list(row.get("negative_flags_json"))
++    row["reject_reasons"] = _parse_json_string_list(row.get("reject_reasons_json"))
++    row.pop("positive_flags_json", None)
++    row.pop("negative_flags_json", None)
++    row.pop("reject_reasons_json", None)
++    return row
++
++
++def _parse_json_string_list(value: object | None) -> list[str]:
++    if not isinstance(value, str) or not value.strip():
++        return []
++    try:
++        parsed = json.loads(value)
++    except json.JSONDecodeError:
++        return []
++    if not isinstance(parsed, list):
++        return []
++    return [str(item) for item in parsed if isinstance(item, str)]
++
++
++def _prospect_sort_key(row: Mapping[str, object]) -> tuple[int, int, float, float]:
++    bucket = str(row.get("routing_bucket") or "")
++    bucket_index = (
++        PROSPECT_BUCKET_ORDER.index(bucket)
++        if bucket in PROSPECT_BUCKET_ORDER
++        else len(PROSPECT_BUCKET_ORDER)
++    )
++    posted_minutes = row.get("j_mins_since_posted")
++    if isinstance(posted_minutes, bool):
++        posted_minutes = None
++    posted_missing = 0 if isinstance(posted_minutes, int | float) else 1
++    posted_value = float(posted_minutes) if isinstance(posted_minutes, int | float) else float("inf")
++    score = row.get("score")
++    score_value = float(score) if isinstance(score, int | float) and not isinstance(score, bool) else float("-inf")
++    return (bucket_index, posted_missing, posted_value, -score_value)
++
++
++def _format_pay_summary(row: Mapping[str, object]) -> str:
++    contract_type = _string_value(row.get("j_contract_type")).lower()
++    fixed_pay = row.get("j_pay_fixed")
++    hourly_low = row.get("j_pay_hourly_low")
++    hourly_high = row.get("j_pay_hourly_high")
++
++    if contract_type == "fixed":
++        return f"fixed {_format_money(fixed_pay)}"
++    if contract_type == "hourly":
++        low = _format_money(hourly_low)
++        high = _format_money(hourly_high)
++        if low == MISSING and high == MISSING:
++            return "hourly " + MISSING
++        return f"hourly {low}-{high}"
++    return MISSING
++
++
++def _format_bool_yes_no(value: object | None) -> str:
++    if value is None:
++        return MISSING
++    if value in {1, True}:
++        return "yes"
++    if value in {0, False}:
++        return "no"
++    return _string_value(value)
++
++
++def _format_money(value: object | None) -> str:
++    if value is None or isinstance(value, bool):
++        return MISSING
++    if isinstance(value, int | float):
++        return f"${float(value):,.2f}"
++    return _string_value(value)
++
++
++def _format_percent(value: object | None) -> str:
++    if value is None or isinstance(value, bool):
++        return MISSING
++    if isinstance(value, int | float):
++        return f"{float(value):.1f}%"
++    return _string_value(value)
++
++
++def _format_score(value: object | None) -> str:
++    if value is None or isinstance(value, bool):
++        return MISSING
++    if isinstance(value, int | float):
++        if float(value).is_integer():
++            return str(int(float(value)))
++        return f"{float(value):.1f}"
++    return _string_value(value)
++
++
++def _format_minutes(value: object | None) -> str:
++    if value is None or isinstance(value, bool):
++        return MISSING
++    if isinstance(value, int | float):
++        return f"{int(value)}m"
++    return _string_value(value)
++
++
++def _format_string_list(value: object | None) -> str:
++    if isinstance(value, list):
++        text_items = [str(item).strip() for item in value if str(item).strip()]
++        if text_items:
++            return ", ".join(text_items)
++        return "none"
++    if value is None:
++        return "none"
++    return _string_value(value)
++
++
++def _string_value(value: object | None) -> str:
++    if value is None:
++        return MISSING
++    text = str(value).strip()
++    return text if text else MISSING
++
++
++def _indent_block(text: str) -> str:
++    if text == MISSING:
++        return "  " + MISSING
++    return "\n".join(f"  {line}" if line else "" for line in text.splitlines())
++
++
++def _row_to_dict(row: Any, description: Any | None = None) -> dict[str, object]:
++    if isinstance(row, sqlite3.Row):
++        return {key: row[key] for key in row.keys()}
++    if hasattr(row, "keys"):
++        return {key: row[key] for key in row.keys()}
++    if description is None:
++        raise TypeError("expected row-like object with keys() or cursor metadata")
++    column_names = [column[0] for column in description]
++    return dict(zip(column_names, row, strict=True))
