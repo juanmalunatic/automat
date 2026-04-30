@@ -23,7 +23,8 @@ This MVP is now operational enough for daily use.
 The current scoring behavior is also harsher than the first enriched version:
 
 - `STRONG_PROSPECT` still means review first, not automatic apply
-- enriched survivor gates now cap or reject more high-connect, wrong-lane, vague-scope, weak-avg-hourly, and central-tool-mismatch jobs after manual enrichment
+- enriched survivor gates now focus on objective economics, client quality, competition, and eligibility after manual enrichment
+- semantic fit, wrong-lane concerns, central-tool mismatch, and scope-risk interpretation are warning context for external AI/manual review rather than deterministic hard gates
 - the official-stage filter remains the broader recall-oriented layer before manual enrichment
 
 ## What to do now
@@ -52,6 +53,7 @@ Keep these boundaries clear while operating the MVP:
 - parsed manual fields remain derived data in `manual_job_enrichment_parses`
 - enriched scoring is a second-stage assessment that runs after manual parsing
 - `dump-prospects` shows official filter data, enriched filter data, parsed manual signals, and the raw manual text
+- semantic warning flags in the dump are advisory only unless they overlap with objective eligibility/economic gates
 - external AI/manual review is still the final appraisal layer
 
 ## Immediate use goal
@@ -73,6 +75,7 @@ Later technical work should focus on:
 
 - scorer calibration from real false positives / false negatives
 - operational logging around why jobs were skipped, saved, or applied
+- making the external AI/manual appraisal prompt explicitly inspect central tool fit, proposal credibility, and scope-explosion risk
 - parsing recent comparable expert client history when real usage proves it is worth the added complexity
 - improving data quality only after repeated real usage shows where the current loop breaks
 

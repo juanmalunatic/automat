@@ -248,7 +248,8 @@ Rules:
 - keep the official first-pass filter unchanged as the persistence gate
 - let enriched-stage client quality dominate over keyword stacking
 - use parsed manual fields first and official normalized fallbacks second
-- apply stricter survivor gates after scoring so high-spend clients and generic lane keywords cannot over-promote weak-fit work
+- apply objective survivor gates after scoring for economics, competition, client quality, and eligibility
+- keep semantic fit, central-tool mismatch, scope-explosion interpretation, and proposal-credibility judgment as advisory warning context for external AI/manual review
 - do not add internal AI appraisal in this slice
 
 This enriched-stage score is for review prioritization, not for automatic application decisions.

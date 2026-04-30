@@ -55,7 +55,7 @@ def test_avg_hourly_15_to_25_with_warnings_cannot_be_strong() -> None:
     assert "client_avg_hourly_paid_15_to_25_caution" in result.enriched_negative_flags
 
 
-def test_caspio_central_tool_mismatch_caps_at_review() -> None:
+def test_caspio_central_tool_flag_is_advisory_only() -> None:
     result = evaluate_enriched_filters(
         make_input(
             j_title="Help with Caspio Online Tool Development",
@@ -63,11 +63,12 @@ def test_caspio_central_tool_mismatch_caps_at_review() -> None:
         )
     )
 
-    assert result.enriched_bucket == "REVIEW"
+    assert result.enriched_bucket in {"STRONG_PROSPECT", "REVIEW"}
+    assert result.enriched_reject_reasons == []
     assert "central_tool_mismatch_caspio" in result.enriched_negative_flags
 
 
-def test_dynamics_business_central_scope_risk_cannot_be_strong() -> None:
+def test_dynamics_business_central_flags_are_advisory_only() -> None:
     result = evaluate_enriched_filters(
         make_input(
             j_title="Dynamics 365 BC & eCommerce Integration Expert",
@@ -76,11 +77,12 @@ def test_dynamics_business_central_scope_risk_cannot_be_strong() -> None:
         )
     )
 
-    assert result.enriched_bucket != "STRONG_PROSPECT"
+    assert result.enriched_bucket in {"STRONG_PROSPECT", "REVIEW"}
+    assert result.enriched_reject_reasons == []
     assert "central_tool_mismatch_dynamics_365" in result.enriched_negative_flags
 
 
-def test_ecommerce_merchandising_wrong_lane_is_not_strong() -> None:
+def test_ecommerce_merchandising_flag_is_advisory_only() -> None:
     result = evaluate_enriched_filters(
         make_input(
             j_title="Ecommerce Merchandiser for Product Ranking and Email Calendar",
@@ -91,7 +93,8 @@ def test_ecommerce_merchandising_wrong_lane_is_not_strong() -> None:
         )
     )
 
-    assert result.enriched_bucket in {"ENRICHED_DISCARD", "WEAK_REVIEW"}
+    assert result.enriched_bucket in {"STRONG_PROSPECT", "REVIEW", "WEAK_REVIEW"}
+    assert result.enriched_reject_reasons == []
     assert "nontechnical_ecommerce_merchandising" in result.enriched_negative_flags
 
 
@@ -108,7 +111,7 @@ def test_agency_partner_and_us_only_hard_reject() -> None:
     assert "agency_only_or_partner_network" in result.enriched_reject_reasons
 
 
-def test_events_migration_data_loss_risk_gets_downgraded() -> None:
+def test_scope_risk_words_are_advisory_only_without_objective_reject() -> None:
     result = evaluate_enriched_filters(
         make_input(
             j_pay_fixed=250.0,
@@ -118,8 +121,10 @@ def test_events_migration_data_loss_risk_gets_downgraded() -> None:
         )
     )
 
-    assert result.enriched_bucket in {"ENRICHED_DISCARD", "WEAK_REVIEW"}
+    assert result.enriched_bucket in {"STRONG_PROSPECT", "REVIEW", "WEAK_REVIEW"}
+    assert "low_budget_scope_explosion" not in result.enriched_reject_reasons
     assert "scope_explosion" in result.enriched_negative_flags
+    assert "low_budget_scope_explosion" in result.enriched_negative_flags
 
 
 def test_empty_private_description_high_connects_cannot_be_strong() -> None:
@@ -179,7 +184,7 @@ def test_verified_new_thin_client_bounded_diagnostic_survives_as_small_bet() -> 
     )
 
     assert "speculative_small_bet" in result.enriched_positive_flags
-    assert result.enriched_bucket in {"REVIEW", "WEAK_REVIEW"}
+    assert result.enriched_bucket != "ENRICHED_DISCARD"
 
 
 def test_recent_activity_cannot_rescue_bad_economics() -> None:
@@ -222,6 +227,23 @@ def test_hire_rate_below_50_caps_generic_design_build() -> None:
 
     assert result.enriched_bucket != "STRONG_PROSPECT"
     assert "client_hire_rate_below_50" in result.enriched_negative_flags
+
+
+def test_generic_design_flag_is_advisory_when_objective_signals_are_good() -> None:
+    result = evaluate_enriched_filters(
+        make_input(
+            j_title="Author web presence refresh",
+            j_description="Branding, content, and site design refresh for a public figure portfolio site",
+            j_skills="WordPress",
+            j_qualifications="Site design and content strategy",
+            raw_manual_text="Author web presence refresh",
+            connects_required=12,
+        )
+    )
+
+    assert result.enriched_bucket in {"STRONG_PROSPECT", "REVIEW"}
+    assert result.enriched_reject_reasons == []
+    assert "generic_design_site_build" in result.enriched_negative_flags
 
 
 def test_high_quality_exact_fit_can_remain_strong() -> None:

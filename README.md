@@ -98,6 +98,7 @@ How to use the enriched dump:
 - use `WEAK_REVIEW` only if you are still searching
 - ignore `ENRICHED_DISCARD` during normal application flow unless you are auditing/tuning the scorer
 - paste only `STRONG_PROSPECT` plus `REVIEW` into external AI/manual review, not necessarily the entire dump
+- treat semantic warning flags in the dump as advisory context for external AI/manual review, not as automatic no-apply verdicts by themselves
 
 Optional audit and count commands:
 
@@ -134,12 +135,13 @@ Action tracking is local only:
 ## Known MVP caveats
 
 - The enriched score is still calibration-grade and should be audited during real usage.
-- Enriched survivor gates are now intentionally stricter after manual enrichment; this improves precision, but some true positives may still land in `REVIEW` or `WEAK_REVIEW`.
+- The enriched deterministic gate is intentionally limited to objective economics, client quality, competition, and eligibility signals. Semantic fit and scope interpretation still belong to external AI/manual review.
 - Some missing fields appear as an em dash; PowerShell may show that as mojibake such as `ΓÇö` in grep-like output.
 - Manual enrichment quality depends on pasting the correct Upwork UI block into the correct CSV row.
 - The title mismatch guard exists, but it is not perfect.
 - `ENRICHED_DISCARD` rows can still show strong positive flags if a hard reject applies, such as `manual_hires_on_job_at_least_1`.
 - Local `data/` artifacts and the SQLite DB should usually stay uncommitted.
+- Future external-AI/manual review should explicitly inspect central tool fit, proposal credibility, and scope-explosion risk instead of expecting deterministic code to decide those alone.
 
 ## Architecture
 

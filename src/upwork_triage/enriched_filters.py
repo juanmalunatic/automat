@@ -238,9 +238,8 @@ MAJOR_WARNING_FLAGS = {
     "client_member_since_within_60_days",
     "empty_or_private_description",
     "empty_or_private_description_high_connects",
-    "scope_explosion",
-    "high_connect_scope_explosion",
-    "absolute_performance_score_risk",
+    "manual_hires_on_job_at_least_1",
+    "unverified_new_client_no_history",
 }
 
 PROPOSAL_RANGE_PATTERN = re.compile(r"(?P<low>\d+)\s*(?:to|-)\s*(?P<high>\d+)", re.IGNORECASE)
@@ -352,7 +351,6 @@ def evaluate_enriched_filters(data: EnrichedFilterInput) -> EnrichedFilterResult
     client_member_since = _first_text(data.client_member_since, data.c_hist_member_since)
     today = data.today or date.today()
     is_hourly_job = data.j_contract_type == "hourly"
-    has_wordpress_stack = _has_wordpress_stack(text)
     exact_core_fit = _has_exact_core_fit(text)
     exact_technical_rescue = _has_exact_technical_rescue(text)
     clear_first_diagnostic_step = _has_clear_first_diagnostic_step(text)
@@ -528,44 +526,28 @@ def evaluate_enriched_filters(data: EnrichedFilterInput) -> EnrichedFilterResult
         reject_reasons.extend(eligibility_reasons)
         negative_flags.extend(eligibility_reasons)
 
-    central_tool_cap, central_tool_flags = _central_tool_mismatch_cap(
-        text,
-        has_wordpress_stack=has_wordpress_stack,
-        weak_client_quality=weak_client_quality,
-    )
+    central_tool_flags = _central_tool_mismatch_flags(text)
     negative_flags.extend(central_tool_flags)
-    cap_bucket = _tighten_cap(cap_bucket, central_tool_cap)
 
-    ecommerce_cap, ecommerce_flags = _nontechnical_ecommerce_cap(
+    ecommerce_flags = _nontechnical_ecommerce_flags(
         text,
         exact_core_fit=exact_core_fit,
     )
     negative_flags.extend(ecommerce_flags)
-    cap_bucket = _tighten_cap(cap_bucket, ecommerce_cap)
 
-    generic_design_cap, generic_design_flags = _generic_design_cap(
+    generic_design_flags = _generic_design_flags(
         text,
-        connects_required=connects_required,
         exact_core_fit=exact_core_fit,
-        weak_client_quality=weak_client_quality,
     )
     negative_flags.extend(generic_design_flags)
-    cap_bucket = _tighten_cap(cap_bucket, generic_design_cap)
 
     if scope_risk:
         negative_flags.append("scope_explosion")
         if data.j_contract_type == "fixed" and data.j_pay_fixed is not None and data.j_pay_fixed < 500:
-            reject_reasons.append("low_budget_scope_explosion")
             negative_flags.append("low_budget_scope_explosion")
-        elif connects_required is not None and connects_required >= 16:
-            negative_flags.append("high_connect_scope_explosion")
-            cap_bucket = _tighten_cap(cap_bucket, "WEAK_REVIEW")
-        else:
-            cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
 
     if performance_guarantee_risk:
         negative_flags.append("absolute_performance_score_risk")
-        cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
 
     if is_hourly_job and client_avg_hourly_paid is not None:
         if client_avg_hourly_paid < 10:
@@ -574,15 +556,13 @@ def evaluate_enriched_filters(data: EnrichedFilterInput) -> EnrichedFilterResult
         elif client_avg_hourly_paid < 15:
             negative_flags.append("client_avg_hourly_paid_10_to_15_cap")
             cap_bucket = _tighten_cap(cap_bucket, "WEAK_REVIEW")
-        elif client_avg_hourly_paid < 25 and (
-            not exact_core_fit or _has_major_warning(negative_flags)
-        ):
+        elif client_avg_hourly_paid < 25 and _has_major_warning(negative_flags):
             negative_flags.append("client_avg_hourly_paid_15_to_25_caution")
             cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
 
     if client_hire_rate is not None and client_hire_rate < 50:
         high_connect_warning = connects_required is not None and connects_required >= 20
-        if exceptional_client and exact_core_fit and not high_connect_warning:
+        if exceptional_client and not high_connect_warning:
             cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
         else:
             cap_bucket = _tighten_cap(cap_bucket, "WEAK_REVIEW")
@@ -590,7 +570,7 @@ def evaluate_enriched_filters(data: EnrichedFilterInput) -> EnrichedFilterResult
     if connects_required is not None:
         if connects_required >= 25:
             negative_flags.append("connects_25_plus_requires_exceptional_fit")
-            if not (exceptional_client and exact_core_fit and not _has_major_warning(negative_flags)):
+            if not (exceptional_client and not _has_major_warning(negative_flags)):
                 cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
         elif connects_required >= 20:
             if _has_major_warning(negative_flags):
@@ -612,16 +592,13 @@ def evaluate_enriched_filters(data: EnrichedFilterInput) -> EnrichedFilterResult
         empty_or_private_description=empty_or_private_description,
     ):
         positive_flags.append("speculative_small_bet")
-        cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
+        score += 1
+
+    if reject_reasons and "speculative_small_bet" in positive_flags:
+        positive_flags.remove("speculative_small_bet")
 
     preliminary_bucket = _route_enriched_bucket(score=score, reject_reasons=reject_reasons)
     enriched_bucket = _apply_bucket_cap(preliminary_bucket, cap_bucket)
-    if (
-        "speculative_small_bet" in positive_flags
-        and not reject_reasons
-        and enriched_bucket in {"WEAK_REVIEW", "ENRICHED_DISCARD"}
-    ):
-        enriched_bucket = "REVIEW"
 
     return EnrichedFilterResult(
         enriched_bucket=enriched_bucket,
@@ -791,27 +768,15 @@ def _eligibility_reject_reasons(text: str) -> list[str]:
     return reasons
 
 
-def _central_tool_mismatch_cap(
-    text: str,
-    *,
-    has_wordpress_stack: bool,
-    weak_client_quality: bool,
-) -> tuple[EnrichedRoutingBucket | None, list[str]]:
+def _central_tool_mismatch_flags(text: str) -> list[str]:
     flags: list[str] = []
-    cap: EnrichedRoutingBucket | None = None
     for tool, flag in CENTRAL_TOOL_CONFIG.items():
         if not _has_term(text, tool):
             continue
         if not _is_central_tool_reference(text, tool):
             continue
         flags.append(flag)
-        if tool in SEVERE_WRONG_LANE_TOOLS and not has_wordpress_stack:
-            cap = _tighten_cap(cap, "ENRICHED_DISCARD" if weak_client_quality else "WEAK_REVIEW")
-        elif not has_wordpress_stack and tool in {"geodirectory", "wplms", "learnpress"}:
-            cap = _tighten_cap(cap, "WEAK_REVIEW")
-        else:
-            cap = _tighten_cap(cap, "REVIEW")
-    return cap, flags
+    return flags
 
 
 def _is_central_tool_reference(text: str, tool: str) -> bool:
@@ -827,37 +792,31 @@ def _is_central_tool_reference(text: str, tool: str) -> bool:
     return any(_has_term(text, pattern) for pattern in central_patterns) or _has_term(text, tool)
 
 
-def _nontechnical_ecommerce_cap(
+def _nontechnical_ecommerce_flags(
     text: str,
     *,
     exact_core_fit: bool,
-) -> tuple[EnrichedRoutingBucket | None, list[str]]:
+) -> list[str]:
     if not _contains_any_phrase(text, NONTECHNICAL_ECOMMERCE_PHRASES):
-        return None, []
+        return []
     if exact_core_fit:
-        return None, []
-    return "ENRICHED_DISCARD", ["nontechnical_ecommerce_merchandising"]
+        return []
+    return ["nontechnical_ecommerce_merchandising"]
 
 
-def _generic_design_cap(
+def _generic_design_flags(
     text: str,
     *,
-    connects_required: int | None,
     exact_core_fit: bool,
-    weak_client_quality: bool,
-) -> tuple[EnrichedRoutingBucket | None, list[str]]:
+) -> list[str]:
     flags: list[str] = []
-    cap: EnrichedRoutingBucket | None = None
     if _contains_any_phrase(text, WEBFLOW_FIGMA_PHRASES) and not exact_core_fit:
         flags.append("webflow_figma_wrong_lane")
-        cap = "ENRICHED_DISCARD" if weak_client_quality else "WEAK_REVIEW"
     if _contains_any_phrase(text, GENERIC_DESIGN_SITE_BUILD_PHRASES) and not exact_core_fit:
         flags.append("generic_design_site_build")
-        cap = _tighten_cap(cap, "WEAK_REVIEW" if (connects_required or 0) >= 20 else "REVIEW")
     if _contains_any_phrase(text, ("portfolio", "campaign", "branding", "author", "wellness", "coach")) and not exact_core_fit:
         flags.append("portfolio_specific_design_campaign")
-        cap = _tighten_cap(cap, "WEAK_REVIEW" if (connects_required or 0) >= 20 else "REVIEW")
-    return cap, flags
+    return flags
 
 
 def _has_scope_explosion(text: str) -> bool:
@@ -980,7 +939,7 @@ def _has_multi_hire_exception(text: str) -> bool:
 
 
 def _has_major_warning(negative_flags: list[str]) -> bool:
-    return any(flag in MAJOR_WARNING_FLAGS or flag.startswith("central_tool_mismatch_") for flag in negative_flags)
+    return any(flag in MAJOR_WARNING_FLAGS for flag in negative_flags)
 
 
 def _normalize_country(value: str | None) -> str | None:
