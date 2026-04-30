@@ -185,6 +185,8 @@ Rules:
 - SQLite is the source of truth
 - the CSV is only a bulk input surface
 - only `manual_ui_text` is intended to be edited
+- export should use UTF-8 with BOM so common Excel/Windows tools reopen it cleanly
+- import should tolerate UTF-8, UTF-8 with BOM, and cp1252 plus BOM/whitespace-padded headers and comma/semicolon/tab delimiters
 - multiline pasted Upwork UI text is allowed as long as the editor preserves valid CSV quoting
 - blank rows do not erase existing enrichment
 - re-importing identical text is a no-op

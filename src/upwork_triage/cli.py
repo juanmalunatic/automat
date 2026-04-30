@@ -504,6 +504,8 @@ def _run_import_enrichment_csv(*, input_path: str, stdout: TextIO) -> int:
 
     print("Manual enrichment CSV import complete.", file=stdout)
     print(f"Input: {summary.input_path}", file=stdout)
+    print(f"Detected CSV encoding: {summary.detected_encoding}", file=stdout)
+    print(f"Detected CSV delimiter: {summary.detected_delimiter}", file=stdout)
     print(f"Rows read: {summary.rows_read_count}", file=stdout)
     print(f"Blank rows skipped: {summary.blank_rows_skipped_count}", file=stdout)
     print(f"Imported new enrichments: {summary.imported_new_enrichments_count}", file=stdout)

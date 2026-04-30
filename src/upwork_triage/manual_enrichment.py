@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+from io import StringIO
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +12,14 @@ from typing import Sequence
 from upwork_triage.queue_view import fetch_enrichment_queue
 
 MANUAL_ENRICHMENT_CSV_COLUMNS = ("job_key", "url", "title", "manual_ui_text")
+SUPPORTED_IMPORT_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252")
+SUPPORTED_CSV_DELIMITERS = (",", ";", "\t")
+DEFAULT_CSV_DELIMITER = ","
+CSV_DELIMITER_NAMES = {
+    ",": "comma",
+    ";": "semicolon",
+    "\t": "tab",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +31,8 @@ class ManualEnrichmentExportSummary:
 @dataclass(frozen=True, slots=True)
 class ManualEnrichmentImportSummary:
     input_path: str
+    detected_encoding: str
+    detected_delimiter: str
     rows_read_count: int
     blank_rows_skipped_count: int
     imported_new_enrichments_count: int
@@ -49,7 +60,7 @@ def export_enrichment_csv(
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    with output.open("w", encoding="utf-8", newline="") as handle:
+    with output.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(MANUAL_ENRICHMENT_CSV_COLUMNS))
         writer.writeheader()
         for row in rows:
@@ -82,10 +93,15 @@ def import_enrichment_csv(
     updated_versions_count = 0
     unknown_job_key_rows_count = 0
 
-    with input_csv.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        _validate_csv_columns(reader.fieldnames)
-        csv_rows = list(reader)
+    csv_text, detected_encoding = _read_csv_text_with_fallback(input_csv)
+    detected_delimiter = _detect_csv_delimiter(csv_text)
+    reader = csv.DictReader(
+        StringIO(csv_text, newline=""),
+        delimiter=detected_delimiter,
+    )
+    reader.fieldnames = _normalize_csv_fieldnames(reader.fieldnames)
+    _validate_csv_columns(reader.fieldnames)
+    csv_rows = list(reader)
 
     with conn:
         for row in csv_rows:
@@ -181,6 +197,8 @@ def import_enrichment_csv(
 
     return ManualEnrichmentImportSummary(
         input_path=str(input_csv),
+        detected_encoding=detected_encoding,
+        detected_delimiter=CSV_DELIMITER_NAMES.get(detected_delimiter, detected_delimiter),
         rows_read_count=rows_read_count,
         blank_rows_skipped_count=blank_rows_skipped_count,
         imported_new_enrichments_count=imported_new_enrichments_count,
@@ -198,6 +216,48 @@ def _validate_csv_columns(fieldnames: Sequence[str] | None) -> None:
     missing = [column for column in MANUAL_ENRICHMENT_CSV_COLUMNS if column not in fieldnames]
     if missing:
         raise ValueError(f"CSV is missing required columns: {', '.join(missing)}")
+
+
+def _read_csv_text_with_fallback(path: Path) -> tuple[str, str]:
+    raw_bytes = path.read_bytes()
+    if raw_bytes.startswith(b"\xef\xbb\xbf"):
+        return raw_bytes.decode("utf-8-sig"), "utf-8-sig"
+
+    decode_errors: list[str] = []
+    encodings_to_try = ("utf-8", "cp1252")
+    for encoding in encodings_to_try:
+        try:
+            return raw_bytes.decode(encoding), encoding
+        except UnicodeDecodeError as exc:
+            decode_errors.append(f"{encoding}: {exc}")
+
+    raise ValueError(
+        "CSV could not be decoded with supported encodings "
+        f"({', '.join(SUPPORTED_IMPORT_ENCODINGS)}). "
+        + " | ".join(decode_errors)
+    )
+
+
+def _detect_csv_delimiter(text: str) -> str:
+    sample = text[:4096]
+    if not sample.strip():
+        return DEFAULT_CSV_DELIMITER
+
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters="".join(SUPPORTED_CSV_DELIMITERS))
+    except csv.Error:
+        return DEFAULT_CSV_DELIMITER
+    return dialect.delimiter
+
+
+def _normalize_csv_fieldnames(fieldnames: Sequence[str] | None) -> list[str] | None:
+    if fieldnames is None:
+        return None
+    return [_normalize_csv_header(fieldname) for fieldname in fieldnames]
+
+
+def _normalize_csv_header(value: str) -> str:
+    return value.lstrip("\ufeff").strip()
 
 
 def _stable_text_hash(text: str) -> str:

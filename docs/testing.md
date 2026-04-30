@@ -147,8 +147,9 @@ Should verify:
 - `queue-enrichment` includes `new`, `seen`, and `saved` jobs and prints the manual-final-check reminder plus the local action hint
 - `queue-enrichment` does not call fake-demo, ingest-once, raw inspection, Upwork fetch, OpenAI evaluation, or action recording
 - `main(["export-enrichment-csv", "--output", PATH])` writes a CSV worksheet with exactly `job_key`, `url`, `title`, and `manual_ui_text`
+- exported enrichment CSVs should be readable as UTF-8 with BOM for Excel/Windows compatibility
 - `export-enrichment-csv` reuses the enrichment-candidate worklist, excludes terminal user statuses, and excludes already-enriched jobs by default
-- `main(["import-enrichment-csv", PATH])` imports nonblank manual text, supports quoted multiline CSV cells, prints a compact summary, and writes a remaining unenriched worksheet without overwriting the input CSV
+- `main(["import-enrichment-csv", PATH])` imports nonblank manual text, supports quoted multiline CSV cells, accepts BOM/whitespace-normalized headers plus comma/semicolon/tab delimiters, prints a compact summary, and writes a remaining unenriched worksheet without overwriting the input CSV
 - import CLI duplicate rows are no-ops, changed text creates a new latest version, and unknown `job_key` rows are skipped and counted
 - `main(["action", JOB_KEY, "seen"])` returns `0` and prints a confirmation
 - `main(["action", JOB_KEY, "applied", "--notes", "..."])` stores notes
@@ -454,7 +455,11 @@ Should verify:
 Should verify:
 
 - `export_enrichment_csv()` writes exactly `job_key`, `url`, `title`, and `manual_ui_text`
+- export writes an Excel-friendly UTF-8-with-BOM worksheet that spreadsheet tools can reopen safely
 - export includes persisted non-`DISCARD` enrichment candidates and excludes terminal user statuses
+- import accepts UTF-8 with BOM, plain UTF-8, and Windows-1252 / cp1252 CSV files
+- BOM-prefixed and whitespace-padded headers still validate as the required four worksheet columns
+- import accepts comma-, semicolon-, and tab-delimited files
 - import stores nonblank `manual_ui_text` rows in `manual_job_enrichments`
 - quoted multiline `manual_ui_text` is preserved safely
 - blank rows are skipped and do not erase existing data

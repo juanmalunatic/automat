@@ -1351,7 +1351,7 @@ def test_export_enrichment_csv_writes_exact_columns(
 
         assert exit_code == 0
         assert stderr.getvalue() == ""
-        with output_path.open("r", encoding="utf-8", newline="") as handle:
+        with output_path.open("r", encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
             assert reader.fieldnames == ["job_key", "url", "title", "manual_ui_text"]
             rows = list(reader)
@@ -1434,6 +1434,8 @@ def test_import_enrichment_csv_imports_multiline_text_and_writes_remaining_csv(
         assert stored_row["raw_manual_text"] == multiline_text.strip()
         assert stored_row["parse_status"] == "raw_imported"
         assert stored_row["is_latest"] == 1
+        assert "Detected CSV encoding: utf-8-sig" in output
+        assert "Detected CSV delimiter: comma" in output
         assert "Rows read: 3" in output
         assert "Blank rows skipped: 1" in output
         assert "Imported new enrichments: 1" in output
@@ -2321,7 +2323,7 @@ def write_cli_raw_artifact(path: Path, *, jobs: list[dict[str, object]]) -> None
 
 def write_manual_enrichment_csv(path: Path, *, rows: list[dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=["job_key", "url", "title", "manual_ui_text"],

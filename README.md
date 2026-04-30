@@ -207,6 +207,9 @@ This bridge is intentionally minimal:
 - the CSV is an editable worksheet, not the source of truth
 - SQLite remains the source of truth
 - the columns are exactly `job_key,url,title,manual_ui_text`
+- export writes UTF-8 with BOM so Excel/Windows tools recognize the worksheet cleanly
+- import accepts UTF-8, UTF-8 with BOM, and Windows-1252 / cp1252 CSV files
+- import tolerates BOM/whitespace in headers and supports comma, semicolon, and tab delimiters
 - multiline quoted `manual_ui_text` is supported if your CSV editor preserves valid quoting
 - blank rows do not erase data
 - identical re-imports are no-ops

@@ -66,13 +66,26 @@ def test_export_enrichment_csv_writes_exact_columns_and_remaining_candidates(
     summary = export_enrichment_csv(conn, output_path)
 
     assert summary.rows_written == 2
-    with output_path.open("r", encoding="utf-8", newline="") as handle:
+    with output_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         assert tuple(reader.fieldnames or ()) == MANUAL_ENRICHMENT_CSV_COLUMNS
         rows = list(reader)
 
     assert [row["job_key"] for row in rows] == ["upwork:987654321", "upwork:333444555"]
     assert all(row["manual_ui_text"] == "" for row in rows)
+
+
+def test_export_enrichment_csv_is_excel_friendly_utf8_sig(
+    conn: sqlite3.Connection,
+    workspace_tmp_dir: Path,
+) -> None:
+    _seed_enrichment_candidates(conn)
+    output_path = workspace_tmp_dir / "manual" / "excel_friendly.csv"
+
+    export_enrichment_csv(conn, output_path)
+
+    raw_bytes = output_path.read_bytes()
+    assert raw_bytes.startswith(b"\xef\xbb\xbf")
 
 
 def test_import_enrichment_csv_stores_multiline_text_and_raw_imported_status(
@@ -110,6 +123,139 @@ def test_import_enrichment_csv_stores_multiline_text_and_raw_imported_status(
     assert row["raw_manual_text"] == MULTILINE_MANUAL_TEXT.strip()
     assert row["parse_status"] == "raw_imported"
     assert row["is_latest"] == 1
+
+
+def test_import_enrichment_csv_accepts_utf8_bom_and_normalizes_bom_header(
+    conn: sqlite3.Connection,
+    workspace_tmp_dir: Path,
+) -> None:
+    _seed_enrichment_candidates(conn)
+    worksheet_path = workspace_tmp_dir / "manual" / "utf8_bom.csv"
+    _write_csv_text(
+        worksheet_path,
+        (
+            "job_key,url,title,manual_ui_text\n"
+            "\"upwork:987654321\",\"https://www.upwork.com/jobs/~987654321\","
+            "\"WooCommerce order sync plugin bug fix\",\"BOM-safe text\"\n"
+        ),
+        encoding="utf-8-sig",
+    )
+
+    summary = import_enrichment_csv(conn, worksheet_path)
+    row = conn.execute(
+        "SELECT raw_manual_text FROM manual_job_enrichments WHERE job_key = ?",
+        ("upwork:987654321",),
+    ).fetchone()
+
+    assert summary.detected_encoding == "utf-8-sig"
+    assert row is not None
+    assert row["raw_manual_text"] == "BOM-safe text"
+
+
+def test_import_enrichment_csv_accepts_bom_prefixed_and_whitespace_padded_headers(
+    conn: sqlite3.Connection,
+    workspace_tmp_dir: Path,
+) -> None:
+    _seed_enrichment_candidates(conn)
+    worksheet_path = workspace_tmp_dir / "manual" / "whitespace_headers.csv"
+    _write_csv_text(
+        worksheet_path,
+        (
+            "\ufeff job_key , url , title , manual_ui_text \n"
+            "\"upwork:987654321\",\"https://www.upwork.com/jobs/~987654321\","
+            "\"WooCommerce order sync plugin bug fix\",\"Header-normalized text\"\n"
+        ),
+        encoding="utf-8",
+    )
+
+    summary = import_enrichment_csv(conn, worksheet_path)
+    row = conn.execute(
+        "SELECT raw_manual_text FROM manual_job_enrichments WHERE job_key = ?",
+        ("upwork:987654321",),
+    ).fetchone()
+
+    assert summary.rows_read_count == 1
+    assert row is not None
+    assert row["raw_manual_text"] == "Header-normalized text"
+
+
+def test_import_enrichment_csv_accepts_cp1252_with_smart_punctuation(
+    conn: sqlite3.Connection,
+    workspace_tmp_dir: Path,
+) -> None:
+    _seed_enrichment_candidates(conn)
+    worksheet_path = workspace_tmp_dir / "manual" / "cp1252.csv"
+    cp1252_text = (
+        "job_key,url,title,manual_ui_text\n"
+        "\"upwork:987654321\",\"https://www.upwork.com/jobs/~987654321\","
+        "\"WooCommerce order sync plugin bug fix\",\"Client note — looks promising “today”\"\n"
+    )
+    worksheet_path.parent.mkdir(parents=True, exist_ok=True)
+    worksheet_path.write_bytes(cp1252_text.encode("cp1252"))
+
+    summary = import_enrichment_csv(conn, worksheet_path)
+    row = conn.execute(
+        "SELECT raw_manual_text FROM manual_job_enrichments WHERE job_key = ?",
+        ("upwork:987654321",),
+    ).fetchone()
+
+    assert summary.detected_encoding == "cp1252"
+    assert row is not None
+    assert row["raw_manual_text"] == 'Client note — looks promising “today”'
+
+
+def test_import_enrichment_csv_accepts_semicolon_delimited_files(
+    conn: sqlite3.Connection,
+    workspace_tmp_dir: Path,
+) -> None:
+    _seed_enrichment_candidates(conn)
+    worksheet_path = workspace_tmp_dir / "manual" / "semicolon.csv"
+    _write_csv_text(
+        worksheet_path,
+        (
+            "job_key;url;title;manual_ui_text\n"
+            "\"upwork:987654321\";\"https://www.upwork.com/jobs/~987654321\";"
+            "\"WooCommerce order sync plugin bug fix\";\"Semicolon text\"\n"
+        ),
+        encoding="utf-8",
+    )
+
+    summary = import_enrichment_csv(conn, worksheet_path)
+    row = conn.execute(
+        "SELECT raw_manual_text FROM manual_job_enrichments WHERE job_key = ?",
+        ("upwork:987654321",),
+    ).fetchone()
+
+    assert summary.detected_delimiter == "semicolon"
+    assert row is not None
+    assert row["raw_manual_text"] == "Semicolon text"
+
+
+def test_import_enrichment_csv_accepts_tab_delimited_files(
+    conn: sqlite3.Connection,
+    workspace_tmp_dir: Path,
+) -> None:
+    _seed_enrichment_candidates(conn)
+    worksheet_path = workspace_tmp_dir / "manual" / "tab.tsv"
+    _write_csv_text(
+        worksheet_path,
+        (
+            "job_key\turl\ttitle\tmanual_ui_text\n"
+            "\"upwork:987654321\"\t\"https://www.upwork.com/jobs/~987654321\"\t"
+            "\"WooCommerce order sync plugin bug fix\"\t\"Tab-delimited text\"\n"
+        ),
+        encoding="utf-8",
+    )
+
+    summary = import_enrichment_csv(conn, worksheet_path)
+    row = conn.execute(
+        "SELECT raw_manual_text FROM manual_job_enrichments WHERE job_key = ?",
+        ("upwork:987654321",),
+    ).fetchone()
+
+    assert summary.detected_delimiter == "tab"
+    assert row is not None
+    assert row["raw_manual_text"] == "Tab-delimited text"
 
 
 def test_blank_and_unknown_rows_are_skipped_without_erasing_data(
@@ -244,7 +390,7 @@ def test_import_writes_remaining_csv_without_overwriting_input(
     assert remaining_path.exists()
     assert remaining_path != worksheet_path
 
-    with remaining_path.open("r", encoding="utf-8", newline="") as handle:
+    with remaining_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         rows = list(reader)
 
@@ -268,10 +414,15 @@ def _seed_enrichment_candidates(conn: sqlite3.Connection) -> None:
 
 def _write_csv_rows(path: Path, rows: list[dict[str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(MANUAL_ENRICHMENT_CSV_COLUMNS))
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _write_csv_text(path: Path, text: str, *, encoding: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding=encoding, newline="")
 
 
 def _make_strong_raw_payload(**overrides: object) -> dict[str, object]:

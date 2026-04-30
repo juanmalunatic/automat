@@ -2,14 +2,14 @@
 
 ## Task name
 
-Add the lean-MVP CSV manual-enrichment bridge.
+Make the manual-enrichment CSV bridge robust for common Windows and Excel CSV files.
 
 ## Product boundary
 
 This step should answer:
 
 ```text
-How can the user bulk-paste UI-only client/job text into persisted candidates safely?
+Can the user export a worksheet, edit it in Excel or another Windows CSV tool, and import it back safely?
 ```
 
 It should not answer:
@@ -18,63 +18,38 @@ It should not answer:
 Should I apply?
 ```
 
-The CSV is an editable worksheet, not the source of truth. SQLite remains the source of truth.
+SQLite remains the source of truth. The CSV remains only an editable worksheet.
 
 ## Implementation scope
 
 This task is limited to:
 
 ```text
-persisted official-stage candidates
--> tiny CSV export worksheet
--> raw manual-text import/versioning
--> remaining unenriched worklist
+manual enrichment worksheet export/import
+-> Excel-friendly encoding on export
+-> tolerant decoding/header parsing/delimiter handling on import
 ```
 
 Add:
 
-- explicit persisted storage for raw manual enrichment text
-- a CSV export command
-- a CSV import command
-- version-safe latest-row behavior per job
-- a regenerated “remaining enrichment worklist” CSV after import
+- export with UTF-8 BOM for Excel compatibility
+- import fallback decoding for common CSV encodings
+- header normalization for BOM and surrounding whitespace
+- delimiter tolerance for comma, semicolon, and tab
+- continued safe handling of quoted multiline `manual_ui_text`
 
 Do not add:
 
-- live network fetching
-- OpenAI or any AI provider calls
-- economics
-- final apply/maybe/skip verdicts
 - parsing of Connects/member-since/avg-hourly/open-jobs fields
 - enriched prospect dump generation
-- background polling
+- OpenAI or any AI provider calls
+- economics
+- live network fetching
+- broad refactors
 
-## Manual enrichment storage
+## CSV contract
 
-Add a dedicated table such as `manual_job_enrichments`.
-
-The stored row should preserve:
-
-- `job_key`
-- optional `upwork_job_id`
-- optional `source_url`
-- `created_at`
-- `raw_manual_text`
-- `raw_manual_text_hash`
-- `parse_status`
-- optional `parse_warnings_json`
-- `is_latest`
-
-For this step:
-
-- `parse_status` is always `raw_imported`
-- parsing structured unavailable fields is intentionally deferred
-- identical re-imports for the same `job_key` and text hash are no-ops
-- changed text creates a new version and becomes the latest row
-
-## CSV format
-
-The worksheet columns must be exactly:
+The worksheet shape stays exactly:
 
 ```text
 job_key,url,title,manual_ui_text
@@ -83,64 +58,60 @@ job_key,url,title,manual_ui_text
 Rules:
 
 - only `manual_ui_text` is intended to be edited
-- multiline pasted text must be supported through normal CSV quoting
-- blank `manual_ui_text` rows do not erase existing enrichment
-- repeated identical imports do not create duplicate rows
+- multiline pasted text must continue to work through normal CSV quoting
+- blank `manual_ui_text` rows remain no-ops
+- repeated identical imports remain no-ops
+- changed text still creates a new latest enrichment version
 
-## CLI commands
+## Export requirements
 
-Add:
+`export-enrichment-csv` should:
 
-```powershell
-py -m upwork_triage export-enrichment-csv --output data/manual/enrichment_queue.csv
-py -m upwork_triage import-enrichment-csv data/manual/enrichment_queue.csv
-```
+1. keep `newline=""`
+2. write with `encoding="utf-8-sig"`
+3. keep the same four worksheet columns
+4. keep `manual_ui_text` blank by default
+5. keep existing candidate-selection behavior
 
-Export behavior:
+## Import requirements
 
-1. load config and DB path
-2. initialize DB if needed
-3. reuse the enrichment-queue candidate set
-4. write CSV columns exactly:
-   - `job_key`
-   - `url`
-   - `title`
-   - `manual_ui_text`
-5. leave `manual_ui_text` blank on export
-6. exclude already-enriched candidates by default
+`import-enrichment-csv` should accept common spreadsheet/editor variants:
 
-Import behavior:
+- UTF-8 with BOM
+- UTF-8 without BOM
+- Windows-1252 / cp1252
 
-1. load config and DB path
-2. initialize DB if needed
-3. require the same four CSV columns
-4. skip blank rows
-5. skip unknown `job_key` rows
-6. store nonblank text as raw imported enrichment
-7. no-op on identical re-import
-8. create a new latest version when the text changes
-9. write a new remaining unenriched worksheet without overwriting the input CSV
+Header validation should tolerate:
 
-## Queue interaction
+- BOM on the first header cell
+- leading/trailing header whitespace
 
-If a job already has latest manual enrichment, it should be hidden from the default enrichment worklist.
+Delimiter handling should support:
 
-It is acceptable for this step to enforce that through:
+- comma
+- semicolon
+- tab
 
-- `fetch_enrichment_queue(...)` default behavior, and
-- `export-enrichment-csv` using that default worklist
+If delimiter sniffing fails, default back to comma.
 
-No final-decision queue changes are in scope.
+The importer may ignore extra columns, but it must still require and use:
+
+- `job_key`
+- `url`
+- `title`
+- `manual_ui_text`
 
 ## Acceptance criteria for this step
 
 This step is done when:
 
-1. DB initialization creates a durable `manual_job_enrichments` storage table,
-2. `export-enrichment-csv` writes exactly `job_key,url,title,manual_ui_text`,
-3. `import-enrichment-csv` stores quoted multiline raw manual text safely,
-4. identical imports are no-ops,
-5. changed text creates a new latest enrichment version,
-6. blank rows do not erase data,
-7. a remaining unenriched worksheet is generated after import,
-8. the current preview, artifact-ingest, queue, queue-enrichment, and action flows keep working.
+1. export writes an Excel-friendly UTF-8-with-BOM worksheet,
+2. import accepts UTF-8 BOM, plain UTF-8, and cp1252 CSV files,
+3. BOM-prefixed and whitespace-padded headers still validate as `job_key,url,title,manual_ui_text`,
+4. semicolon- and tab-delimited files import correctly,
+5. quoted multiline `manual_ui_text` still imports correctly,
+6. blank rows remain no-ops,
+7. duplicate identical imports remain no-ops,
+8. changed text still creates a new latest enrichment version,
+9. the remaining unenriched worksheet is still generated after import,
+10. the current preview, artifact-ingest, queue, queue-enrichment, and action flows keep working.
