@@ -92,6 +92,7 @@ Manual steps you still do yourself:
 
 How to use the enriched dump:
 
+- `STRONG_PROSPECT` means review first, not automatic apply
 - start with `STRONG_PROSPECT`
 - then inspect `REVIEW`
 - use `WEAK_REVIEW` only if you are still searching
@@ -133,6 +134,7 @@ Action tracking is local only:
 ## Known MVP caveats
 
 - The enriched score is still calibration-grade and should be audited during real usage.
+- Enriched survivor gates are now intentionally stricter after manual enrichment; this improves precision, but some true positives may still land in `REVIEW` or `WEAK_REVIEW`.
 - Some missing fields appear as an em dash; PowerShell may show that as mojibake such as `ΓÇö` in grep-like output.
 - Manual enrichment quality depends on pasting the correct Upwork UI block into the correct CSV row.
 - The title mismatch guard exists, but it is not perfect.

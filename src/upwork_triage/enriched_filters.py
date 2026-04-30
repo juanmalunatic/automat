@@ -12,6 +12,13 @@ EnrichedRoutingBucket = Literal[
     "ENRICHED_DISCARD",
 ]
 
+BUCKET_ORDER: tuple[EnrichedRoutingBucket, ...] = (
+    "STRONG_PROSPECT",
+    "REVIEW",
+    "WEAK_REVIEW",
+    "ENRICHED_DISCARD",
+)
+
 PREFERRED_COUNTRIES = {"United States", "Canada", "United Kingdom"}
 
 COUNTRY_NORMALIZATION_MAP = {
@@ -46,6 +53,194 @@ STRONG_LANE_KEYWORDS = {
 BROAD_LANE_KEYWORDS = {
     "api": "lane_keyword_api",
     "plugin": "lane_keyword_plugin",
+}
+
+EXACT_TECHNICAL_RESCUE_TERMS = (
+    "fix",
+    "bug",
+    "broken",
+    "troubleshoot",
+    "diagnostic",
+    "audit",
+    "plugin conflict",
+    "php fatal",
+    "woocommerce performance",
+    "admin ajax",
+    "query monitor",
+    "new relic",
+    "cron",
+    "mysql",
+    "migration diagnostic",
+    "webhook logs",
+    "api payload",
+    "gravity forms hook",
+)
+
+CLEAR_FIRST_STEP_TERMS = (
+    "logs",
+    "hook",
+    "payload",
+    "webhook",
+    "query monitor",
+    "new relic",
+    "staging",
+    "backup",
+    "migration mapping",
+    "form submission",
+    "confirmation",
+    "duplicate firing",
+    "console",
+    "network",
+    "database mapping",
+    "slow query",
+    "cron",
+)
+
+PRIVATE_DESCRIPTION_PHRASES = (
+    "please see direct messages",
+    "please see direct messages emails",
+    "please see direct messages emails for more information",
+    "please see direct messages for more information",
+    "details in email",
+    "see dm",
+    "see direct messages",
+    "details in direct messages",
+)
+
+US_ONLY_PHRASES = (
+    "u s only",
+    "us only",
+    "united states only",
+    "must be located in the us",
+    "must be located in us",
+)
+
+AGENCY_ONLY_PHRASES = (
+    "agency only",
+    "agencies only",
+    "agency partner",
+    "partner network",
+    "software development agencies",
+)
+
+NONTECHNICAL_ECOMMERCE_PHRASES = (
+    "merchandiser",
+    "merchandising",
+    "product ranking",
+    "promo calendar",
+    "email calendar",
+    "onsite ad placements",
+    "category curation",
+    "category landing pages",
+    "stale pages",
+    "gourmet food knowledge",
+    "content creator",
+    "daily website enhancement",
+    "seo content",
+    "product descriptions",
+)
+
+GENERIC_DESIGN_SITE_BUILD_PHRASES = (
+    "generic website build",
+    "web presence",
+    "design first",
+    "public figure",
+    "wellness portfolio",
+    "author",
+    "coach",
+    "influencer",
+    "page builder build",
+    "branding",
+    "site design",
+    "portfolio site",
+)
+
+WEBFLOW_FIGMA_PHRASES = (
+    "webflow",
+    "figma",
+)
+
+SCOPE_EXPLOSION_PHRASES = (
+    "hipaa",
+    "compliant",
+    "medical portal",
+    "healthcare portal",
+    "regulated",
+    "real time sync",
+    "real-time sync",
+    "bi directional sync",
+    "bi-directional sync",
+    "tenant migration",
+    "attendees",
+    "tickets",
+    "purchases",
+    "do not lose existing purchases",
+    "mvp in 2 3 weeks",
+    "custom mobile app",
+    "account system",
+    "user login",
+    "checkout",
+    "payment",
+    "dashboard",
+    "reporting",
+    "loopnet",
+    "costar",
+)
+
+PERFORMANCE_GUARANTEE_PHRASES = (
+    "90 pagespeed",
+    "90+ pagespeed",
+    "guarantee score",
+    "guaranteed pagespeed",
+)
+
+DESCRIPTION_TECHNICAL_NOUNS = (
+    "wordpress",
+    "woocommerce",
+    "php",
+    "plugin",
+    "api",
+    "webhook",
+    "mysql",
+    "gravity forms",
+    "query monitor",
+    "new relic",
+    "cron",
+    "database",
+    "checkout",
+    "forms",
+)
+
+CENTRAL_TOOL_CONFIG = {
+    "caspio": "central_tool_mismatch_caspio",
+    "dynamics 365": "central_tool_mismatch_dynamics_365",
+    "business central": "central_tool_mismatch_business_central",
+    "al development": "central_tool_mismatch_al_development",
+    "geodirectory": "central_tool_mismatch_geodirectory",
+    "10web": "central_tool_mismatch_10web",
+    "webflow": "central_tool_mismatch_webflow",
+    "knack": "central_tool_mismatch_knack",
+    "wplms": "central_tool_mismatch_wplms",
+    "learnpress": "central_tool_mismatch_learnpress",
+    "gohighlevel": "central_tool_mismatch_gohighlevel",
+    "shopify": "central_tool_mismatch_shopify",
+}
+
+SEVERE_WRONG_LANE_TOOLS = {"10web", "webflow", "knack", "gohighlevel", "shopify"}
+MAJOR_WARNING_FLAGS = {
+    "client_avg_hourly_paid_below_15",
+    "client_avg_hourly_paid_below_20",
+    "client_hire_rate_below_50",
+    "manual_proposals_20_plus",
+    "manual_proposals_50_plus",
+    "client_payment_not_verified",
+    "client_total_spent_zero",
+    "client_member_since_within_60_days",
+    "empty_or_private_description",
+    "empty_or_private_description_high_connects",
+    "scope_explosion",
+    "high_connect_scope_explosion",
+    "absolute_performance_score_risk",
 }
 
 PROPOSAL_RANGE_PATTERN = re.compile(r"(?P<low>\d+)\s*(?:to|-)\s*(?P<high>\d+)", re.IGNORECASE)
@@ -123,6 +318,7 @@ def evaluate_enriched_filters(data: EnrichedFilterInput) -> EnrichedFilterResult
     positive_flags: list[str] = []
     negative_flags: list[str] = []
     reject_reasons: list[str] = []
+    cap_bucket: EnrichedRoutingBucket | None = None
     scoring_manual_text = None if data.manual_parse_status == "title_mismatch" else data.raw_manual_text
 
     text = _canonicalize(
@@ -155,6 +351,14 @@ def evaluate_enriched_filters(data: EnrichedFilterInput) -> EnrichedFilterResult
     client_hours_hired = _first_float(data.client_hours_hired, data.c_hist_hours_hired)
     client_member_since = _first_text(data.client_member_since, data.c_hist_member_since)
     today = data.today or date.today()
+    is_hourly_job = data.j_contract_type == "hourly"
+    has_wordpress_stack = _has_wordpress_stack(text)
+    exact_core_fit = _has_exact_core_fit(text)
+    exact_technical_rescue = _has_exact_technical_rescue(text)
+    clear_first_diagnostic_step = _has_clear_first_diagnostic_step(text)
+    empty_or_private_description = _is_empty_or_private_description(data.j_description)
+    scope_risk = _has_scope_explosion(text)
+    performance_guarantee_risk = _contains_any_phrase(text, PERFORMANCE_GUARANTEE_PHRASES)
 
     if data.official_bucket in {"AI_EVAL", "MANUAL_EXCEPTION"}:
         score += 1
@@ -273,8 +477,13 @@ def evaluate_enriched_filters(data: EnrichedFilterInput) -> EnrichedFilterResult
         client_hire_rate=client_hire_rate,
         member_age_days=member_age_days,
     )
+    exceptional_client = _has_exceptional_client_signals(
+        client_total_spent=client_total_spent,
+        client_avg_hourly_paid=client_avg_hourly_paid,
+        fixed_budget=data.j_pay_fixed,
+    )
 
-    if connects_required is not None and connects_required >= 24:
+    if connects_required is not None and connects_required >= 25:
         score -= 3
         negative_flags.append("very_high_connect_cost")
     elif connects_required is not None and connects_required >= 20:
@@ -296,7 +505,124 @@ def evaluate_enriched_filters(data: EnrichedFilterInput) -> EnrichedFilterResult
         score += 1
         positive_flags.append("client_recently_viewed")
 
-    enriched_bucket = _route_enriched_bucket(score=score, reject_reasons=reject_reasons)
+    if clear_first_diagnostic_step:
+        positive_flags.append("clear_first_diagnostic_step")
+
+    if payment_verified == 0 and _has_no_client_history(
+        client_total_spent=client_total_spent,
+        client_hires_total=client_hires_total,
+        client_hire_rate=client_hire_rate,
+    ):
+        reject_reasons.append("unverified_new_client_no_history")
+        negative_flags.append("unverified_new_client_no_history")
+
+    if empty_or_private_description:
+        negative_flags.append("empty_or_private_description")
+        cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
+        if connects_required is not None and connects_required >= 16:
+            negative_flags.append("empty_or_private_description_high_connects")
+            cap_bucket = _tighten_cap(cap_bucket, "WEAK_REVIEW")
+
+    eligibility_reasons = _eligibility_reject_reasons(text)
+    if eligibility_reasons:
+        reject_reasons.extend(eligibility_reasons)
+        negative_flags.extend(eligibility_reasons)
+
+    central_tool_cap, central_tool_flags = _central_tool_mismatch_cap(
+        text,
+        has_wordpress_stack=has_wordpress_stack,
+        weak_client_quality=weak_client_quality,
+    )
+    negative_flags.extend(central_tool_flags)
+    cap_bucket = _tighten_cap(cap_bucket, central_tool_cap)
+
+    ecommerce_cap, ecommerce_flags = _nontechnical_ecommerce_cap(
+        text,
+        exact_core_fit=exact_core_fit,
+    )
+    negative_flags.extend(ecommerce_flags)
+    cap_bucket = _tighten_cap(cap_bucket, ecommerce_cap)
+
+    generic_design_cap, generic_design_flags = _generic_design_cap(
+        text,
+        connects_required=connects_required,
+        exact_core_fit=exact_core_fit,
+        weak_client_quality=weak_client_quality,
+    )
+    negative_flags.extend(generic_design_flags)
+    cap_bucket = _tighten_cap(cap_bucket, generic_design_cap)
+
+    if scope_risk:
+        negative_flags.append("scope_explosion")
+        if data.j_contract_type == "fixed" and data.j_pay_fixed is not None and data.j_pay_fixed < 500:
+            reject_reasons.append("low_budget_scope_explosion")
+            negative_flags.append("low_budget_scope_explosion")
+        elif connects_required is not None and connects_required >= 16:
+            negative_flags.append("high_connect_scope_explosion")
+            cap_bucket = _tighten_cap(cap_bucket, "WEAK_REVIEW")
+        else:
+            cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
+
+    if performance_guarantee_risk:
+        negative_flags.append("absolute_performance_score_risk")
+        cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
+
+    if is_hourly_job and client_avg_hourly_paid is not None:
+        if client_avg_hourly_paid < 10:
+            reject_reasons.append("client_avg_hourly_paid_below_10")
+            negative_flags.append("client_avg_hourly_paid_below_10")
+        elif client_avg_hourly_paid < 15:
+            negative_flags.append("client_avg_hourly_paid_10_to_15_cap")
+            cap_bucket = _tighten_cap(cap_bucket, "WEAK_REVIEW")
+        elif client_avg_hourly_paid < 25 and (
+            not exact_core_fit or _has_major_warning(negative_flags)
+        ):
+            negative_flags.append("client_avg_hourly_paid_15_to_25_caution")
+            cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
+
+    if client_hire_rate is not None and client_hire_rate < 50:
+        high_connect_warning = connects_required is not None and connects_required >= 20
+        if exceptional_client and exact_core_fit and not high_connect_warning:
+            cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
+        else:
+            cap_bucket = _tighten_cap(cap_bucket, "WEAK_REVIEW")
+
+    if connects_required is not None:
+        if connects_required >= 25:
+            negative_flags.append("connects_25_plus_requires_exceptional_fit")
+            if not (exceptional_client and exact_core_fit and not _has_major_warning(negative_flags)):
+                cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
+        elif connects_required >= 20:
+            if _has_major_warning(negative_flags):
+                negative_flags.append("connects_20_plus_with_warning")
+                cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
+            if weak_client_quality:
+                cap_bucket = _tighten_cap(cap_bucket, "WEAK_REVIEW")
+
+    if _qualifies_speculative_small_bet(
+        payment_verified=payment_verified,
+        phone_verified=phone_verified,
+        client_total_spent=client_total_spent,
+        client_hires_total=client_hires_total,
+        connects_required=connects_required,
+        exact_technical_rescue=exact_technical_rescue,
+        clear_first_diagnostic_step=clear_first_diagnostic_step,
+        text=text,
+        scope_risk=scope_risk,
+        empty_or_private_description=empty_or_private_description,
+    ):
+        positive_flags.append("speculative_small_bet")
+        cap_bucket = _tighten_cap(cap_bucket, "REVIEW")
+
+    preliminary_bucket = _route_enriched_bucket(score=score, reject_reasons=reject_reasons)
+    enriched_bucket = _apply_bucket_cap(preliminary_bucket, cap_bucket)
+    if (
+        "speculative_small_bet" in positive_flags
+        and not reject_reasons
+        and enriched_bucket in {"WEAK_REVIEW", "ENRICHED_DISCARD"}
+    ):
+        enriched_bucket = "REVIEW"
+
     return EnrichedFilterResult(
         enriched_bucket=enriched_bucket,
         enriched_score=score,
@@ -320,6 +646,26 @@ def _route_enriched_bucket(
     if score >= 0:
         return "WEAK_REVIEW"
     return "ENRICHED_DISCARD"
+
+
+def _apply_bucket_cap(
+    bucket: EnrichedRoutingBucket,
+    cap_bucket: EnrichedRoutingBucket | None,
+) -> EnrichedRoutingBucket:
+    if cap_bucket is None:
+        return bucket
+    return BUCKET_ORDER[max(BUCKET_ORDER.index(bucket), BUCKET_ORDER.index(cap_bucket))]
+
+
+def _tighten_cap(
+    current_cap: EnrichedRoutingBucket | None,
+    new_cap: EnrichedRoutingBucket | None,
+) -> EnrichedRoutingBucket | None:
+    if new_cap is None:
+        return current_cap
+    if current_cap is None:
+        return new_cap
+    return BUCKET_ORDER[max(BUCKET_ORDER.index(current_cap), BUCKET_ORDER.index(new_cap))]
 
 
 def _proposal_band_for_enriched_stage(data: EnrichedFilterInput) -> tuple[int | None, int | None]:
@@ -369,6 +715,218 @@ def _keyword_score(text: str) -> tuple[int, list[str]]:
             flags.append(flag)
             total += 0.5
     return min(2, int(total if total < 2 else 2)), flags
+
+
+def _has_exact_core_fit(text: str) -> bool:
+    return _has_wordpress_stack(text) and (
+        _contains_any_phrase(
+            text,
+            (
+                "fix",
+                "bug",
+                "broken",
+                "troubleshoot",
+                "integration",
+                "checkout",
+                "hook",
+                "webhook",
+                "api",
+                "plugin",
+                "database",
+                "import export",
+                "migration",
+                "performance",
+                "admin ajax",
+            ),
+        )
+    )
+
+
+def _has_wordpress_stack(text: str) -> bool:
+    return _contains_any_phrase(
+        text,
+        (
+            "wordpress",
+            "woocommerce",
+            "php",
+            "plugin",
+            "api",
+            "webhook",
+            "gravity forms",
+            "wp cli",
+            "custom php",
+            "divi",
+        ),
+    )
+
+
+def _has_exact_technical_rescue(text: str) -> bool:
+    return _has_wordpress_stack(text) and _contains_any_phrase(text, EXACT_TECHNICAL_RESCUE_TERMS)
+
+
+def _has_clear_first_diagnostic_step(text: str) -> bool:
+    return _contains_any_phrase(text, CLEAR_FIRST_STEP_TERMS)
+
+
+def _is_empty_or_private_description(description: str | None) -> bool:
+    if description is None:
+        return True
+    normalized = _canonicalize(description)
+    stripped = description.strip()
+    if not stripped:
+        return True
+    if _contains_any_phrase(normalized, PRIVATE_DESCRIPTION_PHRASES):
+        return True
+    if len(stripped) < 40 and not _contains_any_phrase(normalized, DESCRIPTION_TECHNICAL_NOUNS):
+        return True
+    return False
+
+
+def _eligibility_reject_reasons(text: str) -> list[str]:
+    reasons: list[str] = []
+    if _contains_any_phrase(text, US_ONLY_PHRASES):
+        reasons.append("us_only_ineligible")
+    if _contains_any_phrase(text, AGENCY_ONLY_PHRASES):
+        reasons.append("agency_only_or_partner_network")
+    return reasons
+
+
+def _central_tool_mismatch_cap(
+    text: str,
+    *,
+    has_wordpress_stack: bool,
+    weak_client_quality: bool,
+) -> tuple[EnrichedRoutingBucket | None, list[str]]:
+    flags: list[str] = []
+    cap: EnrichedRoutingBucket | None = None
+    for tool, flag in CENTRAL_TOOL_CONFIG.items():
+        if not _has_term(text, tool):
+            continue
+        if not _is_central_tool_reference(text, tool):
+            continue
+        flags.append(flag)
+        if tool in SEVERE_WRONG_LANE_TOOLS and not has_wordpress_stack:
+            cap = _tighten_cap(cap, "ENRICHED_DISCARD" if weak_client_quality else "WEAK_REVIEW")
+        elif not has_wordpress_stack and tool in {"geodirectory", "wplms", "learnpress"}:
+            cap = _tighten_cap(cap, "WEAK_REVIEW")
+        else:
+            cap = _tighten_cap(cap, "REVIEW")
+    return cap, flags
+
+
+def _is_central_tool_reference(text: str, tool: str) -> bool:
+    if not _has_term(text, tool):
+        return False
+    central_patterns = (
+        f"{tool} expert",
+        f"{tool} specialist",
+        f"{tool} developer",
+        f"{tool} only",
+        f"{tool} development",
+    )
+    return any(_has_term(text, pattern) for pattern in central_patterns) or _has_term(text, tool)
+
+
+def _nontechnical_ecommerce_cap(
+    text: str,
+    *,
+    exact_core_fit: bool,
+) -> tuple[EnrichedRoutingBucket | None, list[str]]:
+    if not _contains_any_phrase(text, NONTECHNICAL_ECOMMERCE_PHRASES):
+        return None, []
+    if exact_core_fit:
+        return None, []
+    return "ENRICHED_DISCARD", ["nontechnical_ecommerce_merchandising"]
+
+
+def _generic_design_cap(
+    text: str,
+    *,
+    connects_required: int | None,
+    exact_core_fit: bool,
+    weak_client_quality: bool,
+) -> tuple[EnrichedRoutingBucket | None, list[str]]:
+    flags: list[str] = []
+    cap: EnrichedRoutingBucket | None = None
+    if _contains_any_phrase(text, WEBFLOW_FIGMA_PHRASES) and not exact_core_fit:
+        flags.append("webflow_figma_wrong_lane")
+        cap = "ENRICHED_DISCARD" if weak_client_quality else "WEAK_REVIEW"
+    if _contains_any_phrase(text, GENERIC_DESIGN_SITE_BUILD_PHRASES) and not exact_core_fit:
+        flags.append("generic_design_site_build")
+        cap = _tighten_cap(cap, "WEAK_REVIEW" if (connects_required or 0) >= 20 else "REVIEW")
+    if _contains_any_phrase(text, ("portfolio", "campaign", "branding", "author", "wellness", "coach")) and not exact_core_fit:
+        flags.append("portfolio_specific_design_campaign")
+        cap = _tighten_cap(cap, "WEAK_REVIEW" if (connects_required or 0) >= 20 else "REVIEW")
+    return cap, flags
+
+
+def _has_scope_explosion(text: str) -> bool:
+    risk_count = sum(1 for phrase in SCOPE_EXPLOSION_PHRASES if _has_term(text, phrase))
+    if risk_count >= 2:
+        return True
+    if _contains_any_phrase(text, ("scrape", "extract")) and _contains_any_phrase(text, ("loopnet", "costar")):
+        return True
+    return risk_count >= 1 and _contains_any_phrase(
+        text,
+        ("migration", "checkout", "payment", "dashboard", "portal", "sync"),
+    )
+
+
+def _has_exceptional_client_signals(
+    *,
+    client_total_spent: float | None,
+    client_avg_hourly_paid: float | None,
+    fixed_budget: float | None,
+) -> bool:
+    if client_total_spent is None or client_total_spent < 5000:
+        return False
+    if client_avg_hourly_paid is not None and client_avg_hourly_paid >= 25:
+        return True
+    return fixed_budget is not None and fixed_budget >= 1000
+
+
+def _has_no_client_history(
+    *,
+    client_total_spent: float | None,
+    client_hires_total: int | None,
+    client_hire_rate: float | None,
+) -> bool:
+    spent_missing_or_zero = client_total_spent is None or client_total_spent == 0
+    hires_missing_or_zero = client_hires_total is None or client_hires_total == 0
+    hire_rate_missing_or_zero = client_hire_rate is None or client_hire_rate == 0
+    return spent_missing_or_zero and hires_missing_or_zero and hire_rate_missing_or_zero
+
+
+def _qualifies_speculative_small_bet(
+    *,
+    payment_verified: int | None,
+    phone_verified: int | None,
+    client_total_spent: float | None,
+    client_hires_total: int | None,
+    connects_required: int | None,
+    exact_technical_rescue: bool,
+    clear_first_diagnostic_step: bool,
+    text: str,
+    scope_risk: bool,
+    empty_or_private_description: bool,
+) -> bool:
+    thin_client = (client_total_spent is None or client_total_spent == 0) and (
+        client_hires_total is None or client_hires_total <= 1
+    )
+    return (
+        payment_verified == 1
+        and phone_verified == 1
+        and thin_client
+        and connects_required is not None
+        and connects_required <= 12
+        and exact_technical_rescue
+        and clear_first_diagnostic_step
+        and not scope_risk
+        and not empty_or_private_description
+        and not _contains_any_phrase(text, GENERIC_DESIGN_SITE_BUILD_PHRASES)
+        and not _contains_any_phrase(text, NONTECHNICAL_ECOMMERCE_PHRASES)
+        and not _contains_any_phrase(text, US_ONLY_PHRASES + AGENCY_ONLY_PHRASES)
+    )
 
 
 def _is_weak_client_quality(
@@ -421,6 +979,10 @@ def _has_multi_hire_exception(text: str) -> bool:
     return any(_has_term(text, phrase) for phrase in MULTI_HIRE_PHRASES)
 
 
+def _has_major_warning(negative_flags: list[str]) -> bool:
+    return any(flag in MAJOR_WARNING_FLAGS or flag.startswith("central_tool_mismatch_") for flag in negative_flags)
+
+
 def _normalize_country(value: str | None) -> str | None:
     if value is None:
         return None
@@ -439,6 +1001,10 @@ def _canonicalize(value: str) -> str:
 
 def _has_term(text: str, term: str) -> bool:
     return f" {term} " in text
+
+
+def _contains_any_phrase(text: str, phrases: tuple[str, ...]) -> bool:
+    return any(_has_term(text, phrase) for phrase in phrases)
 
 
 def _first_text(*values: str | None) -> str | None:

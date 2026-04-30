@@ -20,6 +20,12 @@ official discovery
 
 This MVP is now operational enough for daily use.
 
+The current scoring behavior is also harsher than the first enriched version:
+
+- `STRONG_PROSPECT` still means review first, not automatic apply
+- enriched survivor gates now cap or reject more high-connect, wrong-lane, vague-scope, weak-avg-hourly, and central-tool-mismatch jobs after manual enrichment
+- the official-stage filter remains the broader recall-oriented layer before manual enrichment
+
 ## What to do now
 
 Use the current workflow every day:
@@ -67,6 +73,7 @@ Later technical work should focus on:
 
 - scorer calibration from real false positives / false negatives
 - operational logging around why jobs were skipped, saved, or applied
+- parsing recent comparable expert client history when real usage proves it is worth the added complexity
 - improving data quality only after repeated real usage shows where the current loop breaks
 
 Avoid jumping early to:

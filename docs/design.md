@@ -229,6 +229,18 @@ This enriched-stage filter should answer:
 Given parsed manual client/job signals, how promising is this prospect for review?
 ```
 
+`STRONG_PROSPECT` in this stage still means:
+
+```text
+review first
+```
+
+It does not mean:
+
+```text
+auto-apply
+```
+
 Rules:
 
 - keep `manual_job_enrichments.raw_manual_text` as preserved source input
@@ -236,6 +248,7 @@ Rules:
 - keep the official first-pass filter unchanged as the persistence gate
 - let enriched-stage client quality dominate over keyword stacking
 - use parsed manual fields first and official normalized fallbacks second
+- apply stricter survivor gates after scoring so high-spend clients and generic lane keywords cannot over-promote weak-fit work
 - do not add internal AI appraisal in this slice
 
 This enriched-stage score is for review prioritization, not for automatic application decisions.
