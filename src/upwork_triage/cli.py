@@ -272,6 +272,15 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "input_path",
         help="Path to the edited enrichment CSV worksheet.",
     )
+    dump_prospects_parser = subparsers.add_parser(
+        "dump-prospects",
+        help="Render enriched prospect packets for manual or external-AI review.",
+    )
+    dump_prospects_parser.add_argument(
+        "--limit",
+        type=_positive_int_arg,
+        help="Maximum number of enriched prospects to render.",
+    )
     subparsers.add_parser(
         "upwork-auth-url",
         help="Print the local Upwork OAuth authorization URL.",
