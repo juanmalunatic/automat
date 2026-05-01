@@ -798,10 +798,8 @@ def test_match_hire_rate_derived_normalized() -> None:
     # Test if normalizer derives from hires/posted
     payload = {
         "client": {
-            "stats": {
-                "totalHires": 2,
-                "totalPostedJobs": 10
-            }
+            "totalHires": 2,
+            "totalPostedJobs": 10
         }
     }
     lead = {
@@ -809,7 +807,8 @@ def test_match_hire_rate_derived_normalized() -> None:
         "raw_payload_json": json.dumps(payload)
     }
     matches = extract_discard_tags_for_lead(lead)
-    # Only assert if normalizer actually produces it
-    if any(m.tag_name == "client_hire_rate_below_30" for m in matches):
-        assert len(matches) == 1
-        assert matches[0].evidence_text == "20.0"
+
+    assert len(matches) == 1
+    assert matches[0].tag_name == "client_hire_rate_below_30"
+    assert matches[0].evidence_field == "normalized.c_hist_hire_rate"
+    assert matches[0].evidence_text == "20.0"
