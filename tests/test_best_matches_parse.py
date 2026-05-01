@@ -98,3 +98,31 @@ def test_parse_does_not_bleed_fields():
     assert jobs[0]["raw_description"] == "Real description"
     payload = json.loads(jobs[0]["raw_payload_json"])
     assert "Fake skill" not in payload.get("skills", [])
+
+def test_parse_does_not_bleed_fields_void_tags():
+    html = """
+    <section class="air3-card-section" data-ev-opening_uid="123" data-ev-position="0">
+      <a href="/jobs/test_~02123/">Test Title</a>
+      <img src="x.png">
+      <br>
+      <input type="hidden" value="1">
+      <p data-test="job-description-text">Real description</p>
+    </section>
+    <div data-test="job-description-text">Outside text must not attach</div>
+    """
+    jobs = parse_best_matches_html(html)
+    assert len(jobs) == 1
+    assert jobs[0]["raw_title"] == "Test Title"
+    assert jobs[0]["raw_description"] == "Real description"
+
+def test_parse_absolute_upwork_url():
+    html = """
+    <section class="air3-card-section" data-ev-opening_uid="123" data-ev-position="0">
+      <a href="https://www.upwork.com/jobs/test_~02123/">Test Title</a>
+      <a href="https://example.com/not-a-job">Not a job</a>
+    </section>
+    """
+    jobs = parse_best_matches_html(html)
+    assert len(jobs) == 1
+    assert jobs[0]["source_url"] == "https://www.upwork.com/jobs/test_~02123/"
+    assert jobs[0]["raw_title"] == "Test Title"

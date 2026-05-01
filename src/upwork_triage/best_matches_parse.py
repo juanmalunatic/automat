@@ -19,15 +19,14 @@ class _BestMatchesParser(HTMLParser):
         self._capture_key: str | None = None
         self._capture_buffer: list[str] = []
         self._capture_depth = 0
-        
-        self._current_job_depth = 0
+        self._current_job_section_depth = 0
         self._in_skills_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
 
-        if self._current_job is not None:
-            self._current_job_depth += 1
+        if tag == "section" and self._current_job is not None:
+            self._current_job_section_depth += 1
 
         if self._in_skills_depth > 0:
             self._in_skills_depth += 1
@@ -42,16 +41,16 @@ class _BestMatchesParser(HTMLParser):
                 "is_featured": attr_dict.get("data-ev-featured") == "true",
                 "skills": [],
             }
-            self._current_job_depth = 1
+            self._current_job_section_depth = 1
             self._in_skills_depth = 0
             self.jobs.append(self._current_job)
             return
 
-        if self._current_job is None:
+        if not self._current_job:
             return
 
         # URL and Title
-        if tag == "a" and attr_dict.get("href", "").startswith("/jobs/"):
+        if tag == "a" and _is_upwork_job_href(attr_dict.get("href")):
             if "source_url" not in self._current_job:
                 self._current_job["source_url"] = attr_dict.get("href")
                 self._capture_key = "title"
@@ -94,9 +93,9 @@ class _BestMatchesParser(HTMLParser):
                 self._capture_key = None
                 self._capture_buffer = []
 
-        if self._current_job is not None:
-            self._current_job_depth -= 1
-            if self._current_job_depth <= 0:
+        if tag == "section" and self._current_job is not None:
+            self._current_job_section_depth -= 1
+            if self._current_job_section_depth <= 0:
                 self._current_job = None
                 self._capture_key = None
                 self._capture_buffer = []
@@ -105,6 +104,18 @@ class _BestMatchesParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self._capture_key:
             self._capture_buffer.append(data)
+
+
+def _is_upwork_job_href(href: str | None) -> bool:
+    if not href:
+        return False
+    if href.startswith("/jobs/"):
+        return True
+    if href.startswith("https://www.upwork.com/jobs/"):
+        return True
+    if href.startswith("http://www.upwork.com/jobs/"):
+        return True
+    return False
 
 
 def _normalize_upwork_url(url: str | None) -> str | None:
