@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from io import StringIO
 from pathlib import Path
@@ -373,3 +374,73 @@ def test_cli_review_next_lead_does_not_mutate_db(
     assert after_row[0] == before_row[0], "lead_status must not change"
     assert after_row[1] == before_row[1], "updated_at must not change"
     assert after_count == before_count, "row count must not change"
+
+
+def test_render_best_matches_payload_fields() -> None:
+    lead = _make_lead()
+    lead["source"] = "best_matches_ui"
+    lead["raw_payload_json"] = json.dumps(
+        {
+            "posted-on": "Posted 12 minutes ago",
+            "is_featured": True,
+            "job-type": "Hourly",
+            "contractor-tier": "Expert",
+            "duration": "Less than 1 month",
+            "budget": "$500",
+            "payment-verification-status": "Payment verified",
+            "formatted-amount": "$900K+",
+            "client-country": "United States",
+            "client_rating_value": "5.0",
+            "skills": ["WooCommerce", "WordPress", "PHP"],
+        }
+    )
+    output = render_raw_lead_review(lead)
+
+    assert "Best Matches fields:" in output
+    assert "Posted:         Posted 12 minutes ago" in output
+    assert "Featured:       yes" in output
+    assert "Job type:       Hourly" in output
+    assert "Tier:           Expert" in output
+    assert "Duration:       Less than 1 month" in output
+    assert "Budget:         $500" in output
+    assert "Payment:        Payment verified" in output
+    assert "Client spend:   $900K+" in output
+    assert "Client country: United States" in output
+    assert "Client rating:  5.0" in output
+    assert "Skills:         WooCommerce, WordPress, PHP" in output
+
+
+def test_render_best_matches_payload_missing_fields_shows_dash() -> None:
+    lead = _make_lead()
+    lead["source"] = "best_matches_ui"
+    lead["raw_payload_json"] = json.dumps(
+        {
+            "posted-on": "Posted 12 minutes ago",
+            # other fields missing
+        }
+    )
+    output = render_raw_lead_review(lead)
+
+    assert "Best Matches fields:" in output
+    assert "Posted:         Posted 12 minutes ago" in output
+    assert "Featured:       —" in output
+    assert "Skills:         —" in output
+
+
+def test_render_best_matches_payload_invalid_json_is_safe() -> None:
+    lead = _make_lead()
+    lead["source"] = "best_matches_ui"
+    lead["raw_payload_json"] = "invalid json {"
+    output = render_raw_lead_review(lead)
+
+    assert "Best Matches fields:" in output
+    assert "unavailable" in output
+
+
+def test_render_non_best_matches_lead_does_not_show_payload_section() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps({"posted-on": "should not show"})
+    output = render_raw_lead_review(lead)
+
+    assert "Best Matches fields:" not in output

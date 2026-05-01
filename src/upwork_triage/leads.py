@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -142,11 +143,63 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
     if len(raw_desc) > description_chars:
         raw_desc = raw_desc[:description_chars] + " […]"
     lines.append(f"Description: {raw_desc or '—'}")
+
+    if lead.get("source") == "best_matches_ui":
+        lines.append("-" * 30)
+        lines.append("Best Matches fields:")
+        payload_lines = _format_best_matches_payload_fields(lead.get("raw_payload_json"))
+        lines.extend(payload_lines)
+
     lines.append("=" * 60)
     lines.append(
         "Next step: inspect this lead manually and decide whether to code a new approved discard tag."
     )
     return "\n".join(lines)
+
+
+
+def _format_best_matches_payload_fields(raw_payload_json: str | None) -> list[str]:
+    """Helper to extract and format specific Best Matches UI payload fields."""
+    if not raw_payload_json:
+        return ["unavailable"]
+
+    try:
+        data = json.loads(raw_payload_json)
+    except json.JSONDecodeError:
+        return ["unavailable"]
+
+    if not isinstance(data, dict):
+        return ["unavailable"]
+
+    def fmt(val: Any) -> str:
+        if val is None or val == "" or val == []:
+            return "—"
+        if isinstance(val, bool):
+            return "yes" if val else "no"
+        if isinstance(val, list):
+            return ", ".join(str(v) for v in val)
+        return str(val)
+
+    field_map = {
+        "posted-on": "Posted:",
+        "is_featured": "Featured:",
+        "job-type": "Job type:",
+        "contractor-tier": "Tier:",
+        "duration": "Duration:",
+        "budget": "Budget:",
+        "payment-verification-status": "Payment:",
+        "formatted-amount": "Client spend:",
+        "client-country": "Client country:",
+        "client_rating_value": "Client rating:",
+        "skills": "Skills:",
+    }
+
+    lines: list[str] = []
+    for key, label in field_map.items():
+        val = data.get(key)
+        lines.append(f"{label:<15} {fmt(val)}")
+
+    return lines
 
 
 def fetch_raw_lead_counts(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
