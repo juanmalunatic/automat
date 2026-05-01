@@ -722,9 +722,15 @@ def test_review_next_lead_auto_rejects_and_displays_survivor(tmp_path: Path) -> 
         main(["review-next-lead"], stdout=stdout)
 
     output = stdout.getvalue()
+    
+    conn_ids = connect_db(db_path)
+    reject_id = conn_ids.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+    survivor_id = conn_ids.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:2'").fetchone()[0]
+    conn_ids.close()
+
     assert "Auto-rejected approved discard matches:" in output
-    assert "Lead 1: proposals_50_plus" in output
-    assert "Lead id:     2" in output  # Display survivor
+    assert f"- Lead {reject_id}: proposals_50_plus" in output
+    assert f"Lead id:     {survivor_id}" in output  # Display survivor
     assert "bm:2" in output
 
     # Verify DB state
@@ -741,7 +747,7 @@ def test_review_next_lead_auto_rejects_and_displays_survivor(tmp_path: Path) -> 
 
     # Verify discard tag exists
     tag_row = conn2.execute(
-        "SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = 1"
+        "SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = ?", (reject_id,)
     ).fetchone()
     assert tag_row[0] == "proposals_50_plus"
     conn2.close()
@@ -767,8 +773,13 @@ def test_review_next_lead_all_auto_rejected(tmp_path: Path) -> None:
         main(["review-next-lead"], stdout=stdout)
 
     output = stdout.getvalue()
+    
+    conn_ids = connect_db(db_path)
+    reject_id = conn_ids.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+    conn_ids.close()
+
     assert "Auto-rejected approved discard matches:" in output
-    assert "Lead 1: proposals_50_plus" in output
+    assert f"- Lead {reject_id}: proposals_50_plus" in output
     assert "No raw leads found for review" in output
 
 
@@ -797,8 +808,13 @@ def test_review_next_lead_source_filter_with_auto_reject(tmp_path: Path) -> None
         main(["review-next-lead", "--source", "best_matches_ui"], stdout=stdout)
 
     output = stdout.getvalue()
+    
+    conn_ids = connect_db(db_path)
+    reject_id = conn_ids.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+    conn_ids.close()
+
     assert "Auto-rejected approved discard matches:" in output
-    assert "Lead 1: proposals_50_plus" in output
+    assert f"- Lead {reject_id}: proposals_50_plus" in output
     assert "No raw leads found for review with status=new source=best_matches_ui" in output
     assert "g:1" not in output
 
@@ -824,8 +840,13 @@ def test_review_next_lead_status_promote_skips_auto_evaluate(tmp_path: Path) -> 
         main(["review-next-lead", "--status", "promote"], stdout=stdout)
 
     output = stdout.getvalue()
+    
+    conn_ids = connect_db(db_path)
+    lead_id = conn_ids.execute("SELECT id FROM raw_leads WHERE job_key = 'p:1'").fetchone()[0]
+    conn_ids.close()
+
     assert "Auto-rejected approved discard matches:" not in output
-    assert "Lead id:     1" in output
+    assert f"Lead id:     {lead_id}" in output
     assert "Proposals:   50+" in output
 
     # Verify no discard tag was created
@@ -835,3 +856,36 @@ def test_review_next_lead_status_promote_skips_auto_evaluate(tmp_path: Path) -> 
     ).fetchone()[0]
     assert tag_count == 0
     conn2.close()
+
+
+def test_review_next_lead_auto_reject_limit(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Insert 101 leads that match reject
+    with conn:
+        for i in range(101):
+            upsert_raw_lead(
+                conn,
+                job_key=f"bm:{i}",
+                source="best_matches_ui",
+                lead_status="new",
+                raw_proposals_text="50+",
+                captured_at=_NOW1,
+                created_at=_NOW1,
+                updated_at=_NOW1,
+            )
+    conn.close()
+
+    stderr = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        exit_code = main(["review-next-lead"], stdout=StringIO(), stderr=stderr)
+
+    assert exit_code == 1
+    assert (
+        "CLI error: Auto-reject limit exceeded while searching for next reviewable lead."
+        in stderr.getvalue()
+    )

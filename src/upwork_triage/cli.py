@@ -1137,11 +1137,9 @@ def _run_review_next_lead(
                     auto_rejected_summaries.append(f"- Lead {result.lead_id}: {tag_names}")
                     auto_reject_count += 1
                     if auto_reject_count >= max_auto_rejects:
-                        print(
-                            "CLI error: Auto-reject limit exceeded while searching for next reviewable lead.",
-                            file=sys.stderr,
+                        raise ValueError(
+                            "Auto-reject limit exceeded while searching for next reviewable lead."
                         )
-                        return 1
                     continue
 
             # Found a survivor or non-new status
