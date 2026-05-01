@@ -2603,3 +2603,43 @@ def test_cli_lead_counts_and_list_leads(workspace_tmp_dir: Path, monkeypatch: py
     exit_code = main(["list-leads", "--source", "some_missing_source"], stdout=stdout, stderr=stderr)
     assert exit_code == 0
     assert "Raw lead list is empty." in stdout.getvalue()
+
+
+def test_cli_import_best_matches_html(
+    workspace_tmp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = workspace_tmp_dir / "live" / "automat.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+
+    fixture_path = Path(__file__).parent / "fixtures" / "best_matches_feed_outerhtml_sample.html"
+
+    stdout = StringIO()
+    stderr = StringIO()
+
+    exit_code = main(
+        [
+            "import-best-matches-html",
+            str(fixture_path),
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    out_text = stdout.getvalue()
+    assert "Best Matches HTML import complete." in out_text
+    assert "Source: best_matches_ui" in out_text
+    assert "Tiles parsed: " in out_text
+    assert "Leads upserted: " in out_text
+
+    stdout2 = StringIO()
+    exit_code = main(["lead-counts"], stdout=stdout2, stderr=stderr)
+    assert exit_code == 0
+    assert "- best_matches_ui: " in stdout2.getvalue()
+
+    stdout3 = StringIO()
+    exit_code = main(["list-leads", "--source", "best_matches_ui"], stdout=stdout3, stderr=stderr)
+    assert exit_code == 0
+    assert "best_matches_ui" in stdout3.getvalue()
+    assert "Senior WooCommerce Checkout" in stdout3.getvalue()

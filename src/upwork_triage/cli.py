@@ -155,7 +155,6 @@ def main(
                 input_path=args.input_path,
                 source_query=args.source_query,
                 limit=args.limit,
-                source=args.source,
                 stdout=out,
             )
         if args.command == "probe-upwork-fields":
@@ -433,11 +432,6 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "--limit",
         type=_positive_int_arg,
         help="Maximum number of jobs to import.",
-    )
-    import_best_matches_parser.add_argument(
-        "--source",
-        default="best_matches_ui",
-        help="Source name for the imported leads (default: best_matches_ui).",
     )
     probe_parser = subparsers.add_parser(
         "probe-upwork-fields",
@@ -861,7 +855,6 @@ def _run_import_best_matches_html(
     input_path: str,
     source_query: str | None,
     limit: int | None,
-    source: str,
     stdout: TextIO,
 ) -> int:
     config = load_config()
@@ -892,7 +885,7 @@ def _run_import_best_matches_html(
 
     print("Best Matches HTML import complete.", file=stdout)
     print(f"Input: {input_path}", file=stdout)
-    print(f"Source: {source}", file=stdout)
+    print("Source: best_matches_ui", file=stdout)
     print(f"Tiles parsed: {summary['parsed']}", file=stdout)
     print(f"Leads upserted: {summary['upserted']}", file=stdout)
     print(f"Skipped parse failures: {summary['skipped_parse_failures']}", file=stdout)

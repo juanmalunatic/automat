@@ -20,14 +20,17 @@ class _BestMatchesParser(HTMLParser):
         self._capture_buffer: list[str] = []
         self._capture_depth = 0
         
-        self._in_popper = 0
-        self._in_skills = False
+        self._current_job_depth = 0
+        self._in_skills_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
 
-        if attr_dict.get("data-test") == "popper":
-            self._in_popper += 1
+        if self._current_job is not None:
+            self._current_job_depth += 1
+
+        if self._in_skills_depth > 0:
+            self._in_skills_depth += 1
 
         if self._capture_key:
             self._capture_depth += 1
@@ -39,10 +42,12 @@ class _BestMatchesParser(HTMLParser):
                 "is_featured": attr_dict.get("data-ev-featured") == "true",
                 "skills": [],
             }
+            self._current_job_depth = 1
+            self._in_skills_depth = 0
             self.jobs.append(self._current_job)
             return
 
-        if not self._current_job:
+        if self._current_job is None:
             return
 
         # URL and Title
@@ -60,15 +65,23 @@ class _BestMatchesParser(HTMLParser):
             self._capture_buffer = []
             self._capture_depth = 1
 
+        if attr_dict.get("data-ev-sublocation") == "!rating":
+            self._capture_key = "client_rating"
+            self._capture_buffer = []
+            self._capture_depth = 1
+
         if test_val == "token-container":
-            self._in_skills = True
+            self._in_skills_depth = 1
             
-        if self._in_skills and test_val == "attr-item":
+        if self._in_skills_depth > 0 and test_val == "attr-item":
             self._capture_key = "skill"
             self._capture_buffer = []
             self._capture_depth = 1
 
     def handle_endtag(self, tag: str) -> None:
+        if self._in_skills_depth > 0:
+            self._in_skills_depth -= 1
+
         if self._capture_key and self._current_job is not None:
             self._capture_depth -= 1
             if self._capture_depth <= 0:
@@ -81,21 +94,27 @@ class _BestMatchesParser(HTMLParser):
                 self._capture_key = None
                 self._capture_buffer = []
 
-        if tag == "div" and self._in_popper > 0:
-            # We don't accurately track popper ends, but this is a rough approximation.
-            # Actually HTMLParser doesn't give us the attributes on endtag to match.
-            # Let's just track by depth if needed, but we aren't capturing text inside popper anyway 
-            # because we only capture specific data-test elements.
-            pass
+        if self._current_job is not None:
+            self._current_job_depth -= 1
+            if self._current_job_depth <= 0:
+                self._current_job = None
+                self._capture_key = None
+                self._capture_buffer = []
+                self._in_skills_depth = 0
 
     def handle_data(self, data: str) -> None:
-        if self._in_popper > 0:
-            # We don't care about popper text, but our capture might overlap? 
-            # It shouldn't, because poppers don't contain our data-test targets usually.
-            pass
-            
         if self._capture_key:
             self._capture_buffer.append(data)
+
+
+def _normalize_upwork_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("/"):
+        return f"https://www.upwork.com{url}"
+    return f"https://www.upwork.com/{url}"
 
 
 def parse_best_matches_html(html: str) -> list[dict[str, Any]]:
@@ -117,9 +136,7 @@ def parse_best_matches_html(html: str) -> list[dict[str, Any]]:
                 
         job["upwork_job_id"] = job_id
         
-        full_url = None
-        if url:
-            full_url = f"https://www.upwork.com{url}"
+        full_url = _normalize_upwork_url(url)
         job["source_url"] = full_url
         
         job["job_key"] = build_job_key(raw, upwork_job_id=job_id, source_url=full_url)
@@ -157,6 +174,11 @@ def parse_best_matches_html(html: str) -> list[dict[str, Any]]:
         job["raw_pay_text"] = " - ".join(pay_parts) if pay_parts else None
         
         job["raw_proposals_text"] = raw.get("proposals")
+        
+        if "client_rating" in raw:
+            m = re.search(r"Rating is ([0-9.]+) out of 5", raw["client_rating"])
+            if m:
+                raw["client_rating_value"] = m.group(1)
         
         # Store original raw extraction in JSON
         job["raw_payload_json"] = json.dumps(raw)
