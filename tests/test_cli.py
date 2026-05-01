@@ -21,6 +21,8 @@ from upwork_triage.ai_eval import AiEvaluation
 from upwork_triage.cli import main
 from upwork_triage.config import load_config
 from upwork_triage.db import connect_db, initialize_db
+from upwork_triage.leads import upsert_raw_lead
+from upwork_triage.lead_discard_tags import APPROVED_DISCARD_TAGS
 from upwork_triage.upwork_auth import TokenResponse
 
 
@@ -2643,3 +2645,132 @@ def test_cli_import_best_matches_html(
     assert exit_code == 0
     assert "best_matches_ui" in stdout3.getvalue()
     assert "Senior WooCommerce Checkout" in stdout3.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Lead Evaluation CLI Tests
+# ---------------------------------------------------------------------------
+
+def test_cli_evaluate_lead_match(workspace_tmp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path = workspace_tmp_dir / "automat.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    with conn:
+        lead_id = upsert_raw_lead(
+            conn,
+            job_key="upwork:match",
+            source="best_matches_ui",
+            captured_at="2026-05-01T00:00:00Z",
+            created_at="2026-05-01T00:00:00Z",
+            updated_at="2026-05-01T00:00:00Z",
+            raw_proposals_text="50+",
+            lead_status="new",
+        )
+    conn.close()
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = main(["evaluate-lead", str(lead_id)], stdout=stdout, stderr=stderr)
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "Lead discard tag evaluation complete." in output
+    assert f"Lead id:     {lead_id}" in output
+    assert "Matched discard tags: proposals_50_plus" in output
+    assert "Previous status: new" in output
+    assert "New status:      rejected" in output
+    assert "raw_proposals_text = 50+" in output
+
+    # Check DB
+    conn = connect_db(db_path)
+    row = conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row[0] == "rejected"
+    tag_row = conn.execute("SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchone()
+    assert tag_row[0] == "proposals_50_plus"
+    conn.close()
+
+
+def test_cli_evaluate_lead_no_match(workspace_tmp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path = workspace_tmp_dir / "automat.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    with conn:
+        lead_id = upsert_raw_lead(
+            conn,
+            job_key="upwork:nomatch",
+            source="best_matches_ui",
+            captured_at="2026-05-01T00:00:00Z",
+            created_at="2026-05-01T00:00:00Z",
+            updated_at="2026-05-01T00:00:00Z",
+            raw_proposals_text="20 to 50",
+            lead_status="new",
+        )
+    conn.close()
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = main(["evaluate-lead", str(lead_id)], stdout=stdout, stderr=stderr)
+
+    output = stdout.getvalue()
+    assert exit_code == 0
+    assert "Lead discard tag evaluation complete." in output
+    assert "Matched discard tags: none" in output
+    assert "Status unchanged: new" in output
+
+    # Check DB
+    conn = connect_db(db_path)
+    row = conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row[0] == "new"
+    tag_count = conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchone()[0]
+    assert tag_count == 0
+    conn.close()
+
+
+def test_cli_evaluate_lead_missing_errors(workspace_tmp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path = workspace_tmp_dir / "automat.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+
+    stdout = StringIO()
+    stderr = StringIO()
+    exit_code = main(["evaluate-lead", "999999"], stdout=stdout, stderr=stderr)
+
+    assert exit_code == 1
+    assert "CLI error: Raw lead not found: 999999" in stderr.getvalue()
+
+
+def test_cli_evaluate_output_hygiene(workspace_tmp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path = workspace_tmp_dir / "automat.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    with conn:
+        lead_id = upsert_raw_lead(
+            conn,
+            job_key="upwork:hygiene",
+            source="best_matches_ui",
+            captured_at="2026-05-01T00:00:00Z",
+            created_at="2026-05-01T00:00:00Z",
+            updated_at="2026-05-01T00:00:00Z",
+            raw_proposals_text="50+",
+        )
+    conn.close()
+
+    stdout = StringIO()
+    exit_code = main(["evaluate-lead", str(lead_id)], stdout=stdout, stderr=StringIO())
+    output = stdout.getvalue()
+
+    unapproved = [
+        "client_quality", "payment_unverified", "low_spend", "not_wordpress",
+        "HYDRATE_CANDIDATE", "LOW_PRIORITY_REVIEW", "score", "verdict"
+    ]
+    for term in unapproved:
+        assert term not in output
+
+
+def test_approved_discard_tags_registry_exact_in_cli() -> None:
+    assert APPROVED_DISCARD_TAGS == ("proposals_50_plus",)
