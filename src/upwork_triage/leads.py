@@ -109,8 +109,8 @@ def fetch_next_raw_lead(
     query += """
         ORDER BY
             CASE WHEN source = 'best_matches_ui' THEN 0 ELSE 1 END ASC,
-            CASE WHEN source = 'best_matches_ui' THEN COALESCE(source_rank, 999999) END ASC,
-            CASE WHEN source != 'best_matches_ui' THEN captured_at END DESC,
+            CASE WHEN source = 'best_matches_ui' THEN COALESCE(source_rank, 999999) ELSE 999999 END ASC,
+            captured_at DESC,
             id DESC
         LIMIT 1
     """

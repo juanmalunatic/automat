@@ -108,6 +108,20 @@ def test_best_matches_selected_by_rank_asc(mem_conn: sqlite3.Connection) -> None
     assert lead["job_key"] == "bm:1"
 
 
+def test_best_matches_rank_tie_broken_by_newest_captured_at(
+    mem_conn: sqlite3.Connection,
+) -> None:
+    """Same source_rank: newest captured_at wins."""
+    _insert(mem_conn, job_key="bm:old", source="best_matches_ui", source_rank=1, captured_at=_NOW)
+    _insert(mem_conn, job_key="bm:new", source="best_matches_ui", source_rank=1, captured_at=_NOW2)
+    mem_conn.commit()
+
+    lead = fetch_next_raw_lead(mem_conn)
+    assert lead is not None
+    assert lead["job_key"] == "bm:new"
+
+
+
 def test_non_best_matches_selected_newest_first(mem_conn: sqlite3.Connection) -> None:
     """When no best_matches leads exist, newest captured_at wins."""
     _insert(mem_conn, job_key="gql:old", source="graphql_search", captured_at=_NOW)
