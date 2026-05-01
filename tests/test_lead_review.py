@@ -657,3 +657,37 @@ def test_promote_lead_cli_invalid_status(tmp_path: Path) -> None:
 
     assert exit_code == 1
     assert f"CLI error: Lead {lead_id} is not promotable from status rejected" in stderr.getvalue()
+
+
+def test_promote_raw_lead_already_promoted_cannot_be_promoted(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    _insert(conn, job_key="bm:1", lead_status="promote")
+    lead_id = conn.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+
+    with pytest.raises(ValueError, match=f"Lead {lead_id} is not promotable from status promote"):
+        promote_raw_lead(conn, lead_id)
+
+    # Verify status remains promote
+    row = conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row[0] == "promote"
+    conn.close()
+
+
+def test_promote_lead_cli_already_promoted_errors(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    _insert(conn, job_key="bm:1", lead_status="promote")
+    lead_id = conn.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+    conn.close()
+
+    stderr = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        exit_code = main(["promote-lead", str(lead_id)], stdout=StringIO(), stderr=stderr)
+
+    assert exit_code == 1
+    assert f"CLI error: Lead {lead_id} is not promotable from status promote" in stderr.getvalue()
