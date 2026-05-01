@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any
 
+from upwork_triage.config import AppConfig
 from upwork_triage.leads import upsert_raw_lead
 from upwork_triage.normalize import build_job_key
+from upwork_triage.upwork_client import HttpJsonTransport, fetch_exact_marketplace_jobs
 
 
 class _BestMatchesParser(HTMLParser):
@@ -205,18 +207,166 @@ def parse_best_matches_html(html: str) -> list[dict[str, Any]]:
     return parsed_jobs
 
 
+
+def _numeric_best_match_job_id(job: dict[str, Any]) -> str | None:
+    raw_id = job.get("upwork_job_id")
+    if isinstance(raw_id, bool):
+        return None
+    if isinstance(raw_id, int):
+        return str(raw_id)
+    if isinstance(raw_id, str):
+        trimmed = raw_id.strip()
+        if trimmed.isdigit():
+            return trimmed
+    return None
+
+
+def _raw_payload_dict(job: dict[str, Any]) -> dict[str, Any]:
+    raw_payload_json = job.get("raw_payload_json")
+    if not raw_payload_json:
+        return {}
+    try:
+        payload = json.loads(str(raw_payload_json))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _best_match_debug_label(job: dict[str, Any]) -> str:
+    for key in ("upwork_job_id", "job_key", "raw_title", "source_url"):
+        value = job.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return "(unknown Best Matches tile)"
+
+
+def _store_exact_hydration_payload_status(
+    job: dict[str, Any],
+    *,
+    status: str,
+    exact_payload: dict[str, object] | None = None,
+    error_message: str | None = None,
+) -> None:
+    payload = _raw_payload_dict(job)
+    payload["_exact_hydration_status"] = status
+    job["_exact_hydration_status"] = status
+
+    if exact_payload is not None:
+        payload["_exact_marketplace_raw"] = dict(exact_payload)
+    if error_message:
+        payload["_exact_hydration_error"] = error_message
+
+    job["raw_payload_json"] = json.dumps(payload, ensure_ascii=False)
+
+
+def _attach_exact_hydration_metadata_to_best_matches(
+    config: AppConfig,
+    jobs: list[dict[str, Any]],
+    *,
+    transport: HttpJsonTransport | None = None,
+) -> dict[str, Any]:
+    numeric_job_ids: list[str] = []
+    numeric_job_indexes: list[int] = []
+    skipped_count = 0
+    skipped_details: list[str] = []
+
+    for index, job in enumerate(jobs):
+        if job.get("is_hidden_feedback"):
+            continue
+        if not job.get("job_key"):
+            continue
+
+        numeric_job_id = _numeric_best_match_job_id(job)
+        if numeric_job_id is None:
+            _store_exact_hydration_payload_status(job, status="skipped")
+            skipped_count += 1
+            skipped_details.append(f"{_best_match_debug_label(job)}: missing numeric Upwork job id")
+            continue
+
+        numeric_job_ids.append(numeric_job_id)
+        numeric_job_indexes.append(index)
+
+    if not numeric_job_ids:
+        return {
+            "success": 0,
+            "failed": 0,
+            "skipped": skipped_count,
+            "failures": [],
+            "skipped_details": skipped_details,
+        }
+
+    hydration_results = fetch_exact_marketplace_jobs(
+        config,
+        numeric_job_ids,
+        transport=transport,
+    )
+
+    if len(hydration_results) != len(numeric_job_indexes):
+        raise RuntimeError("Best Matches exact hydration returned an unexpected result count")
+
+    success_count = 0
+    failed_count = 0
+    failure_details: list[str] = []
+
+    for job_index, hydration_result in zip(
+        numeric_job_indexes,
+        hydration_results,
+        strict=True,
+    ):
+        job = jobs[job_index]
+
+        if hydration_result.status == "success":
+            success_count += 1
+            _store_exact_hydration_payload_status(
+                job,
+                status="success",
+                exact_payload=hydration_result.payload,
+            )
+            continue
+
+        failed_count += 1
+        error_text = hydration_result.error_message or "unknown hydration failure"
+        failure_details.append(f"{hydration_result.job_id}: {error_text}")
+        _store_exact_hydration_payload_status(
+            job,
+            status="failed",
+            error_message=hydration_result.error_message,
+        )
+
+    return {
+        "success": success_count,
+        "failed": failed_count,
+        "skipped": skipped_count,
+        "failures": failure_details,
+        "skipped_details": skipped_details,
+    }
+
+
 def import_best_matches_html(
     conn: sqlite3.Connection,
     html: str,
     *,
+    config: AppConfig,
     source_query: str | None = None,
     limit: int | None = None,
-) -> dict[str, int]:
+    transport: HttpJsonTransport | None = None,
+) -> dict[str, Any]:
     now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     
     jobs = parse_best_matches_html(html)
     if limit is not None:
         jobs = jobs[:limit]
+
+    exact_hydration_counts = _attach_exact_hydration_metadata_to_best_matches(
+        config,
+        jobs,
+        transport=transport,
+    )
 
     upserted_count = 0
     skipped_count = 0
@@ -229,6 +379,9 @@ def import_best_matches_html(
 
         if not job["job_key"]:
             skipped_count += 1
+            continue
+
+        if job.get("_exact_hydration_status") != "success":
             continue
 
         upsert_raw_lead(
@@ -259,4 +412,9 @@ def import_best_matches_html(
         "upserted": upserted_count,
         "skipped_parse_failures": skipped_count,
         "skipped_hidden_feedback": skipped_hidden_count,
+        "exact_hydration_success": exact_hydration_counts["success"],
+        "exact_hydration_failed": exact_hydration_counts["failed"],
+        "exact_hydration_skipped": exact_hydration_counts["skipped"],
+        "exact_hydration_failures": exact_hydration_counts["failures"],
+        "exact_hydration_skipped_details": exact_hydration_counts["skipped_details"],
     }

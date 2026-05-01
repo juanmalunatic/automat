@@ -2616,6 +2616,27 @@ def test_cli_import_best_matches_html(
 
     fixture_path = Path(__file__).parent / "fixtures" / "best_matches_feed_outerhtml_sample.html"
 
+    from upwork_triage.upwork_client import ExactMarketplaceJobHydrationResult
+
+    def fake_fetch_exact_marketplace_jobs(config, job_ids, *, transport=None):
+        return [
+            ExactMarketplaceJobHydrationResult(
+                job_id=str(job_id),
+                status="success",
+                payload={
+                    "activityStat": {"jobActivity": {"totalHired": 0}},
+                    "contractTerms": {"personsToHire": 1},
+                },
+                error_message=None,
+            )
+            for job_id in job_ids
+        ]
+
+    monkeypatch.setattr(
+        "upwork_triage.best_matches_parse.fetch_exact_marketplace_jobs",
+        fake_fetch_exact_marketplace_jobs,
+    )
+
     stdout = StringIO()
     stderr = StringIO()
 

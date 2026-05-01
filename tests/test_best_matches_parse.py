@@ -1,6 +1,10 @@
-import json
+﻿import json
+import sqlite3
 from pathlib import Path
-from upwork_triage.best_matches_parse import parse_best_matches_html
+
+from upwork_triage.best_matches_parse import import_best_matches_html, parse_best_matches_html
+from upwork_triage.db import initialize_db
+from upwork_triage.upwork_client import ExactMarketplaceJobHydrationResult
 
 
 def test_parse_best_matches_fixture():
@@ -126,3 +130,166 @@ def test_parse_absolute_upwork_url():
     assert len(jobs) == 1
     assert jobs[0]["source_url"] == "https://www.upwork.com/jobs/test_~02123/"
     assert jobs[0]["raw_title"] == "Test Title"
+
+
+def test_import_best_matches_html_requires_exact_hydration_before_upsert(monkeypatch):
+    calls = []
+
+    def fake_fetch_exact_marketplace_jobs(config, job_ids, *, transport=None):
+        calls.append(tuple(job_ids))
+        return [
+            ExactMarketplaceJobHydrationResult(
+                job_id="123",
+                status="success",
+                payload={
+                    "activityStat": {
+                        "jobActivity": {
+                            "totalHired": 1,
+                        }
+                    },
+                    "contractTerms": {
+                        "personsToHire": 1,
+                    },
+                },
+                error_message=None,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "upwork_triage.best_matches_parse.fetch_exact_marketplace_jobs",
+        fake_fetch_exact_marketplace_jobs,
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+
+    html = """
+    <section class="air3-card-section" data-ev-opening_uid="123" data-ev-position="0">
+        <a href="/jobs/test_~02123/">Test Title</a>
+    </section>
+    """
+
+    try:
+        summary = import_best_matches_html(
+            conn,
+            html,
+            config=object(),
+            source_query="test-bm-hydrate",
+        )
+
+        assert calls == [("123",)]
+        assert summary["parsed"] == 1
+        assert summary["upserted"] == 1
+        assert summary["exact_hydration_success"] == 1
+        assert summary["exact_hydration_failed"] == 0
+        assert summary["exact_hydration_skipped"] == 0
+        assert summary["exact_hydration_failures"] == []
+        assert summary["exact_hydration_skipped_details"] == []
+
+        row = conn.execute(
+            "SELECT raw_payload_json FROM raw_leads WHERE job_key = ?",
+            ("upwork:123",),
+        ).fetchone()
+        assert row is not None
+
+        payload = json.loads(row["raw_payload_json"])
+        assert payload["_exact_hydration_status"] == "success"
+        assert payload["_exact_marketplace_raw"]["activityStat"]["jobActivity"]["totalHired"] == 1
+        assert payload["_exact_marketplace_raw"]["contractTerms"]["personsToHire"] == 1
+    finally:
+        conn.close()
+
+
+def test_import_best_matches_html_skips_hydration_failures_before_upsert(monkeypatch):
+    def fake_fetch_exact_marketplace_jobs(config, job_ids, *, transport=None):
+        return [
+            ExactMarketplaceJobHydrationResult(
+                job_id="123",
+                status="failed",
+                payload=None,
+                error_message="not found",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "upwork_triage.best_matches_parse.fetch_exact_marketplace_jobs",
+        fake_fetch_exact_marketplace_jobs,
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+
+    html = """
+    <section class="air3-card-section" data-ev-opening_uid="123" data-ev-position="0">
+        <a href="/jobs/test_~02123/">Test Title</a>
+    </section>
+    """
+
+    try:
+        summary = import_best_matches_html(
+            conn,
+            html,
+            config=object(),
+            source_query="test-bm-hydrate-failed",
+        )
+
+        assert summary["parsed"] == 1
+        assert summary["upserted"] == 0
+        assert summary["exact_hydration_success"] == 0
+        assert summary["exact_hydration_failed"] == 1
+        assert summary["exact_hydration_skipped"] == 0
+        assert summary["exact_hydration_failures"] == ["123: not found"]
+        assert summary["exact_hydration_skipped_details"] == []
+
+        count = conn.execute("SELECT COUNT(*) FROM raw_leads").fetchone()[0]
+        assert count == 0
+    finally:
+        conn.close()
+
+
+def test_import_best_matches_html_skips_missing_numeric_id_before_upsert(monkeypatch):
+    def fake_fetch_exact_marketplace_jobs(config, job_ids, *, transport=None):
+        raise AssertionError("should not hydrate without a numeric job id")
+
+    monkeypatch.setattr(
+        "upwork_triage.best_matches_parse.fetch_exact_marketplace_jobs",
+        fake_fetch_exact_marketplace_jobs,
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+
+    html = """
+    <section class="air3-card-section" data-ev-opening_uid="" data-ev-position="0">
+        <a href="/jobs/test_~02abc123/">Test Title</a>
+    </section>
+    """
+
+    try:
+        summary = import_best_matches_html(
+            conn,
+            html,
+            config=object(),
+            source_query="test-bm-hydrate-missing-key",
+        )
+
+        assert summary["parsed"] == 1
+        assert summary["upserted"] == 0
+        assert summary["exact_hydration_success"] == 0
+        assert summary["exact_hydration_failed"] == 0
+        assert summary["exact_hydration_skipped"] == 1
+        assert summary["exact_hydration_failures"] == []
+        assert summary["exact_hydration_skipped_details"] == [
+            "02abc123: missing numeric Upwork job id"
+        ]
+
+        count = conn.execute("SELECT COUNT(*) FROM raw_leads").fetchone()[0]
+        assert count == 0
+    finally:
+        conn.close()
+
+
+

@@ -951,6 +951,7 @@ def _run_import_best_matches_html(
         summary = import_best_matches_html(
             conn,
             html,
+            config=config,
             source_query=effective_query,
             limit=limit,
         )
@@ -965,6 +966,21 @@ def _run_import_best_matches_html(
     print(f"Skipped parse failures: {summary['skipped_parse_failures']}", file=stdout)
     print(f"Skipped hidden feedback tiles: {summary['skipped_hidden_feedback']}", file=stdout)
 
+    print(
+        "Exact hydration: "
+        f"success={summary['exact_hydration_success']} "
+        f"failed={summary['exact_hydration_failed']} "
+        f"skipped={summary['exact_hydration_skipped']}",
+        file=stdout,
+    )
+    if summary.get("exact_hydration_failures"):
+        print("Hydration failures:", file=stdout)
+        for item in summary["exact_hydration_failures"]:
+            print(f"  {item}", file=stdout)
+    if summary.get("exact_hydration_skipped_details"):
+        print("Hydration skipped:", file=stdout)
+        for item in summary["exact_hydration_skipped_details"]:
+            print(f"  {item}", file=stdout)
     return 0
 
 
