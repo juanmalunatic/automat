@@ -146,14 +146,19 @@ You can now promote leads that pass face-value review:
 ```powershell
 py -m upwork_triage review-next-lead
 
-# If the lead passes face-value review, run:
+# If the lead passes face-value review, promote it instantly:
+py -m upwork_triage promote-next-lead
+
+# Or promote by specific ID:
 py -m upwork_triage promote-lead <lead_id>
 ```
 
+- `promote-next-lead` repeats the same auto-discard pre-gate as `review-next-lead` and promotes the first surviving survivor.
 - only 'new' leads can be promoted
 - marked as 'promote' and will no longer appear in default 'review-next-lead'
-- no discard tags are created
+- no discard tags are created for the promoted lead
 - no AI, scoring, or verdicts are used
+- supports `--source` filter to match the review context
 
 
 ## Next technical work later

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 from functools import partial
 from pathlib import Path
 import sqlite3
 import sys
-from typing import TextIO
+from typing import Any, TextIO
 
 from upwork_triage.actions import ActionError, record_user_action
 from upwork_triage.config import ConfigError, load_config
@@ -226,6 +226,11 @@ def main(
         if args.command == "promote-lead":
             return _run_promote_lead(
                 lead_id=args.lead_id,
+                stdout=out,
+            )
+        if args.command == "promote-next-lead":
+            return _run_promote_next_lead(
+                source=args.source,
                 stdout=out,
             )
         if args.command == "review-next-lead":
@@ -544,6 +549,9 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         help="Integer id of the raw lead to evaluate.",
     )
 
+    promote_next_parser = subparsers.add_parser("promote-next-lead", help="Promote next new lead after auto-discard")
+    promote_next_parser.add_argument("--source", help="Filter by source")
+
     promote_lead_parser = subparsers.add_parser(
         "promote-lead",
         help="Promote a raw lead from 'new' to 'promote'. Use when it passes face-value review.",
@@ -553,6 +561,7 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         type=int,
         help="Integer id of the raw lead to promote.",
     )
+    promote_lead_parser.set_defaults(func=partial(_run_promote_lead, stdout=stdout))
 
     review_next_lead_parser = subparsers.add_parser(
         "review-next-lead",
@@ -1095,12 +1104,55 @@ def _run_list_leads(*, limit: int | None, status: str | None, source: str | None
             url_str = f" ({lead['source_url']})" if lead.get("source_url") else ""
             title_str = f" - {lead['raw_title']}" if lead.get("raw_title") else ""
             print(
-                f"[{lead['id']}] {lead['lead_status']} | {lead['source']}{rank_str} | {lead['job_key']}{title_str}{url_str} | {lead['captured_at']}",
+            f"[{lead['id']}] {lead['lead_status']} | {lead['source']}{rank_str} | {lead['job_key']}{title_str}{url_str} | {lead['captured_at']}",
                 file=stdout,
             )
     finally:
         conn.close()
     return 0
+
+
+@dataclass(frozen=True, slots=True)
+class NextReviewableLeadResult:
+    lead: dict[str, Any] | None
+    auto_rejected_summaries: tuple[str, ...]
+
+
+def _fetch_next_reviewable_lead_after_auto_discard(
+    conn: sqlite3.Connection,
+    *,
+    source: str | None = None,
+    max_auto_rejects: int = 100,
+) -> NextReviewableLeadResult:
+    """
+    Fetch the next 'new' lead, automatically rejecting those matching approved discard tags.
+    Stops at the first survivor or when the queue is empty.
+    """
+    auto_rejected_summaries: list[str] = []
+    auto_reject_count = 0
+
+    while True:
+        lead = fetch_next_raw_lead(conn, status="new", source=source)
+        if lead is None:
+            break
+
+        with conn:
+            result = evaluate_lead_discard_tags(conn, lead["id"])
+
+        if result.matched_tags:
+            tag_names = ", ".join(m.tag_name for m in result.matched_tags)
+            auto_rejected_summaries.append(f"- Lead {result.lead_id}: {tag_names}")
+            auto_reject_count += 1
+            if auto_reject_count >= max_auto_rejects:
+                raise ValueError(
+                    "Auto-reject limit exceeded while searching for next reviewable lead."
+                )
+            continue
+
+        # Found a survivor
+        return NextReviewableLeadResult(lead, tuple(auto_rejected_summaries))
+
+    return NextReviewableLeadResult(None, tuple(auto_rejected_summaries))
 
 
 def _run_review_next_lead(
@@ -1115,35 +1167,18 @@ def _run_review_next_lead(
     _ensure_parent_dir(db_path)
     conn = connect_db(db_path)
 
-    auto_rejected_summaries: list[str] = []
-    max_auto_rejects = 100
-    auto_reject_count = 0
-
     try:
         initialize_db(conn)
 
-        while True:
+        if status == "new":
+            # Use auto-discard loop
+            result = _fetch_next_reviewable_lead_after_auto_discard(conn, source=source)
+            lead = result.lead
+            auto_rejected_summaries = result.auto_rejected_summaries
+        else:
+            # For non-new statuses, just fetch without auto-discard
             lead = fetch_next_raw_lead(conn, status=status, source=source)
-            if lead is None:
-                break
-
-            # Auto-reject only applies when status is "new"
-            if status == "new":
-                with conn:
-                    result = evaluate_lead_discard_tags(conn, lead["id"])
-
-                if result.matched_tags:
-                    tag_names = ", ".join(m.tag_name for m in result.matched_tags)
-                    auto_rejected_summaries.append(f"- Lead {result.lead_id}: {tag_names}")
-                    auto_reject_count += 1
-                    if auto_reject_count >= max_auto_rejects:
-                        raise ValueError(
-                            "Auto-reject limit exceeded while searching for next reviewable lead."
-                        )
-                    continue
-
-            # Found a survivor or non-new status
-            break
+            auto_rejected_summaries = ()
 
     finally:
         conn.close()
@@ -1222,6 +1257,48 @@ def _run_promote_lead(
     print(f"Lead id: {result.lead_id}", file=stdout)
     print(f"Previous status: {result.previous_status}", file=stdout)
     print(f"New status: {result.new_status}", file=stdout)
+
+    return 0
+
+
+def _run_promote_next_lead(
+    *,
+    source: str | None,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+    conn = connect_db(db_path)
+
+    try:
+        initialize_db(conn)
+
+        res = _fetch_next_reviewable_lead_after_auto_discard(conn, source=source)
+
+        if res.auto_rejected_summaries:
+            print("Auto-rejected approved discard matches:", file=stdout)
+            for s in res.auto_rejected_summaries:
+                print(s, file=stdout)
+            print(file=stdout)
+
+        if res.lead is None:
+            print("No raw leads found for promotion.", file=stdout)
+            return 0
+
+        # Promote the survivor
+        with conn:
+            promo = promote_raw_lead(conn, res.lead["id"])
+
+        print("Lead promoted.", file=stdout)
+        print(f"Lead id:     {promo.lead_id}", file=stdout)
+        print(f"Job key:     {promo.job_key}", file=stdout)
+        print(f"Title:       {res.lead.get('raw_title') or '—'}", file=stdout)
+        print(f"Previous status: {promo.previous_status}", file=stdout)
+        print(f"New status:      {promo.new_status}", file=stdout)
+
+    finally:
+        conn.close()
 
     return 0
 

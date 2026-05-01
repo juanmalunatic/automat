@@ -43,9 +43,9 @@ def _insert(
     lead_status: str = "new",
     source_rank: int | None = None,
     captured_at: str = _NOW1,
-) -> None:
+) -> int:
     with conn:
-        upsert_raw_lead(
+        return upsert_raw_lead(
             conn,
             job_key=job_key,
             source=source,
@@ -995,3 +995,135 @@ def test_review_next_lead_auto_rejects_client_spend_zero(tmp_path: Path) -> None
     assert "Auto-rejected approved discard matches:" in output
     assert f"- Lead {reject_id}: client_spend_zero" in output
     assert f"Lead id:     {survivor_id}" in output
+    assert f"Lead id:     {survivor_id}" in output
+
+
+def test_promote_next_lead_promotes_same_as_review(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Lead 1: survivor (priority 1)
+    id1 = _insert(conn, job_key="bm:1", captured_at=_NOW2)
+    # Lead 2: survivor (priority 2)
+    id2 = _insert(conn, job_key="bm:2", captured_at=_NOW1)
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["promote-next-lead"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "Lead promoted." in output
+    assert f"Lead id:     {id1}" in output
+    assert "Previous status: new" in output
+    assert "New status:      promote" in output
+
+    conn = connect_db(db_path)
+    row1 = conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id1,)).fetchone()
+    assert row1[0] == "promote"
+    row2 = conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id2,)).fetchone()
+    assert row2[0] == "new"
+    conn.close()
+
+
+def test_promote_next_lead_auto_rejects_and_promotes(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Lead 1: matches discard tag
+    with conn:
+        id1 = upsert_raw_lead(
+            conn, job_key="bm:1", source="best_matches_ui", lead_status="new",
+            raw_proposals_text="50+", captured_at=_NOW2, created_at=_NOW2, updated_at=_NOW2
+        )
+    # Lead 2: survivor
+    id2 = _insert(conn, job_key="bm:2", captured_at=_NOW1)
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["promote-next-lead"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "Auto-rejected approved discard matches:" in output
+    assert f"- Lead {id1}: proposals_50_plus" in output
+    assert "Lead promoted." in output
+    assert f"Lead id:     {id2}" in output
+
+    conn = connect_db(db_path)
+    assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id1,)).fetchone()[0] == "rejected"
+    assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id2,)).fetchone()[0] == "promote"
+    conn.close()
+
+
+def test_promote_next_lead_empty_queue(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["promote-next-lead"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "No raw leads found for promotion." in output
+
+
+def test_promote_next_lead_all_auto_rejected(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    with conn:
+        id1 = upsert_raw_lead(
+            conn, job_key="bm:1", source="best_matches_ui", lead_status="new",
+            raw_proposals_text="50+", captured_at=_NOW2, created_at=_NOW2, updated_at=_NOW2
+        )
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["promote-next-lead"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "Auto-rejected approved discard matches:" in output
+    assert "No raw leads found for promotion." in output
+    
+    conn = connect_db(db_path)
+    assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id1,)).fetchone()[0] == "rejected"
+    conn.close()
+
+
+def test_promote_next_lead_source_filter(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    # Lead 1: other source
+    id1 = _insert(conn, job_key="bm:1", source="other", captured_at=_NOW2)
+    # Lead 2: target source
+    id2 = _insert(conn, job_key="bm:2", source="target", captured_at=_NOW1)
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["promote-next-lead", "--source", "target"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert f"Lead id:     {id2}" in output
+    
+    conn = connect_db(db_path)
+    assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id1,)).fetchone()[0] == "new"
+    assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id2,)).fetchone()[0] == "promote"
+    conn.close()
