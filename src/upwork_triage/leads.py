@@ -4,6 +4,8 @@ import json
 import sqlite3
 from typing import Any
 
+from upwork_triage.normalize import normalize_job_payload
+
 ALLOWED_LEAD_STATUSES = {
     "new",
     "face_reviewed",
@@ -232,6 +234,74 @@ def _format_face_value_fields(lead: dict[str, Any]) -> list[str]:
                         values[label] = fmt(data[json_key])
         except json.JSONDecodeError:
             pass
+    elif raw_payload_json:
+        # 3. For any other source, use normalize_job_payload
+        try:
+            raw_payload = json.loads(raw_payload_json)
+            if isinstance(raw_payload, dict):
+                norm_result = normalize_job_payload(raw_payload)
+                norm = norm_result.normalized
+
+                # Posted
+                if norm.j_posted_at:
+                    values["Posted:"] = fmt(norm.j_posted_at)
+                elif norm.j_mins_since_posted is not None:
+                    values["Posted:"] = f"{norm.j_mins_since_posted} min ago"
+
+                # Connects
+                values["Connects:"] = fmt(norm.j_apply_cost_connects)
+
+                # Contract / Pay
+                values["Contract:"] = fmt(norm.j_contract_type)
+                if norm.j_pay_fixed is not None:
+                    values["Budget:"] = _format_money(norm.j_pay_fixed)
+
+                if norm.j_pay_hourly_low is not None or norm.j_pay_hourly_high is not None:
+                    values["Hourly range:"] = _format_hourly_range(
+                        norm.j_pay_hourly_low, norm.j_pay_hourly_high
+                    )
+
+                # Skills / Qualifications
+                values["Skills:"] = fmt(norm.j_skills)
+                values["Qualifications:"] = fmt(norm.j_qualifications)
+
+                # Activity
+                values["Proposals:"] = fmt(norm.a_proposals)
+                values["Hires:"] = fmt(norm.a_hires)
+                values["Interviewing:"] = fmt(norm.a_interviewing)
+                values["Invites sent:"] = fmt(norm.a_invites_sent)
+                if norm.a_mins_since_cli_viewed is not None:
+                    values["Client last viewed:"] = f"{norm.a_mins_since_cli_viewed} min ago"
+
+                # Client
+                if norm.c_verified_payment == 1:
+                    values["Payment:"] = "Payment verified"
+                elif norm.c_verified_payment == 0:
+                    values["Payment:"] = "Payment unverified"
+
+                values["Client country:"] = fmt(norm.c_country)
+                values["Client spend:"] = _format_money(norm.c_hist_total_spent)
+                values["Hire rate:"] = fmt(norm.c_hist_hire_rate)
+                values["Total hires:"] = fmt(norm.c_hist_hires_total)
+                values["Jobs posted:"] = fmt(norm.c_hist_jobs_posted)
+                values["Jobs open:"] = fmt(norm.c_hist_jobs_open)
+                values["Avg hourly paid:"] = _format_money(norm.c_hist_avg_hourly_rate)
+                values["Hours hired:"] = fmt(norm.c_hist_hours_hired)
+                values["Member since:"] = fmt(norm.c_hist_member_since)
+
+                # Market
+                if (
+                    norm.mkt_high is not None
+                    or norm.mkt_avg is not None
+                    or norm.mkt_low is not None
+                ):
+                    values["Market high/avg/low:"] = (
+                        f"{_format_money(norm.mkt_high)} / "
+                        f"{_format_money(norm.mkt_avg)} / "
+                        f"{_format_money(norm.mkt_low)}"
+                    )
+        except (json.JSONDecodeError, Exception):
+            pass
 
     # Build final lines
     lines: list[str] = []
@@ -240,6 +310,33 @@ def _format_face_value_fields(lead: dict[str, Any]) -> list[str]:
         lines.append(f"{label:<20} {val}")
 
     return lines
+
+
+def _format_money(value: Any) -> str:
+    """Helper to format numeric money values safely."""
+    if value is None:
+        return "—"
+    try:
+        fval = float(value)
+        # For simplicity, if it's a whole number show as int
+        if fval.is_integer():
+            return f"${int(fval)}"
+        return f"${fval:,.2f}"
+    except (ValueError, TypeError):
+        return str(value)
+
+
+def _format_hourly_range(low: Any, high: Any) -> str:
+    """Helper to format hourly low/high range."""
+    l = _format_money(low)
+    h = _format_money(high)
+    if l != "—" and h != "—":
+        return f"{l}-{h}/hr"
+    if l != "—":
+        return f"{l}/hr"
+    if h != "—":
+        return f"{h}/hr"
+    return "—"
 
 
 def fetch_raw_lead_counts(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:

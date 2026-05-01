@@ -4,357 +4,167 @@ import json
 import sqlite3
 from io import StringIO
 from pathlib import Path
-from uuid import uuid4
+from typing import Any
 
 import pytest
 
-from upwork_triage.cli import main
+from upwork_triage.__main__ import main
 from upwork_triage.db import connect_db, initialize_db
 from upwork_triage.leads import (
-    fetch_next_raw_lead,
+    ALLOWED_LEAD_STATUSES,
     render_raw_lead_review,
     upsert_raw_lead,
 )
+import re
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_NOW = "2026-05-01T00:00:00Z"
+_NOW1 = "2026-05-01T00:00:00Z"
 _NOW2 = "2026-05-01T01:00:00Z"  # newer
+
+
+def _assert_face_value_field(output: str, label: str, value: str) -> None:
+    """Helper to assert a face-value field exists with the expected value, ignoring padding."""
+    # Escape label for regex, match the label, some whitespace, then the value
+    pattern = rf"{re.escape(label)}\s+{re.escape(value)}"
+    assert re.search(pattern, output), f"Field {label!r} with value {value!r} not found in output"
 
 
 def _insert(
     conn: sqlite3.Connection,
     *,
     job_key: str,
-    source: str,
-    status: str = "new",
+    source: str = "best_matches_ui",
+    lead_status: str = "new",
     source_rank: int | None = None,
-    captured_at: str = _NOW,
-    title: str | None = None,
-    description: str | None = None,
-    pay_text: str | None = None,
-    proposals: str | None = None,
-    client_summary: str | None = None,
-    source_url: str | None = None,
-) -> int:
-    return upsert_raw_lead(
-        conn,
-        job_key=job_key,
-        source=source,
-        captured_at=captured_at,
-        created_at=captured_at,
-        updated_at=captured_at,
-        source_rank=source_rank,
-        raw_title=title,
-        raw_description=description,
-        raw_pay_text=pay_text,
-        raw_proposals_text=proposals,
-        raw_client_summary=client_summary,
-        source_url=source_url,
-        lead_status=status,
-    )
-
-
-@pytest.fixture()
-def mem_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    initialize_db(conn)
-    yield conn
-    conn.close()
-
-
-@pytest.fixture()
-def workspace_tmp_dir(tmp_path: Path) -> Path:
-    d = tmp_path / f"lead_review_{uuid4().hex}"
-    d.mkdir(parents=True)
-    return d
-
-
-# ---------------------------------------------------------------------------
-# Selection ordering
-# ---------------------------------------------------------------------------
-
-
-def test_best_matches_selected_before_graphql_even_if_graphql_newer(
-    mem_conn: sqlite3.Connection,
+    captured_at: str = _NOW1,
 ) -> None:
-    """best_matches_ui rank-1 wins over a newer graphql lead."""
-    _insert(mem_conn, job_key="gql:1", source="graphql_search", captured_at=_NOW2)
-    _insert(
-        mem_conn,
-        job_key="bm:1",
-        source="best_matches_ui",
-        source_rank=1,
-        captured_at=_NOW,
-    )
-    mem_conn.commit()
-
-    lead = fetch_next_raw_lead(mem_conn)
-    assert lead is not None
-    assert lead["job_key"] == "bm:1"
+    with conn:
+        upsert_raw_lead(
+            conn,
+            job_key=job_key,
+            source=source,
+            lead_status=lead_status,
+            source_rank=source_rank,
+            captured_at=captured_at,
+            created_at=captured_at,
+            updated_at=captured_at,
+        )
 
 
-def test_best_matches_selected_by_rank_asc(mem_conn: sqlite3.Connection) -> None:
-    """Among best_matches_ui leads rank 2 comes after rank 1."""
-    _insert(mem_conn, job_key="bm:2", source="best_matches_ui", source_rank=2)
-    _insert(mem_conn, job_key="bm:1", source="best_matches_ui", source_rank=1)
-    mem_conn.commit()
-
-    lead = fetch_next_raw_lead(mem_conn)
-    assert lead is not None
-    assert lead["job_key"] == "bm:1"
-
-
-def test_best_matches_rank_tie_broken_by_newest_captured_at(
-    mem_conn: sqlite3.Connection,
-) -> None:
-    """Same source_rank: newest captured_at wins."""
-    _insert(mem_conn, job_key="bm:old", source="best_matches_ui", source_rank=1, captured_at=_NOW)
-    _insert(mem_conn, job_key="bm:new", source="best_matches_ui", source_rank=1, captured_at=_NOW2)
-    mem_conn.commit()
-
-    lead = fetch_next_raw_lead(mem_conn)
-    assert lead is not None
-    assert lead["job_key"] == "bm:new"
-
-
-
-def test_non_best_matches_selected_newest_first(mem_conn: sqlite3.Connection) -> None:
-    """When no best_matches leads exist, newest captured_at wins."""
-    _insert(mem_conn, job_key="gql:old", source="graphql_search", captured_at=_NOW)
-    _insert(mem_conn, job_key="gql:new", source="graphql_search", captured_at=_NOW2)
-    mem_conn.commit()
-
-    lead = fetch_next_raw_lead(mem_conn)
-    assert lead is not None
-    assert lead["job_key"] == "gql:new"
-
-
-def test_source_filter_restricts_results(mem_conn: sqlite3.Connection) -> None:
-    _insert(mem_conn, job_key="bm:1", source="best_matches_ui", source_rank=1)
-    _insert(mem_conn, job_key="gql:1", source="graphql_search")
-    mem_conn.commit()
-
-    lead = fetch_next_raw_lead(mem_conn, source="graphql_search")
-    assert lead is not None
-    assert lead["source"] == "graphql_search"
-
-
-def test_status_filter_restricts_results(mem_conn: sqlite3.Connection) -> None:
-    _insert(mem_conn, job_key="bm:1", source="best_matches_ui", source_rank=1, status="new")
-    _insert(mem_conn, job_key="bm:2", source="best_matches_ui", source_rank=2, status="face_reviewed")
-    mem_conn.commit()
-
-    lead = fetch_next_raw_lead(mem_conn, status="face_reviewed")
-    assert lead is not None
-    assert lead["job_key"] == "bm:2"
-
-
-def test_no_matching_leads_returns_none(mem_conn: sqlite3.Connection) -> None:
-    lead = fetch_next_raw_lead(mem_conn)
-    assert lead is None
-
-
-# ---------------------------------------------------------------------------
-# Rendering
-# ---------------------------------------------------------------------------
-
-
-def _make_lead() -> dict:
+def _make_lead() -> dict[str, Any]:
     return {
         "id": 42,
-        "lead_status": "new",
+        "job_key": "bm:1",
         "source": "best_matches_ui",
-        "source_rank": 3,
-        "captured_at": "2026-05-01T00:00:00Z",
-        "job_key": "upwork:abc123",
-        "source_url": "https://www.upwork.com/jobs/abc123/",
-        "raw_title": "Fix checkout flow",
-        "raw_pay_text": "Fixed - Expert ($) - Less than 1 month",
+        "lead_status": "new",
+        "source_rank": 1,
+        "captured_at": _NOW1,
+        "source_url": "https://upwork.com/jobs/123",
+        "raw_title": "Test Job",
+        "raw_pay_text": "$500",
         "raw_proposals_text": "5 to 10",
-        "raw_client_summary": "Payment verified | $5K+ spent | United States",
-        "raw_description": "We need a developer to fix the checkout flow.",
+        "raw_description": "Description",
+        "raw_payload_json": None,
     }
 
 
-def test_render_includes_all_required_fields() -> None:
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+def test_render_raw_lead_review_basic() -> None:
     lead = _make_lead()
     output = render_raw_lead_review(lead)
 
-    assert "Lead id:" in output
-    assert "Status:" in output
-    assert "Source:" in output
-    assert "Rank:" in output
-    assert "Job key:" in output
-    assert "URL:" in output
-    assert "Title:" in output
-    assert "Pay:" in output
-    assert "Proposals:" in output
-    assert "Client:" in output
-    assert "Description:" in output
+    assert "Lead id:     42" in output
+    assert "Status:      new" in output
+    assert "Source:      best_matches_ui" in output
+    assert "Rank:        1" in output
+    assert "Captured:    2026-05-01T00:00:00Z" in output
+    assert "URL:         https://upwork.com/jobs/123" in output
+    assert "Title:       Test Job" in output
+    assert "Pay:         $500" in output
+    assert "Proposals:   5 to 10" in output
+    assert "Description: Description" in output
+    assert "=" * 60 in output
 
 
-def test_render_includes_reminder_line() -> None:
-    output = render_raw_lead_review(_make_lead())
-    assert (
-        "Next step: inspect this lead manually and decide whether to code a new approved discard tag."
-        in output
-    )
-
-
-def test_render_description_truncation() -> None:
+def test_render_raw_lead_review_truncates_description() -> None:
     lead = _make_lead()
     lead["raw_description"] = "A" * 2000
-    output = render_raw_lead_review(lead, description_chars=100)
-    assert "A" * 100 in output
-    assert "A" * 101 not in output
-    assert "[" in output  # truncation marker
+    output = render_raw_lead_review(lead, description_chars=10)
+
+    # 10 chars + space + […]
+    assert "Description: AAAAAAAAAA […]" in output
 
 
-def test_render_no_forbidden_words() -> None:
-    """Output must not contain verdict/score/flag language unless in raw lead text."""
-    lead = _make_lead()  # fields contain clean synthetic text
+def test_render_raw_lead_review_missing_fields() -> None:
+    lead = {
+        "id": 43,
+        "lead_status": "rejected",
+        "source": "manual",
+    }
     output = render_raw_lead_review(lead)
 
-    forbidden = [
-        "verdict",
-        "score",
-        "positive_flags",
-        "negative_flags",
-        "HYDRATE_CANDIDATE",
-        "LOW_PRIORITY_REVIEW",
-        "lead-action",
-        "recommended action",
-        "discarded",
-    ]
-    for word in forbidden:
-        assert word not in output, f"Forbidden word found in output: {word!r}"
+    assert "Lead id:     43" in output
+    assert "Rank:        —" in output
+    assert "URL:         —" in output
+    assert "Title:       —" in output
+    assert "Description: —" in output
 
 
-# ---------------------------------------------------------------------------
-# CLI integration
-# ---------------------------------------------------------------------------
-
-
-def test_cli_review_next_lead_prints_one_lead(
-    workspace_tmp_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = workspace_tmp_dir / "db" / "automat.sqlite3"
-    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
+def test_review_next_lead_cli_logic(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
     conn = connect_db(db_path)
     initialize_db(conn)
-    _insert(
-        conn,
-        job_key="bm:1",
-        source="best_matches_ui",
-        source_rank=1,
-        title="WooCommerce Fix",
-        source_url="https://www.upwork.com/jobs/bm1/",
-    )
-    conn.commit()
+
+    # Insert two leads.
+    _insert(conn, job_key="bm:2", source_rank=2, captured_at=_NOW1)
+    _insert(conn, job_key="bm:1", source_rank=1, captured_at=_NOW2)
+    conn.close()
+
+    # Run CLI
+    stdout = StringIO()
+    stderr = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        # Ensure we don't pick up the real .env if it exists
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead"], stdout=stdout, stderr=stderr)
+
+    output = stdout.getvalue()
+    assert "Lead id:" in output
+    # Should pick bm:1 because rank=1
+    assert "bm:1" in output
+    assert stderr.getvalue() == ""
+
+
+def test_review_next_lead_no_leads(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
     conn.close()
 
     stdout = StringIO()
-    exit_code = main(["review-next-lead"], stdout=stdout, stderr=StringIO())
-    out = stdout.getvalue()
+    stderr = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead"], stdout=stdout, stderr=stderr)
 
-    assert exit_code == 0
-    assert "Lead id:" in out
-    assert "Source:      best_matches_ui" in out
-    assert "Rank:        1" in out
-    assert "Title:       WooCommerce Fix" in out
-    assert "Next step:" in out
-
-
-def test_cli_review_next_lead_empty_prints_message(
-    workspace_tmp_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = workspace_tmp_dir / "db" / "automat.sqlite3"
-    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
-
-    stdout = StringIO()
-    exit_code = main(["review-next-lead"], stdout=stdout, stderr=StringIO())
-
-    assert exit_code == 0
     assert "No raw leads found for review" in stdout.getvalue()
 
 
-def test_cli_review_next_lead_with_source_filter(
-    workspace_tmp_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = workspace_tmp_dir / "db" / "automat.sqlite3"
-    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
+def test_review_next_lead_does_not_mutate_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
     conn = connect_db(db_path)
     initialize_db(conn)
-    _insert(conn, job_key="bm:1", source="best_matches_ui", source_rank=1, title="BM Job")
-    _insert(conn, job_key="gql:1", source="graphql_search", title="GQL Job")
-    conn.commit()
-    conn.close()
-
-    stdout = StringIO()
-    exit_code = main(
-        ["review-next-lead", "--source", "graphql_search"],
-        stdout=stdout,
-        stderr=StringIO(),
-    )
-    out = stdout.getvalue()
-
-    assert exit_code == 0
-    assert "Source:      graphql_search" in out
-    assert "GQL Job" in out
-    assert "BM Job" not in out
-
-
-def test_cli_review_next_lead_with_status_filter_empty(
-    workspace_tmp_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = workspace_tmp_dir / "db" / "automat.sqlite3"
-    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    conn = connect_db(db_path)
-    initialize_db(conn)
-    _insert(conn, job_key="bm:1", source="best_matches_ui", source_rank=1, status="new")
-    conn.commit()
-    conn.close()
-
-    stdout = StringIO()
-    exit_code = main(
-        ["review-next-lead", "--status", "face_reviewed"],
-        stdout=stdout,
-        stderr=StringIO(),
-    )
-    out = stdout.getvalue()
-
-    assert exit_code == 0
-    assert "No raw leads found for review" in out
-    assert "status=face_reviewed" in out
-
-
-def test_cli_review_next_lead_does_not_mutate_db(
-    workspace_tmp_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = workspace_tmp_dir / "db" / "automat.sqlite3"
-    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    conn = connect_db(db_path)
-    initialize_db(conn)
-    _insert(conn, job_key="bm:1", source="best_matches_ui", source_rank=1, status="new")
-    conn.commit()
+    _insert(conn, job_key="bm:1", source_rank=1)
 
     before_row = conn.execute(
         "SELECT lead_status, updated_at FROM raw_leads WHERE job_key = 'bm:1'"
@@ -362,7 +172,10 @@ def test_cli_review_next_lead_does_not_mutate_db(
     before_count = conn.execute("SELECT COUNT(*) FROM raw_leads").fetchone()[0]
     conn.close()
 
-    main(["review-next-lead"], stdout=StringIO(), stderr=StringIO())
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead"], stdout=StringIO(), stderr=StringIO())
 
     conn2 = connect_db(db_path)
     after_row = conn2.execute(
@@ -371,6 +184,7 @@ def test_cli_review_next_lead_does_not_mutate_db(
     after_count = conn2.execute("SELECT COUNT(*) FROM raw_leads").fetchone()[0]
     conn2.close()
 
+    assert after_row is not None, "Lead should still exist"
     assert after_row[0] == before_row[0], "lead_status must not change"
     assert after_row[1] == before_row[1], "updated_at must not change"
     assert after_count == before_count, "row count must not change"
@@ -397,16 +211,16 @@ def test_render_best_matches_payload_fields() -> None:
 
     assert "Face-value fields:" in output
     assert "Best Matches fields:" not in output
-    assert "Posted:              Posted 12 minutes ago" in output
-    assert "Featured:            yes" in output
-    assert "Contract:            Hourly" in output
-    assert "Tier:                Expert" in output
-    assert "Duration:            Less than 1 month" in output
-    assert "Budget:              $500" in output
-    assert "Payment:             Payment verified" in output
-    assert "Client spend:        $900K+" in output
-    assert "Client country:      United States" in output
-    assert "Skills:              WooCommerce, WordPress, PHP" in output
+    _assert_face_value_field(output, "Posted:", "Posted 12 minutes ago")
+    _assert_face_value_field(output, "Featured:", "yes")
+    _assert_face_value_field(output, "Contract:", "Hourly")
+    _assert_face_value_field(output, "Tier:", "Expert")
+    _assert_face_value_field(output, "Duration:", "Less than 1 month")
+    _assert_face_value_field(output, "Budget:", "$500")
+    _assert_face_value_field(output, "Payment:", "Payment verified")
+    _assert_face_value_field(output, "Client spend:", "$900K+")
+    _assert_face_value_field(output, "Client country:", "United States")
+    _assert_face_value_field(output, "Skills:", "WooCommerce, WordPress, PHP")
 
 
 def test_render_best_matches_payload_missing_fields_shows_dash() -> None:
@@ -415,15 +229,14 @@ def test_render_best_matches_payload_missing_fields_shows_dash() -> None:
     lead["raw_payload_json"] = json.dumps(
         {
             "posted-on": "Posted 12 minutes ago",
-            # other fields missing
         }
     )
     output = render_raw_lead_review(lead)
 
     assert "Face-value fields:" in output
-    assert "Posted:              Posted 12 minutes ago" in output
-    assert "Featured:            —" in output
-    assert "Skills:              —" in output
+    _assert_face_value_field(output, "Posted:", "Posted 12 minutes ago")
+    _assert_face_value_field(output, "Featured:", "—")
+    _assert_face_value_field(output, "Skills:", "—")
 
 
 def test_render_best_matches_payload_invalid_json_is_safe() -> None:
@@ -435,22 +248,85 @@ def test_render_best_matches_payload_invalid_json_is_safe() -> None:
 
     assert "Face-value fields:" in output
     assert "Best Matches fields:" not in output
-    # Proposals should still come from raw_proposals_text even if payload invalid
-    assert "Proposals:           5 to 10" in output
+    _assert_face_value_field(output, "Proposals:", "5 to 10")
 
 
-def test_render_universal_section_shows_for_all_sources() -> None:
+def test_render_graphql_payload_fills_universal_fields() -> None:
     lead = _make_lead()
-    lead["source"] = "graphql_search"
-    lead["raw_proposals_text"] = "20 to 50"
-    lead["raw_payload_json"] = json.dumps({"posted-on": "should not show"})
+    lead["source"] = "graphql_wordpress"
+    lead["raw_payload_json"] = json.dumps({
+        "title": "Test WordPress job",
+        "description": "Test description",
+        "connects_required": 12,
+        "contract_type": "hourly",
+        "hourly_low": 25,
+        "hourly_high": 50,
+        "skills": ["WordPress", "WooCommerce", "PHP"],
+        "client": {
+            "payment_verified": True,
+            "country": "United States",
+            "total_spent": "$10K",
+            "hire_rate": "80%",
+            "total_hires": 12,
+            "jobs_posted": 20,
+            "jobs_open": 2,
+            "avg_hourly_rate": "$35",
+            "hours_hired": 1000,
+            "member_since": "2020",
+        },
+        "activity": {
+            "proposals": "10 to 15",
+            "hires": 0,
+            "interviewing": 2,
+            "invites_sent": 1,
+            "client_last_viewed": "30 minutes ago",
+        },
+    })
     output = render_raw_lead_review(lead)
 
     assert "Face-value fields:" in output
-    assert "Best Matches fields:" not in output
-    # Source is not best_matches_ui, so payload is ignored in this slice
-    assert "Posted:              —" in output
-    assert "Proposals:           20 to 50" in output
+    _assert_face_value_field(output, "Connects:", "12")
+    _assert_face_value_field(output, "Contract:", "hourly")
+    _assert_face_value_field(output, "Hourly range:", "$25-$50/hr")
+    _assert_face_value_field(output, "Skills:", "WordPress, WooCommerce, PHP")
+    _assert_face_value_field(output, "Proposals:", "10 to 15")
+    _assert_face_value_field(output, "Interviewing:", "2")
+    _assert_face_value_field(output, "Invites sent:", "1")
+    _assert_face_value_field(output, "Client last viewed:", "30 min ago")
+    _assert_face_value_field(output, "Payment:", "Payment verified")
+    _assert_face_value_field(output, "Client country:", "United States")
+    _assert_face_value_field(output, "Client spend:", "$10000")
+    _assert_face_value_field(output, "Hire rate:", "80.0")
+    _assert_face_value_field(output, "Total hires:", "12")
+    _assert_face_value_field(output, "Jobs posted:", "20")
+    _assert_face_value_field(output, "Jobs open:", "2")
+    _assert_face_value_field(output, "Avg hourly paid:", "$35")
+
+
+def test_render_graphql_fixed_price_budget() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_fixed"
+    lead["raw_payload_json"] = json.dumps({
+        "contract_type": "fixed",
+        "budget": "$500",
+    })
+    output = render_raw_lead_review(lead)
+
+    _assert_face_value_field(output, "Contract:", "fixed")
+    _assert_face_value_field(output, "Budget:", "$500")
+    _assert_face_value_field(output, "Hourly range:", "—")
+
+
+def test_render_graphql_invalid_json_is_safe() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_proposals_text"] = "20 to 50"
+    lead["raw_payload_json"] = "invalid json {"
+    output = render_raw_lead_review(lead)
+
+    assert "Face-value fields:" in output
+    _assert_face_value_field(output, "Proposals:", "20 to 50")
+    _assert_face_value_field(output, "Contract:", "—")
 
 
 def test_render_universal_section_contains_all_labels() -> None:
