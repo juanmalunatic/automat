@@ -147,13 +147,31 @@ def test_match_client_spend_zero_best_matches(formatted_amount: str) -> None:
     assert matches[0].evidence_text == formatted_amount.strip().lower()
 
 
-def test_no_match_client_spend_positive_best_matches() -> None:
+@pytest.mark.parametrize("formatted_amount", ["$1", "$100", "$10K+", "Not visible", "—"])
+def test_no_match_client_spend_positive_best_matches(formatted_amount: str) -> None:
     lead = {
         "source": "best_matches_ui",
-        "raw_payload_json": json.dumps({"formatted-amount": "$100"})
+        "raw_payload_json": json.dumps({"formatted-amount": formatted_amount})
     }
     matches = extract_discard_tags_for_lead(lead)
     assert len(matches) == 0
+
+
+def test_no_match_client_spend_missing_best_matches() -> None:
+    # Missing field
+    lead = {
+        "source": "best_matches_ui",
+        "raw_payload_json": json.dumps({"other": "field"})
+    }
+    assert len(extract_discard_tags_for_lead(lead)) == 0
+
+    # Invalid JSON
+    lead["raw_payload_json"] = "{invalid"
+    assert len(extract_discard_tags_for_lead(lead)) == 0
+
+    # Non-dict JSON
+    lead["raw_payload_json"] = json.dumps(["not", "a", "dict"])
+    assert len(extract_discard_tags_for_lead(lead)) == 0
 
 
 def test_match_client_spend_zero_normalized() -> None:
@@ -178,11 +196,12 @@ def test_match_client_spend_zero_normalized() -> None:
     assert matches[0].evidence_text == "0"
 
 
-def test_no_match_client_spend_positive_normalized() -> None:
+@pytest.mark.parametrize("spent", [1, 10000, 0.01])
+def test_no_match_client_spend_positive_normalized(spent: float) -> None:
     payload = {
         "client": {
             "stats": {
-                "totalSpent": 100
+                "totalSpent": spent
             }
         }
     }
@@ -194,14 +213,27 @@ def test_no_match_client_spend_positive_normalized() -> None:
     assert len(matches) == 0
 
 
+def test_no_match_client_spend_missing_normalized() -> None:
+    # Missing stats
+    payload = {"client": {}}
+    lead = {"source": "graphql_search", "raw_payload_json": json.dumps(payload)}
+    assert len(extract_discard_tags_for_lead(lead)) == 0
+
+    # Non-dict JSON
+    lead["raw_payload_json"] = json.dumps("just a string")
+    assert len(extract_discard_tags_for_lead(lead)) == 0
+
+
 def test_client_spend_zero_no_prose_matching() -> None:
+    # prose in various fields should not trigger match if payload spend is positive
     lead = {
         "source": "best_matches_ui",
-        "raw_description": "The client spend is $0",
-        "raw_payload_json": json.dumps({"formatted-amount": "$100"})
+        "raw_title": "$0 spend client",
+        "raw_description": "Client spend is $0",
+        "raw_client_summary": "$0 spent",
+        "raw_payload_json": json.dumps({"formatted-amount": "$100"}),
     }
     matches = extract_discard_tags_for_lead(lead)
-    # Should not match based on description prose
     assert len(matches) == 0
 
 

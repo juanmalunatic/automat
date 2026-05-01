@@ -984,6 +984,9 @@ def test_review_next_lead_auto_rejects_client_spend_zero(tmp_path: Path) -> None
     # Rejected lead
     row1 = conn_ids.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (reject_id,)).fetchone()
     assert row1[0] == "rejected"
+    # Survivor lead
+    row2 = conn_ids.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (survivor_id,)).fetchone()
+    assert row2[0] == "new"
     # Tag row exists
     tag_row = conn_ids.execute("SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = ?", (reject_id,)).fetchone()
     assert tag_row[0] == "client_spend_zero"
