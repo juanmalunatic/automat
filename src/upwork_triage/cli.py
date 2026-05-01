@@ -1114,11 +1114,47 @@ def _run_review_next_lead(
     db_path = Path(config.db_path)
     _ensure_parent_dir(db_path)
     conn = connect_db(db_path)
+
+    auto_rejected_summaries: list[str] = []
+    max_auto_rejects = 100
+    auto_reject_count = 0
+
     try:
         initialize_db(conn)
-        lead = fetch_next_raw_lead(conn, status=status, source=source)
+
+        while True:
+            lead = fetch_next_raw_lead(conn, status=status, source=source)
+            if lead is None:
+                break
+
+            # Auto-reject only applies when status is "new"
+            if status == "new":
+                with conn:
+                    result = evaluate_lead_discard_tags(conn, lead["id"])
+
+                if result.matched_tags:
+                    tag_names = ", ".join(m.tag_name for m in result.matched_tags)
+                    auto_rejected_summaries.append(f"- Lead {result.lead_id}: {tag_names}")
+                    auto_reject_count += 1
+                    if auto_reject_count >= max_auto_rejects:
+                        print(
+                            "CLI error: Auto-reject limit exceeded while searching for next reviewable lead.",
+                            file=sys.stderr,
+                        )
+                        return 1
+                    continue
+
+            # Found a survivor or non-new status
+            break
+
     finally:
         conn.close()
+
+    if auto_rejected_summaries:
+        print("Auto-rejected approved discard matches:", file=stdout)
+        for s in auto_rejected_summaries:
+            print(s, file=stdout)
+        print(file=stdout)
 
     if lead is None:
         filter_desc = ""

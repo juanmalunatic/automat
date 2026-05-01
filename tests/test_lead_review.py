@@ -691,3 +691,147 @@ def test_promote_lead_cli_already_promoted_errors(tmp_path: Path) -> None:
 
     assert exit_code == 1
     assert f"CLI error: Lead {lead_id} is not promotable from status promote" in stderr.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Auto-Discard Tests
+# ---------------------------------------------------------------------------
+
+
+def test_review_next_lead_auto_rejects_and_displays_survivor(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Lead 1: Matches proposals_50_plus
+    _insert(conn, job_key="bm:1", source_rank=1, captured_at=_NOW2)
+    with conn:
+        conn.execute(
+            "UPDATE raw_leads SET raw_proposals_text = '50+' WHERE job_key = 'bm:1'"
+        )
+
+    # Lead 2: Survivor
+    _insert(conn, job_key="bm:2", source_rank=2, captured_at=_NOW1)
+
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "Auto-rejected approved discard matches:" in output
+    assert "Lead 1: proposals_50_plus" in output
+    assert "Lead id:     2" in output  # Display survivor
+    assert "bm:2" in output
+
+    # Verify DB state
+    conn2 = connect_db(db_path)
+    row1 = conn2.execute(
+        "SELECT lead_status FROM raw_leads WHERE job_key = 'bm:1'"
+    ).fetchone()
+    assert row1[0] == "rejected"
+
+    row2 = conn2.execute(
+        "SELECT lead_status FROM raw_leads WHERE job_key = 'bm:2'"
+    ).fetchone()
+    assert row2[0] == "new"
+
+    # Verify discard tag exists
+    tag_row = conn2.execute(
+        "SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = 1"
+    ).fetchone()
+    assert tag_row[0] == "proposals_50_plus"
+    conn2.close()
+
+
+def test_review_next_lead_all_auto_rejected(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    _insert(conn, job_key="bm:1")
+    with conn:
+        conn.execute(
+            "UPDATE raw_leads SET raw_proposals_text = '50+' WHERE job_key = 'bm:1'"
+        )
+
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "Auto-rejected approved discard matches:" in output
+    assert "Lead 1: proposals_50_plus" in output
+    assert "No raw leads found for review" in output
+
+
+def test_review_next_lead_source_filter_with_auto_reject(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # BM lead: Matches reject
+    _insert(conn, job_key="bm:1", source="best_matches_ui")
+    with conn:
+        conn.execute(
+            "UPDATE raw_leads SET raw_proposals_text = '50+' WHERE job_key = 'bm:1'"
+        )
+
+    # GraphQL lead: Survivor
+    _insert(conn, job_key="g:1", source="graphql_search")
+
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        # Filter for BM only
+        main(["review-next-lead", "--source", "best_matches_ui"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "Auto-rejected approved discard matches:" in output
+    assert "Lead 1: proposals_50_plus" in output
+    assert "No raw leads found for review with status=new source=best_matches_ui" in output
+    assert "g:1" not in output
+
+
+def test_review_next_lead_status_promote_skips_auto_evaluate(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Promoted lead that matches reject
+    _insert(conn, job_key="p:1", lead_status="promote")
+    with conn:
+        conn.execute(
+            "UPDATE raw_leads SET raw_proposals_text = '50+' WHERE job_key = 'p:1'"
+        )
+
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead", "--status", "promote"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "Auto-rejected approved discard matches:" not in output
+    assert "Lead id:     1" in output
+    assert "Proposals:   50+" in output
+
+    # Verify no discard tag was created
+    conn2 = connect_db(db_path)
+    tag_count = conn2.execute(
+        "SELECT COUNT(*) FROM raw_lead_discard_tags"
+    ).fetchone()[0]
+    assert tag_count == 0
+    conn2.close()

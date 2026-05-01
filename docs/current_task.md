@@ -124,20 +124,21 @@ py -m upwork_triage review-next-lead --status new --description-chars 800
 - Best Matches leads shown first (by rank), then other sources newest-first
 - after reviewing, record your judgment in a physical notebook; later slices will let you code approved discard tags
 
-You can now evaluate approved discard tags for leads:
+Currently `review-next-lead` automatically applies approved discard tags to `new` leads before displaying them:
 
 ```powershell
 py -m upwork_triage review-next-lead
-
-# If the displayed Proposals field is 50+, run:
-py -m upwork_triage evaluate-lead <lead_id>
 ```
 
-- currently the only approved discard tag is `proposals_50_plus`
-- it uses only `raw_proposals_text`
-- if it matches, the lead is marked `rejected` and will no longer appear in default `review-next-lead`
-- if it does not match, the lead is unchanged
-- no AI, scoring, or verdicts are used
+- if a lead matches an approved discard tag (e.g. `proposals_50_plus`), it is auto-rejected and skipped
+- if a lead is displayed, it survived approved auto-discard tags
+- if it survives human face-value review, run:
+  ```powershell
+  py -m upwork_triage promote-lead <lead_id>
+  ```
+
+`evaluate-lead <lead_id>` still exists for debugging or manually triggering tag evaluation on a specific lead ID.
+Currently the only approved discard tag is `proposals_50_plus`.
 
 
 You can now promote leads that pass face-value review:
