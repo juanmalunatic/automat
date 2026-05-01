@@ -156,160 +156,176 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
         "Next step: inspect this lead manually and decide whether to code a new approved discard tag."
     )
     return "\n".join(lines)
-
+_FACE_VALUE_LABELS = [
+    "Posted:",
+    "Connects:",
+    "Contract:",
+    "Budget:",
+    "Hourly range:",
+    "Tier:",
+    "Duration:",
+    "Skills:",
+    "Qualifications:",
+    "Proposals:",
+    "Hires:",
+    "Interviewing:",
+    "Invites sent:",
+    "Client last viewed:",
+    "Payment:",
+    "Client country:",
+    "Client spend:",
+    "Hire rate:",
+    "Total hires:",
+    "Jobs posted:",
+    "Jobs open:",
+    "Avg hourly paid:",
+    "Hours hired:",
+    "Member since:",
+    "Market high/avg/low:",
+    "Featured:",
+]
 
 
 def _format_face_value_fields(lead: dict[str, Any]) -> list[str]:
     """Helper to format a universal list of face-value fields for any lead."""
-    source = lead.get("source")
-    raw_payload_json = lead.get("raw_payload_json")
-
-    # Initial state: all universal fields as dash
-    field_labels = [
-        ("Posted:", "—"),
-        ("Connects:", "—"),
-        ("Contract:", "—"),
-        ("Budget:", "—"),
-        ("Hourly range:", "—"),
-        ("Tier:", "—"),
-        ("Duration:", "—"),
-        ("Skills:", "—"),
-        ("Qualifications:", "—"),
-        ("Proposals:", "—"),
-        ("Hires:", "—"),
-        ("Interviewing:", "—"),
-        ("Invites sent:", "—"),
-        ("Client last viewed:", "—"),
-        ("Payment:", "—"),
-        ("Client country:", "—"),
-        ("Client spend:", "—"),
-        ("Hire rate:", "—"),
-        ("Total hires:", "—"),
-        ("Jobs posted:", "—"),
-        ("Jobs open:", "—"),
-        ("Avg hourly paid:", "—"),
-        ("Hours hired:", "—"),
-        ("Member since:", "—"),
-        ("Market high/avg/low:", "—"),
-        ("Featured:", "—"),
-    ]
-    # Use a dict for easy updates
-    values = {label: val for label, val in field_labels}
-
-    def fmt(val: Any) -> str:
-        if val is None or val == "" or val == []:
-            return "—"
-        if isinstance(val, bool):
-            return "yes" if val else "no"
-        if isinstance(val, list):
-            return ", ".join(str(v) for v in val)
-        return str(val)
+    values = {label: "—" for label in _FACE_VALUE_LABELS}
 
     # 1. Always fill from raw_leads columns where available
     proposals_from_col = lead.get("raw_proposals_text")
     if proposals_from_col:
-        values["Proposals:"] = fmt(proposals_from_col)
+        values["Proposals:"] = _fmt_face_val(proposals_from_col)
 
-    # 2. If source == best_matches_ui, extract from payload
-    if source == "best_matches_ui" and raw_payload_json:
-        try:
-            data = json.loads(raw_payload_json)
-            if isinstance(data, dict):
-                # Mapping from payload keys to universal labels
-                bm_mapping = {
-                    "posted-on": "Posted:",
-                    "job-type": "Contract:",
-                    "budget": "Budget:",
-                    "contractor-tier": "Tier:",
-                    "duration": "Duration:",
-                    "skills": "Skills:",
-                    "proposals": "Proposals:",
-                    "payment-verification-status": "Payment:",
-                    "client-country": "Client country:",
-                    "formatted-amount": "Client spend:",
-                    "is_featured": "Featured:",
-                }
-                for json_key, label in bm_mapping.items():
-                    if json_key in data:
-                        values[label] = fmt(data[json_key])
-        except json.JSONDecodeError:
-            pass
-    elif raw_payload_json:
-        # 3. For any other source, use normalize_job_payload
-        try:
-            raw_payload = json.loads(raw_payload_json)
-            if isinstance(raw_payload, dict):
-                norm_result = normalize_job_payload(raw_payload)
-                norm = norm_result.normalized
-
-                # Posted
-                if norm.j_posted_at:
-                    values["Posted:"] = fmt(norm.j_posted_at)
-                elif norm.j_mins_since_posted is not None:
-                    values["Posted:"] = f"{norm.j_mins_since_posted} min ago"
-
-                # Connects
-                values["Connects:"] = fmt(norm.j_apply_cost_connects)
-
-                # Contract / Pay
-                values["Contract:"] = fmt(norm.j_contract_type)
-                if norm.j_pay_fixed is not None:
-                    values["Budget:"] = _format_money(norm.j_pay_fixed)
-
-                if norm.j_pay_hourly_low is not None or norm.j_pay_hourly_high is not None:
-                    values["Hourly range:"] = _format_hourly_range(
-                        norm.j_pay_hourly_low, norm.j_pay_hourly_high
-                    )
-
-                # Skills / Qualifications
-                values["Skills:"] = fmt(norm.j_skills)
-                values["Qualifications:"] = fmt(norm.j_qualifications)
-
-                # Activity
-                values["Proposals:"] = fmt(norm.a_proposals)
-                values["Hires:"] = fmt(norm.a_hires)
-                values["Interviewing:"] = fmt(norm.a_interviewing)
-                values["Invites sent:"] = fmt(norm.a_invites_sent)
-                if norm.a_mins_since_cli_viewed is not None:
-                    values["Client last viewed:"] = f"{norm.a_mins_since_cli_viewed} min ago"
-
-                # Client
-                if norm.c_verified_payment == 1:
-                    values["Payment:"] = "Payment verified"
-                elif norm.c_verified_payment == 0:
-                    values["Payment:"] = "Payment unverified"
-
-                values["Client country:"] = fmt(norm.c_country)
-                values["Client spend:"] = _format_money(norm.c_hist_total_spent)
-                values["Hire rate:"] = fmt(norm.c_hist_hire_rate)
-                values["Total hires:"] = fmt(norm.c_hist_hires_total)
-                values["Jobs posted:"] = fmt(norm.c_hist_jobs_posted)
-                values["Jobs open:"] = fmt(norm.c_hist_jobs_open)
-                values["Avg hourly paid:"] = _format_money(norm.c_hist_avg_hourly_rate)
-                values["Hours hired:"] = fmt(norm.c_hist_hours_hired)
-                values["Member since:"] = fmt(norm.c_hist_member_since)
-
-                # Market
-                if (
-                    norm.mkt_high is not None
-                    or norm.mkt_avg is not None
-                    or norm.mkt_low is not None
-                ):
-                    values["Market high/avg/low:"] = (
-                        f"{_format_money(norm.mkt_high)} / "
-                        f"{_format_money(norm.mkt_avg)} / "
-                        f"{_format_money(norm.mkt_low)}"
-                    )
-        except (json.JSONDecodeError, Exception):
-            pass
+    # 2. Extract from payload if available
+    payload = _load_payload_dict(lead.get("raw_payload_json"))
+    if payload:
+        source = lead.get("source")
+        if source == "best_matches_ui":
+            _apply_best_matches_mapping(values, payload)
+        else:
+            norm = _try_normalize_payload_for_display(payload)
+            if norm:
+                _apply_normalized_mapping(values, norm)
 
     # Build final lines
     lines: list[str] = []
-    for label, _ in field_labels:
+    for label in _FACE_VALUE_LABELS:
         val = values[label]
         lines.append(f"{label:<20} {val}")
-
     return lines
+
+
+def _load_payload_dict(raw_payload_json: str | None) -> dict[str, Any] | None:
+    if not raw_payload_json:
+        return None
+    try:
+        data = json.loads(raw_payload_json)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+    return None
+
+
+def _try_normalize_payload_for_display(raw_payload: dict[str, Any]) -> Any | None:
+    """
+    Attempt to normalize a GraphQL-style payload for triage display.
+    Display rendering must never crash review-next-lead; this is deliberately
+    isolated to display fallback only and must not be reused for evaluator logic.
+    """
+    try:
+        return normalize_job_payload(raw_payload).normalized
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def _fmt_face_val(val: Any) -> str:
+    if val is None or val == "" or val == []:
+        return "—"
+    if isinstance(val, bool):
+        return "yes" if val else "no"
+    if isinstance(val, list):
+        return ", ".join(str(v) for v in val)
+    return str(val)
+
+
+def _apply_best_matches_mapping(values: dict[str, str], data: dict[str, Any]) -> None:
+    bm_mapping = {
+        "posted-on": "Posted:",
+        "job-type": "Contract:",
+        "budget": "Budget:",
+        "contractor-tier": "Tier:",
+        "duration": "Duration:",
+        "skills": "Skills:",
+        "proposals": "Proposals:",
+        "payment-verification-status": "Payment:",
+        "client-country": "Client country:",
+        "formatted-amount": "Client spend:",
+        "is_featured": "Featured:",
+    }
+    for json_key, label in bm_mapping.items():
+        if json_key in data:
+            values[label] = _fmt_face_val(data[json_key])
+
+
+def _apply_normalized_mapping(values: dict[str, str], norm: Any) -> None:
+    # Posted
+    if norm.j_posted_at:
+        values["Posted:"] = _fmt_face_val(norm.j_posted_at)
+    elif norm.j_mins_since_posted is not None:
+        values["Posted:"] = f"{norm.j_mins_since_posted} min ago"
+
+    # Connects
+    values["Connects:"] = _fmt_face_val(norm.j_apply_cost_connects)
+
+    # Contract / Pay
+    values["Contract:"] = _fmt_face_val(norm.j_contract_type)
+    if norm.j_pay_fixed is not None:
+        values["Budget:"] = _format_money(norm.j_pay_fixed)
+
+    if norm.j_pay_hourly_low is not None or norm.j_pay_hourly_high is not None:
+        values["Hourly range:"] = _format_hourly_range(
+            norm.j_pay_hourly_low, norm.j_pay_hourly_high
+        )
+
+    # Skills / Qualifications
+    values["Skills:"] = _fmt_face_val(norm.j_skills)
+    values["Qualifications:"] = _fmt_face_val(norm.j_qualifications)
+
+    # Activity
+    values["Proposals:"] = _fmt_face_val(norm.a_proposals)
+    values["Hires:"] = _fmt_face_val(norm.a_hires)
+    values["Interviewing:"] = _fmt_face_val(norm.a_interviewing)
+    values["Invites sent:"] = _fmt_face_val(norm.a_invites_sent)
+    if norm.a_mins_since_cli_viewed is not None:
+        values["Client last viewed:"] = f"{norm.a_mins_since_cli_viewed} min ago"
+
+    # Client
+    if norm.c_verified_payment == 1:
+        values["Payment:"] = "Payment verified"
+    elif norm.c_verified_payment == 0:
+        values["Payment:"] = "Payment unverified"
+
+    values["Client country:"] = _fmt_face_val(norm.c_country)
+    values["Client spend:"] = _format_money(norm.c_hist_total_spent)
+    values["Hire rate:"] = _fmt_face_val(norm.c_hist_hire_rate)
+    values["Total hires:"] = _fmt_face_val(norm.c_hist_hires_total)
+    values["Jobs posted:"] = _fmt_face_val(norm.c_hist_jobs_posted)
+    values["Jobs open:"] = _fmt_face_val(norm.c_hist_jobs_open)
+    values["Avg hourly paid:"] = _format_money(norm.c_hist_avg_hourly_rate)
+    values["Hours hired:"] = _fmt_face_val(norm.c_hist_hours_hired)
+    values["Member since:"] = _fmt_face_val(norm.c_hist_member_since)
+
+    # Market
+    if (
+        norm.mkt_high is not None
+        or norm.mkt_avg is not None
+        or norm.mkt_low is not None
+    ):
+        values["Market high/avg/low:"] = (
+            f"{_format_money(norm.mkt_high)} / "
+            f"{_format_money(norm.mkt_avg)} / "
+            f"{_format_money(norm.mkt_low)}"
+        )
 
 
 def _format_money(value: Any) -> str:

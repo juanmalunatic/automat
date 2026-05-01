@@ -481,6 +481,27 @@ def test_render_graphql_invalid_json_is_safe() -> None:
     _assert_face_value_field(output, "Contract:", "—")
 
 
+def test_render_graphql_non_dict_json_is_safe() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps(["not", "a", "dict"])
+    output = render_raw_lead_review(lead)
+
+    assert "Face-value fields:" in output
+    _assert_face_value_field(output, "Contract:", "—")
+    _assert_face_value_field(output, "Client country:", "—")
+
+
+def test_render_graphql_string_json_is_safe() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps("just a string")
+    output = render_raw_lead_review(lead)
+
+    assert "Face-value fields:" in output
+    _assert_face_value_field(output, "Contract:", "—")
+
+
 def test_render_universal_section_contains_all_labels() -> None:
     lead = _make_lead()
     output = render_raw_lead_review(lead)
