@@ -924,3 +924,22 @@ def test_review_next_lead_auto_rejects_hourly_max_below_25(tmp_path: Path) -> No
     assert "Auto-rejected approved discard matches:" in output
     assert f"- Lead {reject_id}: hourly_max_below_25" in output
     assert f"Lead id:     {survivor_id}" in output
+
+    # Verify DB mutation
+    conn3 = connect_db(db_path)
+    # Rejected lead
+    row1 = conn3.execute(
+        "SELECT lead_status FROM raw_leads WHERE id = ?", (reject_id,)
+    ).fetchone()
+    assert row1[0] == "rejected"
+    # Survivor lead
+    row2 = conn3.execute(
+        "SELECT lead_status FROM raw_leads WHERE id = ?", (survivor_id,)
+    ).fetchone()
+    assert row2[0] == "new"
+    # Tag row exists
+    tag_row = conn3.execute(
+        "SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = ?", (reject_id,)
+    ).fetchone()
+    assert tag_row[0] == "hourly_max_below_25"
+    conn3.close()

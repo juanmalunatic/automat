@@ -360,3 +360,88 @@ def test_evaluate_lead_ignores_payload_only_match(mem_conn: sqlite3.Connection) 
 
     result = evaluate_lead_discard_tags(mem_conn, lead_id)
     assert result.mutated is False
+
+
+def test_evaluate_lead_hourly_max_below_25_persists_and_rejects(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="up:1",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_pay_text="Hourly: $8-$10",
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id, evaluated_at="2026-05-01T12:00:00Z")
+
+    assert result.lead_id == lead_id
+    assert result.new_status == "rejected"
+    assert len(result.matched_tags) == 1
+    assert result.matched_tags[0].tag_name == "hourly_max_below_25"
+    assert result.matched_tags[0].evidence_field == "raw_pay_text"
+    assert result.matched_tags[0].evidence_text == "Hourly: $8-$10"
+
+    # Verify DB side
+    row = mem_conn.execute("SELECT lead_status, updated_at FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row["lead_status"] == "rejected"
+    assert row["updated_at"] == "2026-05-01T12:00:00Z"
+
+    tag_rows = mem_conn.execute("SELECT * FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchall()
+    assert len(tag_rows) == 1
+    assert tag_rows[0]["tag_name"] == "hourly_max_below_25"
+    assert tag_rows[0]["evidence_field"] == "raw_pay_text"
+    assert tag_rows[0]["evidence_text"] == "Hourly: $8-$10"
+
+
+def test_evaluate_lead_hourly_max_at_threshold_does_not_reject(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="up:1",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_pay_text="Hourly: $25-$40",
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id)
+
+    assert len(result.matched_tags) == 0
+    assert result.new_status == "new"
+
+    # Verify DB side unchanged
+    row = mem_conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row["lead_status"] == "new"
+
+    tag_count = mem_conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchone()[0]
+    assert tag_count == 0
+
+
+def test_evaluate_lead_both_tags_persists_idempotently(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="up:1",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_proposals_text="50+",
+        raw_pay_text="Hourly: $8-$10",
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id)
+    assert len(result.matched_tags) == 2
+    assert {m.tag_name for m in result.matched_tags} == {"proposals_50_plus", "hourly_max_below_25"}
+    assert result.new_status == "rejected"
+
+    tag_count = mem_conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchone()[0]
+    assert tag_count == 2
+
+    # Run again - idempotency
+    evaluate_lead_discard_tags(mem_conn, lead_id)
+    tag_count = mem_conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchone()[0]
+    assert tag_count == 2
