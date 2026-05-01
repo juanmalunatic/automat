@@ -26,7 +26,12 @@ def mem_conn() -> sqlite3.Connection:
 
 
 def test_approved_tags_registry_is_exact() -> None:
-    assert APPROVED_DISCARD_TAGS == ("proposals_50_plus", "hourly_max_below_25", "client_spend_zero")
+    assert APPROVED_DISCARD_TAGS == (
+        "proposals_50_plus",
+        "hourly_max_below_25",
+        "client_spend_zero",
+        "client_country_blocklisted",
+    )
 
 
 def test_match_proposals_50_plus_exact() -> None:
@@ -609,3 +614,100 @@ def test_evaluate_lead_client_spend_positive_does_not_reject(mem_conn: sqlite3.C
     # Verify DB side unchanged
     row = mem_conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
     assert row["lead_status"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# Client Country Blocklisted Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("country", ["PAK", "Pakistan", "  pakistan  ", "PAKISTAN"])
+def test_match_country_blocklisted_best_matches(country: str) -> None:
+    lead = {
+        "source": "best_matches_ui",
+        "raw_payload_json": json.dumps({"client-country": country})
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 1
+    assert matches[0].tag_name == "client_country_blocklisted"
+    assert matches[0].evidence_field == "raw_payload_json.client-country"
+    assert matches[0].evidence_text == country.strip()
+
+
+def test_match_country_blocklisted_normalized() -> None:
+    payload = {
+        "client": {
+            "location": {
+                "country": "Pakistan"
+            }
+        }
+    }
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps(payload)
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 1
+    assert matches[0].tag_name == "client_country_blocklisted"
+    assert matches[0].evidence_field == "normalized.c_country"
+    assert matches[0].evidence_text == "Pakistan"
+
+
+def test_no_match_country_not_blocklisted() -> None:
+    lead = {
+        "source": "best_matches_ui",
+        "raw_payload_json": json.dumps({"client-country": "United States"})
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 0
+
+
+def test_no_match_country_prose_only() -> None:
+    # prose in various fields should not trigger match if payload country is not blocklisted
+    lead = {
+        "source": "best_matches_ui",
+        "raw_title": "Project in Pakistan",
+        "raw_description": "We are located in Pakistan",
+        "raw_client_summary": "Client from Pakistan",
+        "raw_payload_json": json.dumps({"client-country": "United States"}),
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 0
+
+
+def test_no_match_country_missing() -> None:
+    lead = {
+        "source": "best_matches_ui",
+        "raw_payload_json": json.dumps({"other": "field"})
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 0
+
+
+def test_evaluate_lead_country_blocklisted_persists_and_rejects(mem_conn: sqlite3.Connection) -> None:
+    payload = {"client-country": "Pakistan"}
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="up:1",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_payload_json=json.dumps(payload),
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id)
+
+    assert result.new_status == "rejected"
+    assert len(result.matched_tags) == 1
+    assert result.matched_tags[0].tag_name == "client_country_blocklisted"
+
+    # Verify DB side
+    row = mem_conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row["lead_status"] == "rejected"
+
+    tag_rows = mem_conn.execute("SELECT * FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchall()
+    assert len(tag_rows) == 1
+    assert tag_rows[0]["tag_name"] == "client_country_blocklisted"
+    assert tag_rows[0]["evidence_field"] == "raw_payload_json.client-country"
+    assert tag_rows[0]["evidence_text"] == "Pakistan"

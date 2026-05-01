@@ -16,7 +16,17 @@ __all__ = [
     "evaluate_lead_discard_tags",
 ]
 
-APPROVED_DISCARD_TAGS = ("proposals_50_plus", "hourly_max_below_25", "client_spend_zero")
+APPROVED_DISCARD_TAGS = (
+    "proposals_50_plus",
+    "hourly_max_below_25",
+    "client_spend_zero",
+    "client_country_blocklisted",
+)
+
+BLOCKLISTED_CLIENT_COUNTRIES = (
+    "pak",
+    "pakistan",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +118,55 @@ def _is_client_spend_zero(lead: Mapping[str, Any]) -> DiscardTagMatch | None:
     return None
 
 
+def _normalize_country_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).strip().lower().split())
+    return text or None
+
+
+def _is_client_country_blocklisted(lead: Mapping[str, Any]) -> DiscardTagMatch | None:
+    source = lead.get("source")
+    raw_payload_json = lead.get("raw_payload_json")
+    if not raw_payload_json:
+        return None
+
+    try:
+        payload = json.loads(raw_payload_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    country_text: str | None = None
+    evidence_field: str | None = None
+
+    if source == "best_matches_ui":
+        country_text = payload.get("client-country")
+        evidence_field = "raw_payload_json.client-country"
+    else:
+        from upwork_triage.normalize import normalize_job_payload
+
+        try:
+            norm_result = normalize_job_payload(payload)
+            country_text = norm_result.normalized.c_country
+            evidence_field = "normalized.c_country"
+        except (ValueError, TypeError, KeyError, AttributeError):
+            pass
+
+    if country_text and evidence_field:
+        normalized = _normalize_country_text(country_text)
+        if normalized in BLOCKLISTED_CLIENT_COUNTRIES:
+            return DiscardTagMatch(
+                tag_name="client_country_blocklisted",
+                evidence_field=evidence_field,
+                evidence_text=str(country_text).strip(),
+            )
+
+    return None
+
+
 def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMatch, ...]:
     """
     Extract manually approved discard tags from a raw lead.
@@ -144,6 +203,11 @@ def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMa
     spend_match = _is_client_spend_zero(lead)
     if spend_match:
         matches.append(spend_match)
+
+    # Tag: client_country_blocklisted
+    country_match = _is_client_country_blocklisted(lead)
+    if country_match:
+        matches.append(country_match)
 
     return tuple(matches)
 

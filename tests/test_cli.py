@@ -2773,4 +2773,9 @@ def test_cli_evaluate_output_hygiene(workspace_tmp_dir: Path, monkeypatch: pytes
 
 
 def test_approved_discard_tags_registry_exact_in_cli() -> None:
-    assert APPROVED_DISCARD_TAGS == ("proposals_50_plus", "hourly_max_below_25", "client_spend_zero")
+    assert APPROVED_DISCARD_TAGS == (
+        "proposals_50_plus",
+        "hourly_max_below_25",
+        "client_spend_zero",
+        "client_country_blocklisted",
+    )
