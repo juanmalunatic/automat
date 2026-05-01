@@ -21,6 +21,7 @@ from upwork_triage.dry_run import (
     render_raw_artifact_dry_run_summary,
     write_dry_run_summary_json,
 )
+from upwork_triage.import_artifact_leads import import_artifact_leads
 from upwork_triage.inspect_upwork import (
     DEFAULT_INSPECTION_ARTIFACT_PATH,
     inspect_upwork_raw,
@@ -139,6 +140,14 @@ def main(
         if args.command == "ingest-upwork-artifact":
             return _run_ingest_upwork_artifact(
                 artifact_path=args.artifact_path,
+                stdout=out,
+            )
+        if args.command == "import-artifact-leads":
+            return _run_import_artifact_leads(
+                artifact_path=args.artifact_path,
+                source=args.source,
+                source_query=args.source_query,
+                limit=args.limit,
                 stdout=out,
             )
         if args.command == "probe-upwork-fields":
@@ -377,6 +386,28 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
     artifact_ingest_parser.add_argument(
         "artifact_path",
         help="Path to a saved raw inspection artifact JSON file.",
+    )
+    import_artifact_leads_parser = subparsers.add_parser(
+        "import-artifact-leads",
+        help="Import a saved Upwork raw artifact into raw_leads without filtering.",
+    )
+    import_artifact_leads_parser.add_argument(
+        "artifact_path",
+        help="Path to a saved raw inspection artifact JSON file.",
+    )
+    import_artifact_leads_parser.add_argument(
+        "--source",
+        default="graphql_search",
+        help="Source name for the imported leads (default: graphql_search).",
+    )
+    import_artifact_leads_parser.add_argument(
+        "--source-query",
+        help="Optional source query context. Defaults to the artifact path.",
+    )
+    import_artifact_leads_parser.add_argument(
+        "--limit",
+        type=_positive_int_arg,
+        help="Maximum number of jobs to process from the artifact.",
     )
     probe_parser = subparsers.add_parser(
         "probe-upwork-fields",
@@ -752,6 +783,46 @@ def _run_ingest_upwork_artifact(
         + ", ".join(MVP_MANUAL_FINAL_CHECK_FIELDS),
         file=stdout,
     )
+    return 0
+
+
+def _run_import_artifact_leads(
+    *,
+    artifact_path: str,
+    source: str,
+    source_query: str | None,
+    limit: int | None,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+
+    raw_jobs = load_raw_inspection_artifact(artifact_path)
+    if limit is not None:
+        raw_jobs = raw_jobs[:limit]
+
+    effective_query = source_query if source_query is not None else artifact_path
+
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        summary = import_artifact_leads(
+            conn,
+            raw_jobs,
+            source=source,
+            source_query=effective_query,
+        )
+    finally:
+        conn.close()
+
+    print("Raw artifact lead import complete.", file=stdout)
+    print(f"Artifact: {artifact_path}", file=stdout)
+    print(f"Source: {source}", file=stdout)
+    print(f"Jobs loaded: {summary['loaded']}", file=stdout)
+    print(f"Leads upserted: {summary['upserted']}", file=stdout)
+    print(f"Skipped missing identity: {summary['skipped']}", file=stdout)
+    
     return 0
 
 
