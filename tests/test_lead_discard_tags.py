@@ -1,10 +1,25 @@
 from __future__ import annotations
 
+import sqlite3
+import pytest
+
+from upwork_triage.db import initialize_db
+from upwork_triage.leads import upsert_raw_lead
 from upwork_triage.lead_discard_tags import (
     APPROVED_DISCARD_TAGS,
     DiscardTagMatch,
     extract_discard_tags_for_lead,
+    persist_discard_tag_matches,
 )
+
+
+@pytest.fixture()
+def mem_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+    yield conn
+    conn.close()
 
 
 def test_approved_tags_registry_is_exact() -> None:
@@ -79,3 +94,105 @@ def test_ignores_other_fields() -> None:
     }
     matches = extract_discard_tags_for_lead(lead)
     assert len(matches) == 0
+
+
+# ---------------------------------------------------------------------------
+# Persistence Tests
+# ---------------------------------------------------------------------------
+
+def test_schema_creates_discard_tags_table(mem_conn: sqlite3.Connection) -> None:
+    cursor = mem_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='raw_lead_discard_tags'")
+    assert cursor.fetchone() is not None
+
+
+def test_persist_one_match(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="upwork:123",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_proposals_text="50+",
+    )
+    lead = {"id": lead_id, "job_key": "upwork:123", "source": "best_matches_ui"}
+    matches = [DiscardTagMatch("proposals_50_plus", "raw_proposals_text", "50+")]
+
+    count = persist_discard_tag_matches(mem_conn, lead=lead, matches=matches)
+    assert count == 1
+
+    row = mem_conn.execute("SELECT * FROM raw_lead_discard_tags").fetchone()
+    assert row["lead_id"] == lead_id
+    assert row["job_key"] == "upwork:123"
+    assert row["source"] == "best_matches_ui"
+    assert row["tag_name"] == "proposals_50_plus"
+    assert row["evidence_field"] == "raw_proposals_text"
+    assert row["evidence_text"] == "50+"
+    assert row["matched_at"] is not None
+
+
+def test_persist_idempotency(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="upwork:123",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+    )
+    lead = {"id": lead_id, "job_key": "upwork:123", "source": "best_matches_ui"}
+    matches = [DiscardTagMatch("proposals_50_plus", "raw_proposals_text", "50+")]
+
+    count1 = persist_discard_tag_matches(mem_conn, lead=lead, matches=matches)
+    assert count1 == 1
+
+    count2 = persist_discard_tag_matches(mem_conn, lead=lead, matches=matches)
+    assert count2 == 0  # Idempotent insert or ignore
+
+
+def test_persist_empty_matches(mem_conn: sqlite3.Connection) -> None:
+    lead = {"id": 1, "job_key": "upwork:123", "source": "best_matches_ui"}
+    count = persist_discard_tag_matches(mem_conn, lead=lead, matches=[])
+    assert count == 0
+    assert mem_conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags").fetchone()[0] == 0
+
+
+def test_persist_missing_fields_raises_error(mem_conn: sqlite3.Connection) -> None:
+    matches = [DiscardTagMatch("proposals_50_plus", "raw_proposals_text", "50+")]
+
+    with pytest.raises(ValueError, match="Lead missing 'id'"):
+        persist_discard_tag_matches(mem_conn, lead={"job_key": "x", "source": "y"}, matches=matches)
+
+    with pytest.raises(ValueError, match="Lead missing 'job_key'"):
+        persist_discard_tag_matches(mem_conn, lead={"id": 1, "source": "y"}, matches=matches)
+
+    with pytest.raises(ValueError, match="Lead missing 'source'"):
+        persist_discard_tag_matches(mem_conn, lead={"id": 1, "job_key": "x"}, matches=matches)
+
+
+def test_persist_unapproved_tag_raises_error(mem_conn: sqlite3.Connection) -> None:
+    lead = {"id": 1, "job_key": "x", "source": "y"}
+    matches = [DiscardTagMatch("unapproved_tag", "f", "v")]
+
+    with pytest.raises(ValueError, match="Unapproved tag name: unapproved_tag"):
+        persist_discard_tag_matches(mem_conn, lead=lead, matches=matches)
+
+
+def test_persist_does_not_mutate_raw_leads(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="upwork:123",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        lead_status="new",
+    )
+    lead = {"id": lead_id, "job_key": "upwork:123", "source": "best_matches_ui"}
+    matches = [DiscardTagMatch("proposals_50_plus", "raw_proposals_text", "50+")]
+
+    persist_discard_tag_matches(mem_conn, lead=lead, matches=matches)
+
+    row = mem_conn.execute("SELECT lead_status, updated_at FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row["lead_status"] == "new"
+    assert row["updated_at"] == "2026-05-01T00:00:00Z"

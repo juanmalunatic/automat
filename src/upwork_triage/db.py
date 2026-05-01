@@ -398,6 +398,27 @@ CREATE INDEX IF NOT EXISTS idx_raw_leads_job_key
 CREATE INDEX IF NOT EXISTS idx_raw_leads_upwork_job_id
     ON raw_leads(upwork_job_id);
 
+CREATE TABLE IF NOT EXISTS raw_lead_discard_tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER NOT NULL REFERENCES raw_leads(id),
+    job_key TEXT NOT NULL,
+    source TEXT NOT NULL,
+    tag_name TEXT NOT NULL,
+    matched_at TEXT NOT NULL,
+    evidence_field TEXT NOT NULL,
+    evidence_text TEXT,
+    UNIQUE(lead_id, tag_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_raw_lead_discard_tags_lead_id
+    ON raw_lead_discard_tags(lead_id);
+CREATE INDEX IF NOT EXISTS idx_raw_lead_discard_tags_job_key
+    ON raw_lead_discard_tags(job_key);
+CREATE INDEX IF NOT EXISTS idx_raw_lead_discard_tags_tag_name
+    ON raw_lead_discard_tags(tag_name);
+CREATE INDEX IF NOT EXISTS idx_raw_lead_discard_tags_matched_at
+    ON raw_lead_discard_tags(matched_at);
+
 DROP VIEW IF EXISTS v_decision_shortlist;
 CREATE VIEW v_decision_shortlist AS
 WITH latest_triage AS (
