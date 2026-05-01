@@ -8,6 +8,8 @@ from upwork_triage.leads import upsert_raw_lead
 from upwork_triage.lead_discard_tags import (
     APPROVED_DISCARD_TAGS,
     DiscardTagMatch,
+    LeadDiscardEvaluationResult,
+    evaluate_lead_discard_tags,
     extract_discard_tags_for_lead,
     persist_discard_tag_matches,
 )
@@ -196,3 +198,105 @@ def test_persist_does_not_mutate_raw_leads(mem_conn: sqlite3.Connection) -> None
     row = mem_conn.execute("SELECT lead_status, updated_at FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
     assert row["lead_status"] == "new"
     assert row["updated_at"] == "2026-05-01T00:00:00Z"
+
+
+# ---------------------------------------------------------------------------
+# Evaluation Tests
+# ---------------------------------------------------------------------------
+
+def test_evaluate_lead_matching(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="upwork:123",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_proposals_text="50+",
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id, evaluated_at="2026-05-01T01:00:00Z")
+
+    assert result.lead_id == lead_id
+    assert result.mutated is True
+    assert result.previous_status == "new"
+    assert result.new_status == "rejected"
+    assert len(result.matched_tags) == 1
+    assert result.matched_tags[0].tag_name == "proposals_50_plus"
+
+    # Verify DB side
+    row = mem_conn.execute("SELECT lead_status, updated_at FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row["lead_status"] == "rejected"
+    assert row["updated_at"] == "2026-05-01T01:00:00Z"
+
+    tag_rows = mem_conn.execute("SELECT * FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchall()
+    assert len(tag_rows) == 1
+    assert tag_rows[0]["tag_name"] == "proposals_50_plus"
+
+
+def test_evaluate_lead_no_match(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="upwork:123",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_proposals_text="20 to 50",
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id)
+
+    assert result.mutated is False
+    assert result.new_status == "new"
+    assert len(result.matched_tags) == 0
+
+    # Verify DB side unchanged
+    row = mem_conn.execute("SELECT lead_status, updated_at FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row["lead_status"] == "new"
+    assert row["updated_at"] == "2026-05-01T00:00:00Z"
+
+    tag_count = mem_conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchone()[0]
+    assert tag_count == 0
+
+
+def test_evaluate_lead_missing_raises_error(mem_conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="Raw lead not found: 999"):
+        evaluate_lead_discard_tags(mem_conn, 999)
+
+
+def test_evaluate_lead_idempotency(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="upwork:123",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_proposals_text="50+",
+    )
+
+    evaluate_lead_discard_tags(mem_conn, lead_id)
+    evaluate_lead_discard_tags(mem_conn, lead_id)
+
+    tag_count = mem_conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchone()[0]
+    assert tag_count == 1  # No duplicate tag rows
+
+
+def test_evaluate_lead_ignores_payload_only_match(mem_conn: sqlite3.Connection) -> None:
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="upwork:123",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_proposals_text="20 to 50",
+        raw_payload_json='{"proposals": "50+"}',
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id)
+    assert result.mutated is False

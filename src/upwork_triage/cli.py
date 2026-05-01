@@ -12,6 +12,7 @@ from typing import TextIO
 from upwork_triage.actions import ActionError, record_user_action
 from upwork_triage.config import ConfigError, load_config
 from upwork_triage.db import connect_db, initialize_db
+from upwork_triage.lead_discard_tags import evaluate_lead_discard_tags
 from upwork_triage.leads import fetch_next_raw_lead, fetch_raw_lead_counts, fetch_raw_leads, render_raw_lead_review, upsert_raw_lead
 from upwork_triage.dry_run import (
     MVP_MANUAL_FINAL_CHECK_FIELDS,
@@ -208,6 +209,11 @@ def main(
                 upwork_job_id=args.upwork_job_id,
                 action=args.user_action,
                 notes=args.notes,
+                stdout=out,
+            )
+        if args.command == "evaluate-lead":
+            return _run_evaluate_lead(
+                lead_id=args.lead_id,
                 stdout=out,
             )
         if args.command == "review-next-lead":
@@ -515,6 +521,16 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
     debug_insert_lead_parser.add_argument("--source", required=True)
     debug_insert_lead_parser.add_argument("--title")
     debug_insert_lead_parser.add_argument("--url")
+
+    evaluate_lead_parser = subparsers.add_parser(
+        "evaluate-lead",
+        help="Evaluate approved discard tags for a raw lead. Marks lead rejected if a tag matches.",
+    )
+    evaluate_lead_parser.add_argument(
+        "lead_id",
+        type=int,
+        help="Integer id of the raw lead to evaluate.",
+    )
 
     review_next_lead_parser = subparsers.add_parser(
         "review-next-lead",
@@ -1093,6 +1109,42 @@ def _run_review_next_lead(
         return 0
 
     print(render_raw_lead_review(lead, description_chars=description_chars), file=stdout)
+    return 0
+
+
+def _run_evaluate_lead(
+    *,
+    lead_id: int,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        with conn:
+            result = evaluate_lead_discard_tags(conn, lead_id)
+    finally:
+        conn.close()
+
+    print("Lead discard tag evaluation complete.", file=stdout)
+    print(f"Lead id:     {result.lead_id}", file=stdout)
+    print(f"Job key:     {result.job_key}", file=stdout)
+    print(f"Source:      {result.source}", file=stdout)
+
+    if not result.matched_tags:
+        print("Matched discard tags: none", file=stdout)
+        print(f"Status unchanged: {result.new_status}", file=stdout)
+        return 0
+
+    tag_names = ", ".join(m.tag_name for m in result.matched_tags)
+    print(f"Matched discard tags: {tag_names}", file=stdout)
+    print(f"Previous status: {result.previous_status}", file=stdout)
+    print(f"New status:      {result.new_status}", file=stdout)
+    print("Evidence:", file=stdout)
+    for m in result.matched_tags:
+        print(f"- {m.tag_name}: {m.evidence_field} = {m.evidence_text}", file=stdout)
+
     return 0
 
 

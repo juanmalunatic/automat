@@ -10,6 +10,8 @@ __all__ = [
     "DiscardTagMatch",
     "extract_discard_tags_for_lead",
     "persist_discard_tag_matches",
+    "LeadDiscardEvaluationResult",
+    "evaluate_lead_discard_tags",
 ]
 
 APPROVED_DISCARD_TAGS = ("proposals_50_plus",)
@@ -20,6 +22,17 @@ class DiscardTagMatch:
     tag_name: str
     evidence_field: str
     evidence_text: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class LeadDiscardEvaluationResult:
+    lead_id: int
+    job_key: str
+    source: str
+    matched_tags: tuple[DiscardTagMatch, ...]
+    previous_status: str
+    new_status: str
+    mutated: bool
 
 
 def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMatch, ...]:
@@ -93,3 +106,57 @@ def persist_discard_tag_matches(
         inserted_count += cursor.rowcount
 
     return inserted_count
+
+
+def evaluate_lead_discard_tags(
+    conn: sqlite3.Connection,
+    lead_id: int,
+    *,
+    evaluated_at: str | None = None,
+) -> LeadDiscardEvaluationResult:
+    """
+    Evaluate approved discard tags for a raw lead.
+    If tags match, persists them and updates lead status to 'rejected'.
+    """
+    cursor = conn.execute("SELECT * FROM raw_leads WHERE id = ?", (lead_id,))
+    row = cursor.fetchone()
+    if row is None:
+        raise ValueError(f"Raw lead not found: {lead_id}")
+
+    column_names = [col[0] for col in cursor.description]
+    lead = dict(zip(column_names, row, strict=True))
+
+    previous_status = lead["lead_status"]
+    matches = extract_discard_tags_for_lead(lead)
+
+    if not matches:
+        return LeadDiscardEvaluationResult(
+            lead_id=lead_id,
+            job_key=lead["job_key"],
+            source=lead["source"],
+            matched_tags=(),
+            previous_status=previous_status,
+            new_status=previous_status,
+            mutated=False,
+        )
+
+    # We have matches. Persist them and update lead status.
+    if evaluated_at is None:
+        evaluated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    persist_discard_tag_matches(conn, lead=lead, matches=matches, matched_at=evaluated_at)
+
+    conn.execute(
+        "UPDATE raw_leads SET lead_status = 'rejected', updated_at = ? WHERE id = ?",
+        (evaluated_at, lead_id),
+    )
+
+    return LeadDiscardEvaluationResult(
+        lead_id=lead_id,
+        job_key=lead["job_key"],
+        source=lead["source"],
+        matched_tags=matches,
+        previous_status=previous_status,
+        new_status="rejected",
+        mutated=True,
+    )
