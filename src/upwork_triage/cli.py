@@ -12,6 +12,7 @@ from typing import TextIO
 from upwork_triage.actions import ActionError, record_user_action
 from upwork_triage.config import ConfigError, load_config
 from upwork_triage.db import connect_db, initialize_db
+from upwork_triage.leads import fetch_raw_lead_counts, fetch_raw_leads, upsert_raw_lead
 from upwork_triage.dry_run import (
     MVP_MANUAL_FINAL_CHECK_FIELDS,
     RawArtifactError,
@@ -191,6 +192,23 @@ def main(
                 upwork_job_id=args.upwork_job_id,
                 action=args.user_action,
                 notes=args.notes,
+                stdout=out,
+            )
+        if args.command == "lead-counts":
+            return _run_lead_counts(stdout=out)
+        if args.command == "list-leads":
+            return _run_list_leads(
+                limit=args.limit,
+                status=args.status,
+                source=args.source,
+                stdout=out,
+            )
+        if args.command == "debug-insert-lead":
+            return _run_debug_insert_lead(
+                job_key=args.job_key,
+                source=args.source,
+                title=args.title,
+                url=args.url,
                 stdout=out,
             )
     except ConfigError as exc:
@@ -413,6 +431,29 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
     action_by_id_parser.add_argument("upwork_job_id", help="Visible Upwork job id")
     action_by_id_parser.add_argument("user_action", help="Action value to record")
     action_by_id_parser.add_argument("--notes", help="Optional local note for this action.")
+
+    lead_counts_parser = subparsers.add_parser(
+        "lead-counts",
+        help="Show counts of raw leads by status and source.",
+    )
+
+    list_leads_parser = subparsers.add_parser(
+        "list-leads",
+        help="List raw leads compactly.",
+    )
+    list_leads_parser.add_argument("--limit", type=_positive_int_arg, help="Max leads to list")
+    list_leads_parser.add_argument("--status", help="Filter by lead_status")
+    list_leads_parser.add_argument("--source", help="Filter by source")
+
+    debug_insert_lead_parser = subparsers.add_parser(
+        "debug-insert-lead",
+        help="Local debug helper: insert a raw lead for manual testing.",
+    )
+    debug_insert_lead_parser.add_argument("--job-key", required=True)
+    debug_insert_lead_parser.add_argument("--source", required=True)
+    debug_insert_lead_parser.add_argument("--title")
+    debug_insert_lead_parser.add_argument("--url")
+
     return parser
 
 
@@ -799,6 +840,87 @@ def _print_token_lines(token_response: TokenResponse, *, stdout: TextIO) -> None
         print(f"UPWORK_TOKEN_TYPE={token_response.token_type}", file=stdout)
     if token_response.expires_in is not None:
         print(f"UPWORK_EXPIRES_IN={token_response.expires_in}", file=stdout)
+
+
+def _run_lead_counts(*, stdout: TextIO) -> int:
+    from upwork_triage.config import load_config
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        counts = fetch_raw_lead_counts(conn)
+        
+        status_counts = counts.get("by_status", {})
+        source_counts = counts.get("by_source", {})
+        
+        if not status_counts and not source_counts:
+            print("Raw lead table is empty.", file=stdout)
+            return 0
+            
+        print("Raw lead counts\n", file=stdout)
+        
+        print("By status:", file=stdout)
+        for st, c in sorted(status_counts.items()):
+            print(f"- {st}: {c}", file=stdout)
+            
+        print("\nBy source:", file=stdout)
+        for so, c in sorted(source_counts.items()):
+            print(f"- {so}: {c}", file=stdout)
+            
+    finally:
+        conn.close()
+    return 0
+
+
+def _run_list_leads(*, limit: int | None, status: str | None, source: str | None, stdout: TextIO) -> int:
+    from upwork_triage.config import load_config
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        leads = fetch_raw_leads(conn, limit=limit, status=status, source=source)
+        for lead in leads:
+            rank_str = f" [rank:{lead['source_rank']}]" if lead.get("source_rank") is not None else ""
+            url_str = f" ({lead['source_url']})" if lead.get("source_url") else ""
+            title_str = f" - {lead['raw_title']}" if lead.get("raw_title") else ""
+            print(
+                f"[{lead['id']}] {lead['lead_status']} | {lead['source']}{rank_str} | {lead['job_key']}{title_str}{url_str} | {lead['captured_at']}",
+                file=stdout,
+            )
+    finally:
+        conn.close()
+    return 0
+
+
+def _run_debug_insert_lead(*, job_key: str, source: str, title: str | None, url: str | None, stdout: TextIO) -> int:
+    from upwork_triage.config import load_config
+    from datetime import datetime, timezone
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        lead_id = upsert_raw_lead(
+            conn,
+            job_key=job_key,
+            source=source,
+            raw_title=title,
+            source_url=url,
+            captured_at=now_iso,
+            created_at=now_iso,
+            updated_at=now_iso,
+        )
+        print(f"Inserted raw lead {lead_id} ({job_key})", file=stdout)
+        conn.commit()
+    finally:
+        conn.close()
+    return 0
 
 
 def _fake_raw_payload() -> dict[str, object]:

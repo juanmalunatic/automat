@@ -951,3 +951,18 @@ Future extensions:
 - browser-visible-page enrichment helper, if safe and explicitly chosen later
 - portfolio demo mode with fake data
 - Postgres migration
+
+## 12. Lead Calibration Lane
+
+`raw_leads` is a new upstream Lead Calibration Lane table.
+It does not replace the current enriched prospect workflow.
+It stores discovered opportunities before hydration.
+Future slices will import GraphQL search results, Best Matches outerHTML, and manual URL/ID leads into this table.
+Current slice only adds storage and inspection commands.
+
+Example usage:
+
+```powershell
+py -m upwork_triage lead-counts
+py -m upwork_triage list-leads --status new --limit 20
+```

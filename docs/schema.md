@@ -591,3 +591,40 @@ Suggested ordering:
 3. `REVIEW`
 4. `priority_score DESC`
 5. `j_mins_since_posted ASC`
+
+## 13. `raw_leads`
+
+Raw lead storage foundation for the upstream Lead Calibration Lane.
+
+Stores discovered opportunities before hydration, allowing manual review and rejection before committing to API/enrichment costs.
+
+Fields:
+
+- `id INTEGER PRIMARY KEY AUTOINCREMENT`
+- `job_key TEXT NOT NULL`
+- `upwork_job_id TEXT`
+- `source TEXT NOT NULL`
+- `source_rank INTEGER`
+- `source_query TEXT`
+- `source_url TEXT`
+- `captured_at TEXT NOT NULL`
+- `raw_title TEXT`
+- `raw_description TEXT`
+- `raw_client_summary TEXT`
+- `raw_pay_text TEXT`
+- `raw_proposals_text TEXT`
+- `raw_payload_json TEXT`
+- `lead_status TEXT NOT NULL DEFAULT 'new' CHECK (lead_status IN ('new', 'face_reviewed', 'rejected', 'promote', 'hydrated', 'applied', 'archived'))`
+- `created_at TEXT NOT NULL`
+- `updated_at TEXT NOT NULL`
+
+Indexes:
+
+- `idx_raw_leads_status_captured_at`
+- `idx_raw_leads_source_rank`
+- `idx_raw_leads_job_key`
+- `idx_raw_leads_upwork_job_id`
+
+Mandatory uniqueness:
+
+- `UNIQUE(job_key, source)`

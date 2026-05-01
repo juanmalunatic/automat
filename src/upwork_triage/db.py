@@ -367,6 +367,37 @@ CREATE INDEX IF NOT EXISTS idx_manual_job_enrichment_parses_job_key
 CREATE INDEX IF NOT EXISTS idx_manual_job_enrichment_parses_manual_enrichment_id
     ON manual_job_enrichment_parses(manual_enrichment_id);
 
+CREATE TABLE IF NOT EXISTS raw_leads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key TEXT NOT NULL,
+    upwork_job_id TEXT,
+    source TEXT NOT NULL,
+    source_rank INTEGER,
+    source_query TEXT,
+    source_url TEXT,
+    captured_at TEXT NOT NULL,
+    raw_title TEXT,
+    raw_description TEXT,
+    raw_client_summary TEXT,
+    raw_pay_text TEXT,
+    raw_proposals_text TEXT,
+    raw_payload_json TEXT,
+    lead_status TEXT NOT NULL DEFAULT 'new'
+        CHECK (lead_status IN ('new', 'face_reviewed', 'rejected', 'promote', 'hydrated', 'applied', 'archived')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(job_key, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_raw_leads_status_captured_at
+    ON raw_leads(lead_status, captured_at);
+CREATE INDEX IF NOT EXISTS idx_raw_leads_source_rank
+    ON raw_leads(source, source_rank);
+CREATE INDEX IF NOT EXISTS idx_raw_leads_job_key
+    ON raw_leads(job_key);
+CREATE INDEX IF NOT EXISTS idx_raw_leads_upwork_job_id
+    ON raw_leads(upwork_job_id);
+
 DROP VIEW IF EXISTS v_decision_shortlist;
 CREATE VIEW v_decision_shortlist AS
 WITH latest_triage AS (

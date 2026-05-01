@@ -2553,3 +2553,47 @@ def seed_cli_job(conn: sqlite3.Connection, *, job_key: str, upwork_job_id: str) 
         (raw_snapshot_id, job_snapshot_id, job_key),
     )
     conn.commit()
+
+
+def test_cli_lead_counts_empty(workspace_tmp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path = workspace_tmp_dir / "db" / "automat.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    stdout = StringIO()
+    stderr = StringIO()
+    
+    exit_code = main(["lead-counts"], stdout=stdout, stderr=stderr)
+    
+    assert exit_code == 0
+    assert "Raw lead table is empty" in stdout.getvalue()
+
+def test_cli_lead_counts_and_list_leads(workspace_tmp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path = workspace_tmp_dir / "db" / "automat.sqlite3"
+    monkeypatch.setenv("AUTOMAT_DB_PATH", str(db_path))
+    stdout = StringIO()
+    stderr = StringIO()
+    
+    # Insert some leads first
+    exit_code = main(["debug-insert-lead", "--job-key", "upwork:cli1", "--source", "test_source", "--title", "CLI Test 1"], stdout=stdout, stderr=stderr)
+    assert exit_code == 0
+    assert "Inserted raw lead 1 (upwork:cli1)" in stdout.getvalue()
+    
+    # Test counts
+    stdout = StringIO()
+    exit_code = main(["lead-counts"], stdout=stdout, stderr=stderr)
+    assert exit_code == 0
+    assert "By status:" in stdout.getvalue()
+    assert "- new: 1" in stdout.getvalue()
+    assert "By source:" in stdout.getvalue()
+    assert "- test_source: 1" in stdout.getvalue()
+    
+    # Test list
+    stdout = StringIO()
+    exit_code = main(["list-leads"], stdout=stdout, stderr=stderr)
+    assert exit_code == 0
+    assert "[1] new | test_source | upwork:cli1 - CLI Test 1" in stdout.getvalue()
+    
+    # Test list filter
+    stdout = StringIO()
+    exit_code = main(["list-leads", "--status", "rejected"], stdout=stdout, stderr=stderr)
+    assert exit_code == 0
+    assert "upwork:cli1" not in stdout.getvalue()
