@@ -21,11 +21,14 @@ APPROVED_DISCARD_TAGS = (
     "hourly_max_below_25",
     "client_spend_zero",
     "client_country_blocklisted",
+    "client_hire_rate_below_30",
 )
 
 BLOCKLISTED_CLIENT_COUNTRIES = (
+    "lithuania",
     "pak",
     "pakistan",
+    "united arab emirates",
 )
 
 
@@ -167,6 +170,39 @@ def _is_client_country_blocklisted(lead: Mapping[str, Any]) -> DiscardTagMatch |
     return None
 
 
+def _is_client_hire_rate_below_30(lead: Mapping[str, Any]) -> DiscardTagMatch | None:
+    if lead.get("source") == "best_matches_ui":
+        return None
+
+    raw_payload_json = lead.get("raw_payload_json")
+    if not raw_payload_json:
+        return None
+
+    try:
+        payload = json.loads(raw_payload_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    from upwork_triage.normalize import normalize_job_payload
+
+    try:
+        norm_result = normalize_job_payload(payload)
+        rate = norm_result.normalized.c_hist_hire_rate
+        if rate is not None and rate < 30.0:
+            return DiscardTagMatch(
+                tag_name="client_hire_rate_below_30",
+                evidence_field="normalized.c_hist_hire_rate",
+                evidence_text=str(rate),
+            )
+    except (ValueError, TypeError, KeyError, AttributeError):
+        pass
+
+    return None
+
+
 def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMatch, ...]:
     """
     Extract manually approved discard tags from a raw lead.
@@ -208,6 +244,11 @@ def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMa
     country_match = _is_client_country_blocklisted(lead)
     if country_match:
         matches.append(country_match)
+
+    # Tag: client_hire_rate_below_30
+    hire_rate_match = _is_client_hire_rate_below_30(lead)
+    if hire_rate_match:
+        matches.append(hire_rate_match)
 
     return tuple(matches)
 

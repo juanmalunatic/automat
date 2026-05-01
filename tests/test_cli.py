@@ -2778,4 +2778,5 @@ def test_approved_discard_tags_registry_exact_in_cli() -> None:
         "hourly_max_below_25",
         "client_spend_zero",
         "client_country_blocklisted",
+        "client_hire_rate_below_30",
     )
