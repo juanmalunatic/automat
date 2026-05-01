@@ -390,24 +390,23 @@ def test_render_best_matches_payload_fields() -> None:
             "payment-verification-status": "Payment verified",
             "formatted-amount": "$900K+",
             "client-country": "United States",
-            "client_rating_value": "5.0",
             "skills": ["WooCommerce", "WordPress", "PHP"],
         }
     )
     output = render_raw_lead_review(lead)
 
-    assert "Best Matches fields:" in output
-    assert "Posted:         Posted 12 minutes ago" in output
-    assert "Featured:       yes" in output
-    assert "Job type:       Hourly" in output
-    assert "Tier:           Expert" in output
-    assert "Duration:       Less than 1 month" in output
-    assert "Budget:         $500" in output
-    assert "Payment:        Payment verified" in output
-    assert "Client spend:   $900K+" in output
-    assert "Client country: United States" in output
-    assert "Client rating:  5.0" in output
-    assert "Skills:         WooCommerce, WordPress, PHP" in output
+    assert "Face-value fields:" in output
+    assert "Best Matches fields:" not in output
+    assert "Posted:              Posted 12 minutes ago" in output
+    assert "Featured:            yes" in output
+    assert "Contract:            Hourly" in output
+    assert "Tier:                Expert" in output
+    assert "Duration:            Less than 1 month" in output
+    assert "Budget:              $500" in output
+    assert "Payment:             Payment verified" in output
+    assert "Client spend:        $900K+" in output
+    assert "Client country:      United States" in output
+    assert "Skills:              WooCommerce, WordPress, PHP" in output
 
 
 def test_render_best_matches_payload_missing_fields_shows_dash() -> None:
@@ -421,26 +420,50 @@ def test_render_best_matches_payload_missing_fields_shows_dash() -> None:
     )
     output = render_raw_lead_review(lead)
 
-    assert "Best Matches fields:" in output
-    assert "Posted:         Posted 12 minutes ago" in output
-    assert "Featured:       —" in output
-    assert "Skills:         —" in output
+    assert "Face-value fields:" in output
+    assert "Posted:              Posted 12 minutes ago" in output
+    assert "Featured:            —" in output
+    assert "Skills:              —" in output
 
 
 def test_render_best_matches_payload_invalid_json_is_safe() -> None:
     lead = _make_lead()
     lead["source"] = "best_matches_ui"
+    lead["raw_proposals_text"] = "5 to 10"
     lead["raw_payload_json"] = "invalid json {"
     output = render_raw_lead_review(lead)
 
-    assert "Best Matches fields:" in output
-    assert "unavailable" in output
+    assert "Face-value fields:" in output
+    assert "Best Matches fields:" not in output
+    # Proposals should still come from raw_proposals_text even if payload invalid
+    assert "Proposals:           5 to 10" in output
 
 
-def test_render_non_best_matches_lead_does_not_show_payload_section() -> None:
+def test_render_universal_section_shows_for_all_sources() -> None:
     lead = _make_lead()
     lead["source"] = "graphql_search"
+    lead["raw_proposals_text"] = "20 to 50"
     lead["raw_payload_json"] = json.dumps({"posted-on": "should not show"})
     output = render_raw_lead_review(lead)
 
+    assert "Face-value fields:" in output
     assert "Best Matches fields:" not in output
+    # Source is not best_matches_ui, so payload is ignored in this slice
+    assert "Posted:              —" in output
+    assert "Proposals:           20 to 50" in output
+
+
+def test_render_universal_section_contains_all_labels() -> None:
+    lead = _make_lead()
+    output = render_raw_lead_review(lead)
+
+    labels = [
+        "Posted:", "Connects:", "Contract:", "Budget:", "Hourly range:",
+        "Tier:", "Duration:", "Skills:", "Qualifications:", "Proposals:",
+        "Hires:", "Interviewing:", "Invites sent:", "Client last viewed:",
+        "Payment:", "Client country:", "Client spend:", "Hire rate:",
+        "Total hires:", "Jobs posted:", "Jobs open:", "Avg hourly paid:",
+        "Hours hired:", "Member since:", "Market high/avg/low:", "Featured:"
+    ]
+    for label in labels:
+        assert label in output

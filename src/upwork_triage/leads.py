@@ -144,11 +144,10 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
         raw_desc = raw_desc[:description_chars] + " […]"
     lines.append(f"Description: {raw_desc or '—'}")
 
-    if lead.get("source") == "best_matches_ui":
-        lines.append("-" * 30)
-        lines.append("Best Matches fields:")
-        payload_lines = _format_best_matches_payload_fields(lead.get("raw_payload_json"))
-        lines.extend(payload_lines)
+    lines.append("-" * 30)
+    lines.append("Face-value fields:")
+    face_value_lines = _format_face_value_fields(lead)
+    lines.extend(face_value_lines)
 
     lines.append("=" * 60)
     lines.append(
@@ -158,18 +157,42 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
 
 
 
-def _format_best_matches_payload_fields(raw_payload_json: str | None) -> list[str]:
-    """Helper to extract and format specific Best Matches UI payload fields."""
-    if not raw_payload_json:
-        return ["unavailable"]
+def _format_face_value_fields(lead: dict[str, Any]) -> list[str]:
+    """Helper to format a universal list of face-value fields for any lead."""
+    source = lead.get("source")
+    raw_payload_json = lead.get("raw_payload_json")
 
-    try:
-        data = json.loads(raw_payload_json)
-    except json.JSONDecodeError:
-        return ["unavailable"]
-
-    if not isinstance(data, dict):
-        return ["unavailable"]
+    # Initial state: all universal fields as dash
+    field_labels = [
+        ("Posted:", "—"),
+        ("Connects:", "—"),
+        ("Contract:", "—"),
+        ("Budget:", "—"),
+        ("Hourly range:", "—"),
+        ("Tier:", "—"),
+        ("Duration:", "—"),
+        ("Skills:", "—"),
+        ("Qualifications:", "—"),
+        ("Proposals:", "—"),
+        ("Hires:", "—"),
+        ("Interviewing:", "—"),
+        ("Invites sent:", "—"),
+        ("Client last viewed:", "—"),
+        ("Payment:", "—"),
+        ("Client country:", "—"),
+        ("Client spend:", "—"),
+        ("Hire rate:", "—"),
+        ("Total hires:", "—"),
+        ("Jobs posted:", "—"),
+        ("Jobs open:", "—"),
+        ("Avg hourly paid:", "—"),
+        ("Hours hired:", "—"),
+        ("Member since:", "—"),
+        ("Market high/avg/low:", "—"),
+        ("Featured:", "—"),
+    ]
+    # Use a dict for easy updates
+    values = {label: val for label, val in field_labels}
 
     def fmt(val: Any) -> str:
         if val is None or val == "" or val == []:
@@ -180,24 +203,41 @@ def _format_best_matches_payload_fields(raw_payload_json: str | None) -> list[st
             return ", ".join(str(v) for v in val)
         return str(val)
 
-    field_map = {
-        "posted-on": "Posted:",
-        "is_featured": "Featured:",
-        "job-type": "Job type:",
-        "contractor-tier": "Tier:",
-        "duration": "Duration:",
-        "budget": "Budget:",
-        "payment-verification-status": "Payment:",
-        "formatted-amount": "Client spend:",
-        "client-country": "Client country:",
-        "client_rating_value": "Client rating:",
-        "skills": "Skills:",
-    }
+    # 1. Always fill from raw_leads columns where available
+    proposals_from_col = lead.get("raw_proposals_text")
+    if proposals_from_col:
+        values["Proposals:"] = fmt(proposals_from_col)
 
+    # 2. If source == best_matches_ui, extract from payload
+    if source == "best_matches_ui" and raw_payload_json:
+        try:
+            data = json.loads(raw_payload_json)
+            if isinstance(data, dict):
+                # Mapping from payload keys to universal labels
+                bm_mapping = {
+                    "posted-on": "Posted:",
+                    "job-type": "Contract:",
+                    "budget": "Budget:",
+                    "contractor-tier": "Tier:",
+                    "duration": "Duration:",
+                    "skills": "Skills:",
+                    "proposals": "Proposals:",
+                    "payment-verification-status": "Payment:",
+                    "client-country": "Client country:",
+                    "formatted-amount": "Client spend:",
+                    "is_featured": "Featured:",
+                }
+                for json_key, label in bm_mapping.items():
+                    if json_key in data:
+                        values[label] = fmt(data[json_key])
+        except json.JSONDecodeError:
+            pass
+
+    # Build final lines
     lines: list[str] = []
-    for key, label in field_map.items():
-        val = data.get(key)
-        lines.append(f"{label:<15} {fmt(val)}")
+    for label, _ in field_labels:
+        val = values[label]
+        lines.append(f"{label:<20} {val}")
 
     return lines
 
