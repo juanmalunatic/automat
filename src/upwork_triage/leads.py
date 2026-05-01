@@ -223,6 +223,7 @@ _FACE_VALUE_LABELS = [
     "Qualifications:",
     "Proposals:",
     "Hires:",
+    "Persons to hire:",
     "Interviewing:",
     "Invites sent:",
     "Client last viewed:",
@@ -260,6 +261,7 @@ def _format_face_value_fields(lead: dict[str, Any]) -> list[str]:
             norm = _try_normalize_payload_for_display(payload)
             if norm:
                 _apply_normalized_mapping(values, norm)
+            _apply_exact_marketplace_mapping(values, payload)
 
     # Build final lines
     lines: list[str] = []
@@ -321,6 +323,13 @@ def _apply_best_matches_mapping(values: dict[str, str], data: dict[str, Any]) ->
         if json_key in data:
             values[label] = _fmt_face_val(data[json_key])
 
+def _apply_exact_marketplace_mapping(values: dict[str, str], data: dict[str, Any]) -> None:
+    persons_to_hire = _get_nested_value(
+        data,
+        ("_exact_marketplace_raw", "contractTerms", "personsToHire"),
+    )
+    if persons_to_hire is not None:
+        values["Persons to hire:"] = _fmt_face_val(persons_to_hire)
 
 def _apply_normalized_mapping(values: dict[str, str], norm: Any) -> None:
     # Posted
@@ -382,6 +391,13 @@ def _apply_normalized_mapping(values: dict[str, str], norm: Any) -> None:
             f"{_format_money(norm.mkt_low)}"
         )
 
+def _get_nested_value(data: dict[str, Any], path: tuple[str, ...]) -> Any:
+    current: Any = data
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
 
 def _format_money(value: Any) -> str:
     """Helper to format numeric money values safely."""

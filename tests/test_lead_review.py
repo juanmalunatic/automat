@@ -510,7 +510,7 @@ def test_render_universal_section_contains_all_labels() -> None:
     labels = [
         "Posted:", "Connects:", "Contract:", "Budget:", "Hourly range:",
         "Tier:", "Duration:", "Skills:", "Qualifications:", "Proposals:",
-        "Hires:", "Interviewing:", "Invites sent:", "Client last viewed:",
+        "Hires:", "Persons to hire:", "Interviewing:", "Invites sent:", "Client last viewed:",
         "Payment:", "Client country:", "Client spend:", "Hire rate:",
         "Total hires:", "Jobs posted:", "Jobs open:", "Avg hourly paid:",
         "Hours hired:", "Member since:", "Market high/avg/low:", "Featured:"
@@ -518,6 +518,43 @@ def test_render_universal_section_contains_all_labels() -> None:
     for label in labels:
         assert label in output
 
+def test_render_graphql_exact_payload_shows_persons_to_hire() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps({
+        "_exact_marketplace_raw": {
+            "activityStat": {
+                "jobActivity": {
+                    "totalHired": 1,
+                }
+            },
+            "contractTerms": {
+                "personsToHire": 1,
+            },
+        }
+    })
+
+    output = render_raw_lead_review(lead)
+
+    _assert_face_value_field(output, "Persons to hire:", "1")
+
+def test_render_graphql_exact_payload_missing_persons_to_hire_shows_dash() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps({
+        "_exact_marketplace_raw": {
+            "activityStat": {
+                "jobActivity": {
+                    "totalHired": 1,
+                }
+            },
+            "contractTerms": {},
+        }
+    })
+
+    output = render_raw_lead_review(lead)
+
+    _assert_face_value_field(output, "Persons to hire:", "—")
 
 # ---------------------------------------------------------------------------
 # Promotion Tests
