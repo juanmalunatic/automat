@@ -150,6 +150,14 @@ def main(
                 limit=args.limit,
                 stdout=out,
             )
+        if args.command == "import-best-matches-html":
+            return _run_import_best_matches_html(
+                input_path=args.input_path,
+                source_query=args.source_query,
+                limit=args.limit,
+                source=args.source,
+                stdout=out,
+            )
         if args.command == "probe-upwork-fields":
             return _run_probe_upwork_fields(
                 source=args.source,
@@ -408,6 +416,28 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "--limit",
         type=_positive_int_arg,
         help="Maximum number of jobs to process from the artifact.",
+    )
+    import_best_matches_parser = subparsers.add_parser(
+        "import-best-matches-html",
+        help="Import manually saved Best Matches HTML into raw_leads.",
+    )
+    import_best_matches_parser.add_argument(
+        "input_path",
+        help="Path to a saved Best Matches outerHTML file.",
+    )
+    import_best_matches_parser.add_argument(
+        "--source-query",
+        help="Optional source query context. Defaults to the input path.",
+    )
+    import_best_matches_parser.add_argument(
+        "--limit",
+        type=_positive_int_arg,
+        help="Maximum number of jobs to import.",
+    )
+    import_best_matches_parser.add_argument(
+        "--source",
+        default="best_matches_ui",
+        help="Source name for the imported leads (default: best_matches_ui).",
     )
     probe_parser = subparsers.add_parser(
         "probe-upwork-fields",
@@ -823,6 +853,50 @@ def _run_import_artifact_leads(
     print(f"Leads upserted: {summary['upserted']}", file=stdout)
     print(f"Skipped import failures: {summary['skipped_import_failures']}", file=stdout)
     
+    return 0
+
+
+def _run_import_best_matches_html(
+    *,
+    input_path: str,
+    source_query: str | None,
+    limit: int | None,
+    source: str,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+
+    try:
+        with open(input_path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except OSError as exc:
+        print(f"Error reading {input_path}: {exc}", file=sys.stderr)
+        return 1
+
+    effective_query = source_query if source_query is not None else input_path
+
+    from upwork_triage.best_matches_parse import import_best_matches_html
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        summary = import_best_matches_html(
+            conn,
+            html,
+            source_query=effective_query,
+            limit=limit,
+        )
+    finally:
+        conn.close()
+
+    print("Best Matches HTML import complete.", file=stdout)
+    print(f"Input: {input_path}", file=stdout)
+    print(f"Source: {source}", file=stdout)
+    print(f"Tiles parsed: {summary['parsed']}", file=stdout)
+    print(f"Leads upserted: {summary['upserted']}", file=stdout)
+    print(f"Skipped parse failures: {summary['skipped_parse_failures']}", file=stdout)
+
     return 0
 
 

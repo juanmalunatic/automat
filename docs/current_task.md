@@ -93,7 +93,21 @@ py -m upwork_triage list-leads --limit 20
 - it does not filter or score leads
 - it does not call Upwork or AI
 - it does not mutate the existing candidate/enrichment pipeline
-- future slices will add Best Matches import and one-lead-at-a-time review
+- you can now also import Best Matches UI captures:
+
+```powershell
+# Save copied outerHTML from Upwork Best Matches to:
+# data/manual/best_matches_outerhtml.html
+
+py -m upwork_triage import-best-matches-html `
+  data/manual/best_matches_outerhtml.html
+
+py -m upwork_triage lead-counts
+py -m upwork_triage list-leads --source best_matches_ui --limit 20
+```
+
+- this preserves the one-based rank and captures raw UI data without scraping
+- future slices will add one-lead-at-a-time review
 
 ## Next technical work later
 
