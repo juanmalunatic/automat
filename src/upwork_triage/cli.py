@@ -963,6 +963,7 @@ def _run_import_best_matches_html(
     print(f"Tiles parsed: {summary['parsed']}", file=stdout)
     print(f"Leads upserted: {summary['upserted']}", file=stdout)
     print(f"Skipped parse failures: {summary['skipped_parse_failures']}", file=stdout)
+    print(f"Skipped hidden feedback tiles: {summary['skipped_hidden_feedback']}", file=stdout)
 
     return 0
 

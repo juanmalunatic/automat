@@ -59,6 +59,10 @@ class _BestMatchesParser(HTMLParser):
 
         # Simple text captures
         test_val = attr_dict.get("data-test")
+        if test_val == "select-feedbackremove":
+            if self._current_job is not None:
+                self._current_job["is_hidden_feedback"] = True
+
         if test_val in ("posted-on", "job-type", "contractor-tier", "duration", "budget", "job-description-text", "payment-verification-status", "formatted-amount", "client-country", "proposals"):
             self._capture_key = test_val
             self._capture_buffer = []
@@ -146,6 +150,7 @@ def parse_best_matches_html(html: str) -> list[dict[str, Any]]:
                 job_id = m.group(1)
                 
         job["upwork_job_id"] = job_id
+        job["is_hidden_feedback"] = raw.get("is_hidden_feedback", False)
         
         full_url = _normalize_upwork_url(url)
         job["source_url"] = full_url
@@ -215,8 +220,13 @@ def import_best_matches_html(
 
     upserted_count = 0
     skipped_count = 0
+    skipped_hidden_count = 0
 
     for job in jobs:
+        if job.get("is_hidden_feedback"):
+            skipped_hidden_count += 1
+            continue
+
         if not job["job_key"]:
             skipped_count += 1
             continue
@@ -248,4 +258,5 @@ def import_best_matches_html(
         "parsed": len(jobs),
         "upserted": upserted_count,
         "skipped_parse_failures": skipped_count,
+        "skipped_hidden_feedback": skipped_hidden_count,
     }
