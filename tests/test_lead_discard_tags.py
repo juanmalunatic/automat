@@ -32,6 +32,7 @@ def test_approved_tags_registry_is_exact() -> None:
         "client_spend_zero",
         "client_country_blocklisted",
         "client_hire_rate_below_30",
+        "job_likely_filled",
     )
 
 
@@ -812,3 +813,202 @@ def test_match_hire_rate_derived_normalized() -> None:
     assert matches[0].tag_name == "client_hire_rate_below_30"
     assert matches[0].evidence_field == "normalized.c_hist_hire_rate"
     assert matches[0].evidence_text == "20.0"
+
+
+# ---------------------------------------------------------------------------
+# Job Likely Filled Tests
+# ---------------------------------------------------------------------------
+
+def test_match_job_likely_filled_single_slot_exact_payload() -> None:
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps({
+            "_exact_marketplace_raw": {
+                "activityStat": {
+                    "jobActivity": {
+                        "totalHired": 1,
+                    }
+                },
+                "contractTerms": {
+                    "personsToHire": 1,
+                },
+            }
+        }),
+    }
+
+    matches = extract_discard_tags_for_lead(lead)
+
+    assert len(matches) == 1
+    assert matches[0].tag_name == "job_likely_filled"
+    assert matches[0].evidence_field == (
+        "_exact_marketplace_raw.activityStat.jobActivity.totalHired + "
+        "_exact_marketplace_raw.contractTerms.personsToHire"
+    )
+    assert matches[0].evidence_text == "totalHired=1; personsToHire=1"
+
+
+def test_no_match_job_likely_filled_multi_slot_still_open() -> None:
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps({
+            "_exact_marketplace_raw": {
+                "activityStat": {
+                    "jobActivity": {
+                        "totalHired": 1,
+                    }
+                },
+                "contractTerms": {
+                    "personsToHire": 3,
+                },
+            }
+        }),
+    }
+
+    matches = extract_discard_tags_for_lead(lead)
+
+    assert not any(m.tag_name == "job_likely_filled" for m in matches)
+
+
+def test_no_match_job_likely_filled_zero_persons_to_hire() -> None:
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps({
+            "_exact_marketplace_raw": {
+                "activityStat": {
+                    "jobActivity": {
+                        "totalHired": 1,
+                    }
+                },
+                "contractTerms": {
+                    "personsToHire": 0,
+                },
+            }
+        }),
+    }
+
+    matches = extract_discard_tags_for_lead(lead)
+
+    assert not any(m.tag_name == "job_likely_filled" for m in matches)
+
+
+def test_no_match_job_likely_filled_missing_persons_to_hire() -> None:
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps({
+            "_exact_marketplace_raw": {
+                "activityStat": {
+                    "jobActivity": {
+                        "totalHired": 1,
+                    }
+                },
+                "contractTerms": {},
+            }
+        }),
+    }
+
+    matches = extract_discard_tags_for_lead(lead)
+
+    assert not any(m.tag_name == "job_likely_filled" for m in matches)
+
+
+def test_no_match_job_likely_filled_missing_total_hired() -> None:
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps({
+            "_exact_marketplace_raw": {
+                "activityStat": {
+                    "jobActivity": {}
+                },
+                "contractTerms": {
+                    "personsToHire": 1,
+                },
+            }
+        }),
+    }
+
+    matches = extract_discard_tags_for_lead(lead)
+
+    assert not any(m.tag_name == "job_likely_filled" for m in matches)
+
+
+def test_match_job_likely_filled_string_integer_values() -> None:
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps({
+            "_exact_marketplace_raw": {
+                "activityStat": {
+                    "jobActivity": {
+                        "totalHired": "2",
+                    }
+                },
+                "contractTerms": {
+                    "personsToHire": "2",
+                },
+            }
+        }),
+    }
+
+    matches = extract_discard_tags_for_lead(lead)
+
+    assert len(matches) == 1
+    assert matches[0].tag_name == "job_likely_filled"
+    assert matches[0].evidence_text == "totalHired=2; personsToHire=2"
+
+
+def test_evaluate_lead_job_likely_filled_persists_and_rejects(mem_conn: sqlite3.Connection) -> None:
+    payload = {
+        "_exact_marketplace_raw": {
+            "activityStat": {
+                "jobActivity": {
+                    "totalHired": 1,
+                }
+            },
+            "contractTerms": {
+                "personsToHire": 1,
+            },
+        }
+    }
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="up:filled",
+        source="graphql_search",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_payload_json=json.dumps(payload),
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id)
+
+    assert result.new_status == "rejected"
+    assert len(result.matched_tags) == 1
+    assert result.matched_tags[0].tag_name == "job_likely_filled"
+
+    row = mem_conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row["lead_status"] == "rejected"
+
+    tag_rows = mem_conn.execute("SELECT * FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchall()
+    assert len(tag_rows) == 1
+    assert tag_rows[0]["tag_name"] == "job_likely_filled"
+    assert tag_rows[0]["evidence_field"] == (
+        "_exact_marketplace_raw.activityStat.jobActivity.totalHired + "
+        "_exact_marketplace_raw.contractTerms.personsToHire"
+    )
+    assert tag_rows[0]["evidence_text"] == "totalHired=1; personsToHire=1"
+
+
+def test_no_match_job_likely_filled_does_not_confuse_client_total_hires() -> None:
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps({
+            "client": {
+                "totalHires": 99,
+            }
+        }),
+    }
+
+    matches = extract_discard_tags_for_lead(lead)
+
+    assert not any(m.tag_name == "job_likely_filled" for m in matches)
+

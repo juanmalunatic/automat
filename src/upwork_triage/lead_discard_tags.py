@@ -22,6 +22,7 @@ APPROVED_DISCARD_TAGS = (
     "client_spend_zero",
     "client_country_blocklisted",
     "client_hire_rate_below_30",
+    "job_likely_filled",
 )
 
 BLOCKLISTED_CLIENT_COUNTRIES = (
@@ -203,6 +204,78 @@ def _is_client_hire_rate_below_30(lead: Mapping[str, Any]) -> DiscardTagMatch | 
     return None
 
 
+def _get_nested_payload_value(data: Mapping[str, Any], path: tuple[str, ...]) -> Any:
+    current: Any = data
+    for key in path:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _parse_nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        if value.is_integer() and value >= 0:
+            return int(value)
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit():
+            return int(text)
+    return None
+
+
+def _is_job_likely_filled(lead: Mapping[str, Any]) -> DiscardTagMatch | None:
+    raw_payload_json = lead.get("raw_payload_json")
+    if not raw_payload_json:
+        return None
+
+    try:
+        payload = json.loads(raw_payload_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    exact_payload = payload.get("_exact_marketplace_raw")
+    if not isinstance(exact_payload, dict):
+        return None
+
+    total_hired = _parse_nonnegative_int(
+        _get_nested_payload_value(
+            exact_payload,
+            ("activityStat", "jobActivity", "totalHired"),
+        )
+    )
+    persons_to_hire = _parse_nonnegative_int(
+        _get_nested_payload_value(
+            exact_payload,
+            ("contractTerms", "personsToHire"),
+        )
+    )
+
+    if total_hired is None or persons_to_hire is None:
+        return None
+    if persons_to_hire <= 0:
+        return None
+    if total_hired >= persons_to_hire:
+        return DiscardTagMatch(
+            tag_name="job_likely_filled",
+            evidence_field=(
+                "_exact_marketplace_raw.activityStat.jobActivity.totalHired + "
+                "_exact_marketplace_raw.contractTerms.personsToHire"
+            ),
+            evidence_text=f"totalHired={total_hired}; personsToHire={persons_to_hire}",
+        )
+
+    return None
+
+
 def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMatch, ...]:
     """
     Extract manually approved discard tags from a raw lead.
@@ -249,6 +322,11 @@ def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMa
     hire_rate_match = _is_client_hire_rate_below_30(lead)
     if hire_rate_match:
         matches.append(hire_rate_match)
+
+    # Tag: job_likely_filled
+    filled_match = _is_job_likely_filled(lead)
+    if filled_match:
+        matches.append(filled_match)
 
     return tuple(matches)
 
