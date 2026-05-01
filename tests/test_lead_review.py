@@ -889,3 +889,38 @@ def test_review_next_lead_auto_reject_limit(tmp_path: Path) -> None:
         "CLI error: Auto-reject limit exceeded while searching for next reviewable lead."
         in stderr.getvalue()
     )
+
+
+def test_review_next_lead_auto_rejects_hourly_max_below_25(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Lead 1: Matches hourly_max_below_25
+    _insert(conn, job_key="bm:1", captured_at=_NOW2)
+    with conn:
+        conn.execute(
+            "UPDATE raw_leads SET raw_pay_text = 'Hourly: $8-$10' WHERE job_key = 'bm:1'"
+        )
+
+    # Lead 2: Survivor
+    _insert(conn, job_key="bm:2", captured_at=_NOW1)
+
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead"], stdout=stdout)
+
+    output = stdout.getvalue()
+    
+    conn_ids = connect_db(db_path)
+    reject_id = conn_ids.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+    survivor_id = conn_ids.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:2'").fetchone()[0]
+    conn_ids.close()
+
+    assert "Auto-rejected approved discard matches:" in output
+    assert f"- Lead {reject_id}: hourly_max_below_25" in output
+    assert f"Lead id:     {survivor_id}" in output

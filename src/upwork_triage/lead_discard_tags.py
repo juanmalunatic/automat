@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ __all__ = [
     "evaluate_lead_discard_tags",
 ]
 
-APPROVED_DISCARD_TAGS = ("proposals_50_plus",)
+APPROVED_DISCARD_TAGS = ("proposals_50_plus", "hourly_max_below_25")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,10 +36,31 @@ class LeadDiscardEvaluationResult:
     mutated: bool
 
 
+def _extract_hourly_max_rate_from_pay_text(raw_pay_text: Any) -> float | None:
+    if raw_pay_text is None:
+        return None
+    text = str(raw_pay_text).lower()
+
+    # Require hourly signal
+    hourly_signals = ("hourly", "hour/hr", "/hr", "per hour")
+    if not any(signal in text for signal in hourly_signals):
+        return None
+
+    # Find all dollar amounts
+    matches = re.findall(r"\$(\d+(?:\.\d+)?)", text)
+    if not matches:
+        return None
+
+    # The max rate is the last match (for ranges like $8-$10)
+    try:
+        return float(matches[-1])
+    except (ValueError, IndexError):
+        return None
+
+
 def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMatch, ...]:
     """
     Extract manually approved discard tags from a raw lead.
-    Only checks raw_proposals_text for "50+" in this slice.
     """
     matches: list[DiscardTagMatch] = []
 
@@ -56,6 +78,17 @@ def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMa
                 )
             )
 
+    # Tag: hourly_max_below_25
+    raw_pay_text = lead.get("raw_pay_text")
+    max_rate = _extract_hourly_max_rate_from_pay_text(raw_pay_text)
+    if max_rate is not None and max_rate < 25:
+        matches.append(
+            DiscardTagMatch(
+                tag_name="hourly_max_below_25",
+                evidence_field="raw_pay_text",
+                evidence_text=str(raw_pay_text).strip(),
+            )
+        )
 
     return tuple(matches)
 

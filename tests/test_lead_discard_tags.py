@@ -25,7 +25,7 @@ def mem_conn() -> sqlite3.Connection:
 
 
 def test_approved_tags_registry_is_exact() -> None:
-    assert APPROVED_DISCARD_TAGS == ("proposals_50_plus",)
+    assert APPROVED_DISCARD_TAGS == ("proposals_50_plus", "hourly_max_below_25")
 
 
 def test_match_proposals_50_plus_exact() -> None:
@@ -81,6 +81,65 @@ def test_no_match_proposals_empty_string() -> None:
     assert len(matches) == 0
 
 
+# ---------------------------------------------------------------------------
+# Hourly Max Below 25 Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("pay_text", [
+    "Hourly: $8-$10",
+    "Hourly: $8 - $10",
+    "Hourly: $8 to $10",
+    "Hourly $8-$10/hr",
+    "Hourly: $20-$24",
+    "Hourly: $24",
+    "Hourly - $10.50-$20.75/hr",
+])
+def test_match_hourly_max_below_25(pay_text: str) -> None:
+    lead = {"raw_pay_text": pay_text}
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 1
+    assert matches[0].tag_name == "hourly_max_below_25"
+    assert matches[0].evidence_field == "raw_pay_text"
+    assert matches[0].evidence_text == pay_text
+
+
+@pytest.mark.parametrize("pay_text", [
+    "Hourly: $25-$40",
+    "Hourly: $25",
+    "Hourly: $30",
+    "Hourly: $20-$25",
+    "Fixed: $500",
+    "Fixed-price",
+    "Budget: $200",
+    "Hourly, rate not specified",
+    "$8-$10",  # no hourly word
+    None,
+    "",
+])
+def test_no_match_hourly_max_below_25(pay_text: str | None) -> None:
+    lead = {"raw_pay_text": pay_text}
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 0
+
+
+def test_match_hourly_max_below_25_ignores_raw_payload_json() -> None:
+    # Even if payload has hourly under 25, if raw_pay_text is missing, no match.
+    lead = {"raw_payload_json": '{"pay": "Hourly: $8-$10"}'}
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 0
+
+
+def test_match_multiple_tags() -> None:
+    lead = {
+        "raw_proposals_text": "50+",
+        "raw_pay_text": "Hourly: $8-$10",
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 2
+    tag_names = {m.tag_name for m in matches}
+    assert tag_names == {"proposals_50_plus", "hourly_max_below_25"}
+
+
 def test_ignores_raw_payload_json() -> None:
     # Even if payload has 50+, if raw_proposals_text is missing, no match.
     lead = {"raw_payload_json": '{"proposals": "50+"}'}
@@ -93,6 +152,7 @@ def test_ignores_other_fields() -> None:
         "raw_proposals_text": "5 to 10",
         "raw_description": "We need 50+ workers",
         "raw_title": "Project 50+",
+        "raw_pay_text": "Fixed: $50",
     }
     matches = extract_discard_tags_for_lead(lead)
     assert len(matches) == 0
