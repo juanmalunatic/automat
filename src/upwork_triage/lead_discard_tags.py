@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ __all__ = [
     "evaluate_lead_discard_tags",
 ]
 
-APPROVED_DISCARD_TAGS = ("proposals_50_plus", "hourly_max_below_25")
+APPROVED_DISCARD_TAGS = ("proposals_50_plus", "hourly_max_below_25", "client_spend_zero")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +59,55 @@ def _extract_hourly_max_rate_from_pay_text(raw_pay_text: Any) -> float | None:
         return None
 
 
+def _is_client_spend_zero(lead: Mapping[str, Any]) -> DiscardTagMatch | None:
+    source = lead.get("source")
+    raw_payload_json = lead.get("raw_payload_json")
+    if not raw_payload_json:
+        return None
+
+    try:
+        payload = json.loads(raw_payload_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    if source == "best_matches_ui":
+        # formatted-amount is $0, $0.00, etc.
+        amount = payload.get("formatted-amount")
+        if amount is not None:
+            normalized = str(amount).strip().lower()
+            # Remove $ and commas
+            stripped = normalized.replace("$", "").replace(",", "")
+            try:
+                val = float(stripped)
+                if val == 0:
+                    return DiscardTagMatch(
+                        tag_name="client_spend_zero",
+                        evidence_field="raw_payload_json.formatted-amount",
+                        evidence_text=normalized,
+                    )
+            except ValueError:
+                pass
+    else:
+        # Use normalizer
+        from upwork_triage.normalize import normalize_job_payload
+
+        try:
+            norm_result = normalize_job_payload(payload)
+            if norm_result.normalized.c_hist_total_spent == 0:
+                return DiscardTagMatch(
+                    tag_name="client_spend_zero",
+                    evidence_field="normalized.c_hist_total_spent",
+                    evidence_text="0",
+                )
+        except (ValueError, TypeError, KeyError, AttributeError):
+            pass
+
+    return None
+
+
 def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMatch, ...]:
     """
     Extract manually approved discard tags from a raw lead.
@@ -89,6 +139,11 @@ def extract_discard_tags_for_lead(lead: Mapping[str, Any]) -> tuple[DiscardTagMa
                 evidence_text=str(raw_pay_text).strip(),
             )
         )
+
+    # Tag: client_spend_zero
+    spend_match = _is_client_spend_zero(lead)
+    if spend_match:
+        matches.append(spend_match)
 
     return tuple(matches)
 

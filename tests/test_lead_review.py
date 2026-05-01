@@ -943,3 +943,52 @@ def test_review_next_lead_auto_rejects_hourly_max_below_25(tmp_path: Path) -> No
     ).fetchone()
     assert tag_row[0] == "hourly_max_below_25"
     conn3.close()
+
+
+def test_review_next_lead_auto_rejects_client_spend_zero(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Lead 1: Matches client_spend_zero
+    payload = {"formatted-amount": "$0"}
+    upsert_raw_lead(
+        conn,
+        job_key="bm:1",
+        source="best_matches_ui",
+        lead_status="new",
+        raw_payload_json=json.dumps(payload),
+        captured_at=_NOW2,
+        created_at=_NOW2,
+        updated_at=_NOW2,
+    )
+
+    # Lead 2: Survivor
+    _insert(conn, job_key="bm:2", captured_at=_NOW1)
+
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead"], stdout=stdout)
+
+    output = stdout.getvalue()
+    
+    conn_ids = connect_db(db_path)
+    reject_id = conn_ids.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+    survivor_id = conn_ids.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:2'").fetchone()[0]
+    
+    # Verify DB mutation
+    # Rejected lead
+    row1 = conn_ids.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (reject_id,)).fetchone()
+    assert row1[0] == "rejected"
+    # Tag row exists
+    tag_row = conn_ids.execute("SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = ?", (reject_id,)).fetchone()
+    assert tag_row[0] == "client_spend_zero"
+    conn_ids.close()
+
+    assert "Auto-rejected approved discard matches:" in output
+    assert f"- Lead {reject_id}: client_spend_zero" in output
+    assert f"Lead id:     {survivor_id}" in output

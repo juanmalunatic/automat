@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import pytest
 
@@ -25,7 +26,7 @@ def mem_conn() -> sqlite3.Connection:
 
 
 def test_approved_tags_registry_is_exact() -> None:
-    assert APPROVED_DISCARD_TAGS == ("proposals_50_plus", "hourly_max_below_25")
+    assert APPROVED_DISCARD_TAGS == ("proposals_50_plus", "hourly_max_below_25", "client_spend_zero")
 
 
 def test_match_proposals_50_plus_exact() -> None:
@@ -129,15 +130,95 @@ def test_match_hourly_max_below_25_ignores_raw_payload_json() -> None:
     assert len(matches) == 0
 
 
-def test_match_multiple_tags() -> None:
+# ---------------------------------------------------------------------------
+# Client Spend Zero Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("formatted_amount", ["$0", "$0.00", "0", "0.0", " $0 "])
+def test_match_client_spend_zero_best_matches(formatted_amount: str) -> None:
     lead = {
-        "raw_proposals_text": "50+",
-        "raw_pay_text": "Hourly: $8-$10",
+        "source": "best_matches_ui",
+        "raw_payload_json": json.dumps({"formatted-amount": formatted_amount})
     }
     matches = extract_discard_tags_for_lead(lead)
-    assert len(matches) == 2
+    assert len(matches) == 1
+    assert matches[0].tag_name == "client_spend_zero"
+    assert matches[0].evidence_field == "raw_payload_json.formatted-amount"
+    assert matches[0].evidence_text == formatted_amount.strip().lower()
+
+
+def test_no_match_client_spend_positive_best_matches() -> None:
+    lead = {
+        "source": "best_matches_ui",
+        "raw_payload_json": json.dumps({"formatted-amount": "$100"})
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 0
+
+
+def test_match_client_spend_zero_normalized() -> None:
+    # Construct a payload that normalizes to spend=0
+    # Based on normalize.py, we might need a specific structure
+    # For now, let's assume a simple mock that normalize_job_payload accepts
+    payload = {
+        "client": {
+            "stats": {
+                "totalSpent": 0
+            }
+        }
+    }
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps(payload)
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 1
+    assert matches[0].tag_name == "client_spend_zero"
+    assert matches[0].evidence_field == "normalized.c_hist_total_spent"
+    assert matches[0].evidence_text == "0"
+
+
+def test_no_match_client_spend_positive_normalized() -> None:
+    payload = {
+        "client": {
+            "stats": {
+                "totalSpent": 100
+            }
+        }
+    }
+    lead = {
+        "source": "graphql_search",
+        "raw_payload_json": json.dumps(payload)
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 0
+
+
+def test_client_spend_zero_no_prose_matching() -> None:
+    lead = {
+        "source": "best_matches_ui",
+        "raw_description": "The client spend is $0",
+        "raw_payload_json": json.dumps({"formatted-amount": "$100"})
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    # Should not match based on description prose
+    assert len(matches) == 0
+
+
+def test_match_all_three_tags() -> None:
+    payload = {
+        "formatted-amount": "$0"
+    }
+    lead = {
+        "source": "best_matches_ui",
+        "raw_proposals_text": "50+",
+        "raw_pay_text": "Hourly: $8-$10",
+        "raw_payload_json": json.dumps(payload)
+    }
+    matches = extract_discard_tags_for_lead(lead)
+    assert len(matches) == 3
     tag_names = {m.tag_name for m in matches}
-    assert tag_names == {"proposals_50_plus", "hourly_max_below_25"}
+    assert tag_names == {"proposals_50_plus", "hourly_max_below_25", "client_spend_zero"}
 
 
 def test_ignores_raw_payload_json() -> None:
@@ -445,3 +526,54 @@ def test_evaluate_lead_both_tags_persists_idempotently(mem_conn: sqlite3.Connect
     evaluate_lead_discard_tags(mem_conn, lead_id)
     tag_count = mem_conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchone()[0]
     assert tag_count == 2
+
+
+def test_evaluate_lead_client_spend_zero_persists_and_rejects(mem_conn: sqlite3.Connection) -> None:
+    payload = {"formatted-amount": "$0"}
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="up:1",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_payload_json=json.dumps(payload),
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id)
+
+    assert result.new_status == "rejected"
+    assert len(result.matched_tags) == 1
+    assert result.matched_tags[0].tag_name == "client_spend_zero"
+
+    # Verify DB side
+    row = mem_conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row["lead_status"] == "rejected"
+
+    tag_rows = mem_conn.execute("SELECT * FROM raw_lead_discard_tags WHERE lead_id = ?", (lead_id,)).fetchall()
+    assert len(tag_rows) == 1
+    assert tag_rows[0]["tag_name"] == "client_spend_zero"
+
+
+def test_evaluate_lead_client_spend_positive_does_not_reject(mem_conn: sqlite3.Connection) -> None:
+    payload = {"formatted-amount": "$100"}
+    lead_id = upsert_raw_lead(
+        mem_conn,
+        job_key="up:1",
+        source="best_matches_ui",
+        captured_at="2026-05-01T00:00:00Z",
+        created_at="2026-05-01T00:00:00Z",
+        updated_at="2026-05-01T00:00:00Z",
+        raw_payload_json=json.dumps(payload),
+        lead_status="new",
+    )
+
+    result = evaluate_lead_discard_tags(mem_conn, lead_id)
+
+    assert len(result.matched_tags) == 0
+    assert result.new_status == "new"
+
+    # Verify DB side unchanged
+    row = mem_conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (lead_id,)).fetchone()
+    assert row["lead_status"] == "new"
