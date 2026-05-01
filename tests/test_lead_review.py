@@ -8,10 +8,11 @@ from typing import Any
 
 import pytest
 
-from upwork_triage.__main__ import main
+from upwork_triage.cli import main
 from upwork_triage.db import connect_db, initialize_db
 from upwork_triage.leads import (
     ALLOWED_LEAD_STATUSES,
+    fetch_next_raw_lead,
     render_raw_lead_review,
     upsert_raw_lead,
 )
@@ -86,12 +87,14 @@ def test_render_raw_lead_review_basic() -> None:
     assert "Source:      best_matches_ui" in output
     assert "Rank:        1" in output
     assert "Captured:    2026-05-01T00:00:00Z" in output
+    assert "Job key:     bm:1" in output
     assert "URL:         https://upwork.com/jobs/123" in output
     assert "Title:       Test Job" in output
     assert "Pay:         $500" in output
     assert "Proposals:   5 to 10" in output
     assert "Description: Description" in output
     assert "=" * 60 in output
+    assert "Next step: inspect this lead manually and decide whether to code a new approved discard tag." in output
 
 
 def test_render_raw_lead_review_truncates_description() -> None:
@@ -101,6 +104,7 @@ def test_render_raw_lead_review_truncates_description() -> None:
 
     # 10 chars + space + […]
     assert "Description: AAAAAAAAAA […]" in output
+    assert "Next step: inspect this lead manually" in output
 
 
 def test_render_raw_lead_review_missing_fields() -> None:
@@ -118,30 +122,178 @@ def test_render_raw_lead_review_missing_fields() -> None:
     assert "Description: —" in output
 
 
+def test_render_raw_lead_review_no_forbidden_language() -> None:
+    lead = _make_lead()
+    output = render_raw_lead_review(lead)
+
+    forbidden = [
+        "verdict",
+        "score",
+        "positive_flags",
+        "negative_flags",
+        "HYDRATE_CANDIDATE",
+        "LOW_PRIORITY_REVIEW",
+        "lead-action",
+        "recommended action",
+        "discarded",
+    ]
+    for word in forbidden:
+        assert word not in output
+
+
+def test_fetch_next_raw_lead_ordering_best_matches_first(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Best Matches (old) and GraphQL (new). Best Matches should come first.
+    _insert(conn, job_key="graphql:1", source="graphql_search", captured_at=_NOW2)
+    _insert(conn, job_key="bm:1", source="best_matches_ui", captured_at=_NOW1)
+
+    lead = fetch_next_raw_lead(conn)
+    assert lead is not None
+    assert lead["source"] == "best_matches_ui"
+    conn.close()
+
+
+def test_fetch_next_raw_lead_ordering_by_rank(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Rank 2 (old) and Rank 1 (new). Rank 1 should come first.
+    _insert(conn, job_key="bm:2", source_rank=2, captured_at=_NOW1)
+    _insert(conn, job_key="bm:1", source_rank=1, captured_at=_NOW2)
+
+    lead = fetch_next_raw_lead(conn)
+    assert lead is not None
+    assert lead["job_key"] == "bm:1"
+    conn.close()
+
+
+def test_fetch_next_raw_lead_ordering_tie_break_by_captured_at(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Same rank, newer captured_at should come first.
+    _insert(conn, job_key="bm:1", source_rank=1, captured_at=_NOW1)
+    _insert(conn, job_key="bm:2", source_rank=1, captured_at=_NOW2)
+
+    lead = fetch_next_raw_lead(conn)
+    assert lead is not None
+    assert lead["job_key"] == "bm:2"
+    conn.close()
+
+
+def test_fetch_next_raw_lead_ordering_non_bm_newest_first(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    # Both non-BM, newer should come first.
+    _insert(conn, job_key="g:1", source="graphql_search", captured_at=_NOW1)
+    _insert(conn, job_key="g:2", source="graphql_search", captured_at=_NOW2)
+
+    lead = fetch_next_raw_lead(conn)
+    assert lead is not None
+    assert lead["job_key"] == "g:2"
+    conn.close()
+
+
+def test_fetch_next_raw_lead_source_filter(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    _insert(conn, job_key="bm:1", source="best_matches_ui")
+    _insert(conn, job_key="g:1", source="graphql_search")
+
+    lead = fetch_next_raw_lead(conn, source="graphql_search")
+    assert lead is not None
+    assert lead["source"] == "graphql_search"
+    conn.close()
+
+
+def test_fetch_next_raw_lead_status_filter(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    _insert(conn, job_key="new:1", lead_status="new")
+    _insert(conn, job_key="rej:1", lead_status="rejected")
+
+    lead = fetch_next_raw_lead(conn, status="rejected")
+    assert lead is not None
+    assert lead["lead_status"] == "rejected"
+    conn.close()
+
+
+def test_fetch_next_raw_lead_no_results_returns_none(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    lead = fetch_next_raw_lead(conn)
+    assert lead is None
+    conn.close()
+
+
 def test_review_next_lead_cli_logic(tmp_path: Path) -> None:
     db_path = tmp_path / "test.db"
     conn = connect_db(db_path)
     initialize_db(conn)
 
-    # Insert two leads.
     _insert(conn, job_key="bm:2", source_rank=2, captured_at=_NOW1)
     _insert(conn, job_key="bm:1", source_rank=1, captured_at=_NOW2)
     conn.close()
 
-    # Run CLI
     stdout = StringIO()
     stderr = StringIO()
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("AUTOMAT_DB_PATH", str(db_path))
-        # Ensure we don't pick up the real .env if it exists
         mp.setenv("AUTOMAT_APP_ENV", "test")
         main(["review-next-lead"], stdout=stdout, stderr=stderr)
 
     output = stdout.getvalue()
     assert "Lead id:" in output
-    # Should pick bm:1 because rank=1
     assert "bm:1" in output
     assert stderr.getvalue() == ""
+
+
+def test_review_next_lead_cli_source_filter(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    _insert(conn, job_key="bm:1", source="best_matches_ui")
+    _insert(conn, job_key="g:1", source="graphql_search")
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead", "--source", "graphql_search"], stdout=stdout)
+
+    output = stdout.getvalue()
+    assert "Source:      graphql_search" in output
+    assert "g:1" in output
+
+
+def test_review_next_lead_cli_status_filter_empty(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["review-next-lead", "--status", "rejected"], stdout=stdout)
+
+    assert "No raw leads found for review with status=rejected" in stdout.getvalue()
 
 
 def test_review_next_lead_no_leads(tmp_path: Path) -> None:
