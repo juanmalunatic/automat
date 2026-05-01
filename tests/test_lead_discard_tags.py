@@ -683,6 +683,19 @@ def test_no_match_country_missing() -> None:
     assert len(matches) == 0
 
 
+def test_no_match_country_prose_only_when_country_field_missing() -> None:
+    lead = {
+        "source": "best_matches_ui",
+        "raw_title": "Project in Pakistan",
+        "raw_description": "We are located in Pakistan",
+        "raw_client_summary": "Client from Pakistan",
+        "raw_payload_json": json.dumps({"other": "field"}),
+    }
+
+    matches = extract_discard_tags_for_lead(lead)
+    assert not any(m.tag_name == "client_country_blocklisted" for m in matches)
+
+
 def test_evaluate_lead_country_blocklisted_persists_and_rejects(mem_conn: sqlite3.Connection) -> None:
     payload = {"client-country": "Pakistan"}
     lead_id = upsert_raw_lead(
