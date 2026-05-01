@@ -153,7 +153,7 @@ py -m upwork_triage promote-next-lead
 py -m upwork_triage promote-lead <lead_id>
 ```
 
-- `promote-next-lead` repeats the same auto-discard pre-gate as `review-next-lead` and promotes the first surviving survivor.
+- `promote-next-lead` repeats the same auto-discard pre-gate as `review-next-lead` and promotes the first surviving lead.
 - only 'new' leads can be promoted
 - marked as 'promote' and will no longer appear in default 'review-next-lead'
 - no discard tags are created for the promoted lead

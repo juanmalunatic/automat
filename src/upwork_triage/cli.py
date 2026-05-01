@@ -561,7 +561,6 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         type=int,
         help="Integer id of the raw lead to promote.",
     )
-    promote_lead_parser.set_defaults(func=partial(_run_promote_lead, stdout=stdout))
 
     review_next_lead_parser = subparsers.add_parser(
         "review-next-lead",
@@ -1104,7 +1103,7 @@ def _run_list_leads(*, limit: int | None, status: str | None, source: str | None
             url_str = f" ({lead['source_url']})" if lead.get("source_url") else ""
             title_str = f" - {lead['raw_title']}" if lead.get("raw_title") else ""
             print(
-            f"[{lead['id']}] {lead['lead_status']} | {lead['source']}{rank_str} | {lead['job_key']}{title_str}{url_str} | {lead['captured_at']}",
+                f"[{lead['id']}] {lead['lead_status']} | {lead['source']}{rank_str} | {lead['job_key']}{title_str}{url_str} | {lead['captured_at']}",
                 file=stdout,
             )
     finally:

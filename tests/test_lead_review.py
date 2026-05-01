@@ -995,7 +995,6 @@ def test_review_next_lead_auto_rejects_client_spend_zero(tmp_path: Path) -> None
     assert "Auto-rejected approved discard matches:" in output
     assert f"- Lead {reject_id}: client_spend_zero" in output
     assert f"Lead id:     {survivor_id}" in output
-    assert f"Lead id:     {survivor_id}" in output
 
 
 def test_promote_next_lead_promotes_same_as_review(tmp_path: Path) -> None:
@@ -1009,23 +1008,39 @@ def test_promote_next_lead_promotes_same_as_review(tmp_path: Path) -> None:
     id2 = _insert(conn, job_key="bm:2", captured_at=_NOW1)
     conn.close()
 
-    stdout = StringIO()
+    # 1. Run review-next-lead to see what's first
+    stdout1 = StringIO()
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("AUTOMAT_DB_PATH", str(db_path))
         mp.setenv("AUTOMAT_APP_ENV", "test")
-        main(["promote-next-lead"], stdout=stdout)
+        main(["review-next-lead"], stdout=stdout1)
+    
+    out1 = stdout1.getvalue()
+    assert f"Lead id:     {id1}" in out1
+    assert "Job key:     bm:1" in out1
 
-    output = stdout.getvalue()
-    assert "Lead promoted." in output
-    assert f"Lead id:     {id1}" in output
-    assert "Previous status: new" in output
-    assert "New status:      promote" in output
+    # 2. Run promote-next-lead and assert it picks the same one
+    stdout2 = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        main(["promote-next-lead"], stdout=stdout2)
+
+    out2 = stdout2.getvalue()
+    assert "Lead promoted." in out2
+    assert f"Lead id:     {id1}" in out2
+    assert "Previous status: new" in out2
+    assert "New status:      promote" in out2
 
     conn = connect_db(db_path)
     row1 = conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id1,)).fetchone()
     assert row1[0] == "promote"
     row2 = conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id2,)).fetchone()
     assert row2[0] == "new"
+    
+    # Assert promoted survivor has no discard tags
+    count = conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags WHERE lead_id = ?", (id1,)).fetchone()[0]
+    assert count == 0
     conn.close()
 
 
@@ -1034,14 +1049,26 @@ def test_promote_next_lead_auto_rejects_and_promotes(tmp_path: Path) -> None:
     conn = connect_db(db_path)
     initialize_db(conn)
 
-    # Lead 1: matches discard tag
+    # Lead 1: matches proposals_50_plus
     with conn:
         id1 = upsert_raw_lead(
             conn, job_key="bm:1", source="best_matches_ui", lead_status="new",
             raw_proposals_text="50+", captured_at=_NOW2, created_at=_NOW2, updated_at=_NOW2
         )
-    # Lead 2: survivor
-    id2 = _insert(conn, job_key="bm:2", captured_at=_NOW1)
+    # Lead 2: matches hourly_max_below_25
+    with conn:
+        id2 = upsert_raw_lead(
+            conn, job_key="bm:2", source="best_matches_ui", lead_status="new",
+            raw_pay_text="Hourly: $8-$10", captured_at=_NOW2, created_at=_NOW2, updated_at=_NOW2
+        )
+    # Lead 3: matches client_spend_zero
+    with conn:
+        id3 = upsert_raw_lead(
+            conn, job_key="bm:3", source="best_matches_ui", lead_status="new",
+            raw_payload_json=json.dumps({"formatted-amount": "$0"}), captured_at=_NOW2, created_at=_NOW2, updated_at=_NOW2
+        )
+    # Lead 4: survivor
+    id4 = _insert(conn, job_key="bm:4", captured_at=_NOW1)
     conn.close()
 
     stdout = StringIO()
@@ -1053,12 +1080,25 @@ def test_promote_next_lead_auto_rejects_and_promotes(tmp_path: Path) -> None:
     output = stdout.getvalue()
     assert "Auto-rejected approved discard matches:" in output
     assert f"- Lead {id1}: proposals_50_plus" in output
+    assert f"- Lead {id2}: hourly_max_below_25" in output
+    assert f"- Lead {id3}: client_spend_zero" in output
     assert "Lead promoted." in output
-    assert f"Lead id:     {id2}" in output
+    assert f"Lead id:     {id4}" in output
 
     conn = connect_db(db_path)
     assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id1,)).fetchone()[0] == "rejected"
-    assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id2,)).fetchone()[0] == "promote"
+    assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id2,)).fetchone()[0] == "rejected"
+    assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id3,)).fetchone()[0] == "rejected"
+    assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id4,)).fetchone()[0] == "promote"
+    
+    # Verify tag rows exist for rejected leads
+    assert conn.execute("SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = ?", (id1,)).fetchone()[0] == "proposals_50_plus"
+    assert conn.execute("SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = ?", (id2,)).fetchone()[0] == "hourly_max_below_25"
+    assert conn.execute("SELECT tag_name FROM raw_lead_discard_tags WHERE lead_id = ?", (id3,)).fetchone()[0] == "client_spend_zero"
+    
+    # Assert promoted survivor has no discard tags
+    count = conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags WHERE lead_id = ?", (id4,)).fetchone()[0]
+    assert count == 0
     conn.close()
 
 
