@@ -13,7 +13,14 @@ from upwork_triage.actions import ActionError, record_user_action
 from upwork_triage.config import ConfigError, load_config
 from upwork_triage.db import connect_db, initialize_db
 from upwork_triage.lead_discard_tags import evaluate_lead_discard_tags
-from upwork_triage.leads import fetch_next_raw_lead, fetch_raw_lead_counts, fetch_raw_leads, render_raw_lead_review, upsert_raw_lead
+from upwork_triage.leads import (
+    fetch_next_raw_lead,
+    fetch_raw_lead_counts,
+    fetch_raw_leads,
+    promote_raw_lead,
+    render_raw_lead_review,
+    upsert_raw_lead,
+)
 from upwork_triage.dry_run import (
     MVP_MANUAL_FINAL_CHECK_FIELDS,
     RawArtifactError,
@@ -213,6 +220,11 @@ def main(
             )
         if args.command == "evaluate-lead":
             return _run_evaluate_lead(
+                lead_id=args.lead_id,
+                stdout=out,
+            )
+        if args.command == "promote-lead":
+            return _run_promote_lead(
                 lead_id=args.lead_id,
                 stdout=out,
             )
@@ -530,6 +542,16 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
         "lead_id",
         type=int,
         help="Integer id of the raw lead to evaluate.",
+    )
+
+    promote_lead_parser = subparsers.add_parser(
+        "promote-lead",
+        help="Promote a raw lead from 'new' to 'promote'. Use when it passes face-value review.",
+    )
+    promote_lead_parser.add_argument(
+        "lead_id",
+        type=int,
+        help="Integer id of the raw lead to promote.",
     )
 
     review_next_lead_parser = subparsers.add_parser(
@@ -1144,6 +1166,28 @@ def _run_evaluate_lead(
     print("Evidence:", file=stdout)
     for m in result.matched_tags:
         print(f"- {m.tag_name}: {m.evidence_field} = {m.evidence_text}", file=stdout)
+
+    return 0
+
+
+def _run_promote_lead(
+    *,
+    lead_id: int,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        result = promote_raw_lead(conn, lead_id)
+    finally:
+        conn.close()
+
+    print("Lead promoted.", file=stdout)
+    print(f"Lead id: {result.lead_id}", file=stdout)
+    print(f"Previous status: {result.previous_status}", file=stdout)
+    print(f"New status: {result.new_status}", file=stdout)
 
     return 0
 

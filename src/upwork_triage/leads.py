@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from upwork_triage.normalize import normalize_job_payload
@@ -15,6 +17,14 @@ ALLOWED_LEAD_STATUSES = {
     "applied",
     "archived",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class PromoteLeadResult:
+    lead_id: int
+    job_key: str
+    previous_status: str
+    new_status: str
 
 
 def upsert_raw_lead(
@@ -124,6 +134,51 @@ def fetch_next_raw_lead(
         return None
     column_names = [col[0] for col in cursor.description]
     return dict(zip(column_names, row, strict=True))
+
+
+def promote_raw_lead(
+    conn: sqlite3.Connection,
+    lead_id: int,
+    *,
+    promoted_at: str | None = None,
+) -> PromoteLeadResult:
+    """
+    Mark a raw lead as promoted from 'new' to 'promote'.
+    Raises ValueError if lead missing or not in 'new' status.
+    """
+    cursor = conn.execute(
+        "SELECT job_key, lead_status FROM raw_leads WHERE id = ?", (lead_id,)
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise ValueError(f"Raw lead not found: {lead_id}")
+
+    job_key, previous_status = row
+    if previous_status != "new":
+        raise ValueError(
+            f"Lead {lead_id} is not promotable from status {previous_status}"
+        )
+
+    if promoted_at is None:
+        promoted_at = (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+
+    with conn:
+        conn.execute(
+            "UPDATE raw_leads SET lead_status = 'promote', updated_at = ? WHERE id = ?",
+            (promoted_at, lead_id),
+        )
+
+    return PromoteLeadResult(
+        lead_id=lead_id,
+        job_key=job_key,
+        previous_status=previous_status,
+        new_status="promote",
+    )
 
 
 def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) -> str:

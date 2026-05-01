@@ -140,6 +140,21 @@ py -m upwork_triage evaluate-lead <lead_id>
 - no AI, scoring, or verdicts are used
 
 
+You can now promote leads that pass face-value review:
+
+```powershell
+py -m upwork_triage review-next-lead
+
+# If the lead passes face-value review, run:
+py -m upwork_triage promote-lead <lead_id>
+```
+
+- only 'new' leads can be promoted
+- marked as 'promote' and will no longer appear in default 'review-next-lead'
+- no discard tags are created
+- no AI, scoring, or verdicts are used
+
+
 ## Next technical work later
 
 Later technical work should focus on:

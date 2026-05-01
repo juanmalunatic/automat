@@ -13,6 +13,7 @@ from upwork_triage.db import connect_db, initialize_db
 from upwork_triage.leads import (
     ALLOWED_LEAD_STATUSES,
     fetch_next_raw_lead,
+    promote_raw_lead,
     render_raw_lead_review,
     upsert_raw_lead,
 )
@@ -516,3 +517,143 @@ def test_render_universal_section_contains_all_labels() -> None:
     ]
     for label in labels:
         assert label in output
+
+
+# ---------------------------------------------------------------------------
+# Promotion Tests
+# ---------------------------------------------------------------------------
+
+
+def test_promote_raw_lead_success(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    _insert(conn, job_key="bm:1")
+
+    # Get ID
+    lead_id = conn.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+
+    result = promote_raw_lead(conn, lead_id, promoted_at="2026-05-01T12:00:00Z")
+
+    assert result.lead_id == lead_id
+    assert result.job_key == "bm:1"
+    assert result.previous_status == "new"
+    assert result.new_status == "promote"
+
+    # Verify in DB
+    row = conn.execute(
+        "SELECT lead_status, updated_at FROM raw_leads WHERE id = ?", (lead_id,)
+    ).fetchone()
+    assert row[0] == "promote"
+    assert row[1] == "2026-05-01T12:00:00Z"
+    conn.close()
+
+
+def test_promote_raw_lead_missing(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+
+    with pytest.raises(ValueError, match="Raw lead not found: 999"):
+        promote_raw_lead(conn, 999)
+    conn.close()
+
+
+def test_promote_raw_lead_invalid_status(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    _insert(conn, job_key="bm:1", lead_status="rejected")
+    lead_id = conn.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+
+    with pytest.raises(ValueError, match="is not promotable from status rejected"):
+        promote_raw_lead(conn, lead_id)
+    conn.close()
+
+
+def test_promote_raw_lead_no_discard_tags(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    _insert(conn, job_key="bm:1")
+    lead_id = conn.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+
+    promote_raw_lead(conn, lead_id)
+
+    # Ensure no rows in raw_lead_discard_tags
+    count = conn.execute("SELECT COUNT(*) FROM raw_lead_discard_tags").fetchone()[0]
+    assert count == 0
+    conn.close()
+
+
+def test_review_next_lead_queue_after_promotion(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    _insert(conn, job_key="bm:1")
+    lead_id = conn.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+
+    # Initially visible
+    assert fetch_next_raw_lead(conn) is not None
+
+    promote_raw_lead(conn, lead_id)
+
+    # Now hidden from 'new' queue
+    assert fetch_next_raw_lead(conn) is None
+    conn.close()
+
+
+def test_promote_lead_cli_success(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    _insert(conn, job_key="bm:1")
+    lead_id = conn.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+    conn.close()
+
+    stdout = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        exit_code = main(["promote-lead", str(lead_id)], stdout=stdout)
+
+    assert exit_code == 0
+    output = stdout.getvalue()
+    assert "Lead promoted." in output
+    assert f"Lead id: {lead_id}" in output
+    assert "Previous status: new" in output
+    assert "New status: promote" in output
+
+
+def test_promote_lead_cli_missing(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    conn.close()
+
+    stderr = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        exit_code = main(["promote-lead", "999"], stdout=StringIO(), stderr=stderr)
+
+    assert exit_code == 1
+    assert "CLI error: Raw lead not found: 999" in stderr.getvalue()
+
+
+def test_promote_lead_cli_invalid_status(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    _insert(conn, job_key="bm:1", lead_status="rejected")
+    lead_id = conn.execute("SELECT id FROM raw_leads WHERE job_key = 'bm:1'").fetchone()[0]
+    conn.close()
+
+    stderr = StringIO()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("AUTOMAT_DB_PATH", str(db_path))
+        mp.setenv("AUTOMAT_APP_ENV", "test")
+        exit_code = main(["promote-lead", str(lead_id)], stdout=StringIO(), stderr=stderr)
+
+    assert exit_code == 1
+    assert f"CLI error: Lead {lead_id} is not promotable from status rejected" in stderr.getvalue()
