@@ -447,7 +447,7 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
 
     debug_insert_lead_parser = subparsers.add_parser(
         "debug-insert-lead",
-        help="Local debug helper: insert a raw lead for manual testing.",
+        help="Local debug helper: insert or update a raw lead for manual testing.",
     )
     debug_insert_lead_parser.add_argument("--job-key", required=True)
     debug_insert_lead_parser.add_argument("--source", required=True)
@@ -883,6 +883,9 @@ def _run_list_leads(*, limit: int | None, status: str | None, source: str | None
     try:
         initialize_db(conn)
         leads = fetch_raw_leads(conn, limit=limit, status=status, source=source)
+        if not leads:
+            print("Raw lead list is empty.", file=stdout)
+            return 0
         for lead in leads:
             rank_str = f" [rank:{lead['source_rank']}]" if lead.get("source_rank") is not None else ""
             url_str = f" ({lead['source_url']})" if lead.get("source_url") else ""
@@ -916,7 +919,7 @@ def _run_debug_insert_lead(*, job_key: str, source: str, title: str | None, url:
             created_at=now_iso,
             updated_at=now_iso,
         )
-        print(f"Inserted raw lead {lead_id} ({job_key})", file=stdout)
+        print(f"Upserted raw lead {lead_id} ({job_key})", file=stdout)
         conn.commit()
     finally:
         conn.close()

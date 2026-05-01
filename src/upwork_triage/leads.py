@@ -2,6 +2,16 @@ from __future__ import annotations
 
 import sqlite3
 from typing import Any
+    
+ALLOWED_LEAD_STATUSES = {
+    "new",
+    "face_reviewed",
+    "rejected",
+    "promote",
+    "hydrated",
+    "applied",
+    "archived",
+}
 
 
 def upsert_raw_lead(
@@ -24,6 +34,9 @@ def upsert_raw_lead(
     raw_payload_json: str | None = None,
     lead_status: str = "new",
 ) -> int:
+    if lead_status not in ALLOWED_LEAD_STATUSES:
+        raise ValueError(f"Invalid lead_status: {lead_status}")
+
     cursor = conn.execute(
         """
         INSERT INTO raw_leads (
@@ -104,6 +117,8 @@ def fetch_raw_leads(
     params: list[Any] = []
 
     if status is not None:
+        if status not in ALLOWED_LEAD_STATUSES:
+            raise ValueError(f"Invalid status: {status}")
         query += " AND lead_status = ?"
         params.append(status)
     if source is not None:
@@ -116,6 +131,7 @@ def fetch_raw_leads(
         query += " LIMIT ?"
         params.append(limit)
 
-    conn.row_factory = sqlite3.Row
     cursor = conn.execute(query, params)
-    return [dict(row) for row in cursor.fetchall()]
+    rows = cursor.fetchall()
+    column_names = [column[0] for column in cursor.description]
+    return [dict(zip(column_names, row, strict=True)) for row in rows]

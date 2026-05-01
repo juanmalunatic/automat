@@ -2575,7 +2575,7 @@ def test_cli_lead_counts_and_list_leads(workspace_tmp_dir: Path, monkeypatch: py
     # Insert some leads first
     exit_code = main(["debug-insert-lead", "--job-key", "upwork:cli1", "--source", "test_source", "--title", "CLI Test 1"], stdout=stdout, stderr=stderr)
     assert exit_code == 0
-    assert "Inserted raw lead 1 (upwork:cli1)" in stdout.getvalue()
+    assert "Upserted raw lead 1 (upwork:cli1)" in stdout.getvalue()
     
     # Test counts
     stdout = StringIO()
@@ -2596,4 +2596,10 @@ def test_cli_lead_counts_and_list_leads(workspace_tmp_dir: Path, monkeypatch: py
     stdout = StringIO()
     exit_code = main(["list-leads", "--status", "rejected"], stdout=stdout, stderr=stderr)
     assert exit_code == 0
-    assert "upwork:cli1" not in stdout.getvalue()
+    assert "Raw lead list is empty." in stdout.getvalue()
+
+    # Test missing source filter
+    stdout = StringIO()
+    exit_code = main(["list-leads", "--source", "some_missing_source"], stdout=stdout, stderr=stderr)
+    assert exit_code == 0
+    assert "Raw lead list is empty." in stdout.getvalue()

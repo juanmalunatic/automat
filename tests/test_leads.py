@@ -99,3 +99,43 @@ def test_list_leads_filters(conn: sqlite3.Connection) -> None:
     
     assert len(fetch_raw_leads(conn, source="s2")) == 1
     assert fetch_raw_leads(conn, source="s2")[0]["job_key"] == "b"
+
+
+def test_fetch_raw_leads_does_not_mutate_row_factory(conn: sqlite3.Connection) -> None:
+    original_row_factory = conn.row_factory
+    fetch_raw_leads(conn)
+    assert conn.row_factory is original_row_factory
+
+
+def test_fetch_raw_leads_returns_dicts_with_default_row_factory() -> None:
+    c = sqlite3.connect(":memory:")
+    initialize_db(c)
+    assert c.row_factory is None
+    
+    now = datetime.now(timezone.utc).isoformat()
+    upsert_raw_lead(c, job_key="a", source="s1", captured_at=now, created_at=now, updated_at=now)
+    
+    rows = fetch_raw_leads(c)
+    assert len(rows) == 1
+    assert isinstance(rows[0], dict)
+    assert rows[0]["job_key"] == "a"
+
+
+def test_upsert_invalid_lead_status(conn: sqlite3.Connection) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with pytest.raises(ValueError, match="Invalid lead_status: invalid_status"):
+        upsert_raw_lead(
+            conn,
+            job_key="a",
+            source="s1",
+            captured_at=now,
+            created_at=now,
+            updated_at=now,
+            lead_status="invalid_status"
+        )
+
+
+def test_fetch_invalid_lead_status(conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="Invalid status: invalid_status"):
+        fetch_raw_leads(conn, status="invalid_status")
+
