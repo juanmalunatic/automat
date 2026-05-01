@@ -69,6 +69,32 @@ run the MVP loop on real jobs
 -> keep enough local notes/actions to tune later
 ```
 
+## Lead Calibration Lane
+
+You can now import raw GraphQL/search artifacts into the Lead Calibration Lane for later review:
+
+```powershell
+py -m upwork_triage preview-upwork `
+  --limit 200 `
+  --sample-limit 200 `
+  --output data/debug/upwork_raw_hydrated_latest.json `
+  --json-output data/debug/dry_run_latest.json
+
+py -m upwork_triage import-artifact-leads `
+  data/debug/upwork_raw_hydrated_latest.json `
+  --source graphql_search
+
+py -m upwork_triage lead-counts
+py -m upwork_triage list-leads --limit 20
+```
+
+- this imports saved GraphQL/search artifact jobs into `raw_leads`
+- it does not replace `ingest-upwork-artifact`
+- it does not filter or score leads
+- it does not call Upwork or AI
+- it does not mutate the existing candidate/enrichment pipeline
+- future slices will add Best Matches import and one-lead-at-a-time review
+
 ## Next technical work later
 
 Later technical work should focus on:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from upwork_triage.leads import upsert_raw_lead
@@ -19,7 +18,7 @@ def import_artifact_leads(
 ) -> dict[str, int]:
     now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     
-    skipped_count = 0
+    skipped_import_failures = 0
     upserted_count = 0
     
     for i, job in enumerate(raw_jobs):
@@ -27,11 +26,11 @@ def import_artifact_leads(
             norm_result = normalize_job_payload(job)
         except Exception:
             # If normalization fails completely, we skip
-            skipped_count += 1
+            skipped_import_failures += 1
             continue
 
         if not norm_result.job_key:
-            skipped_count += 1
+            skipped_import_failures += 1
             continue
             
         norm = norm_result.normalized
@@ -69,7 +68,7 @@ def import_artifact_leads(
             created_at=now_iso,
             updated_at=now_iso,
             upwork_job_id=norm_result.upwork_job_id,
-            source_rank=i,
+            source_rank=i + 1,
             source_query=source_query,
             source_url=norm_result.source_url,
             raw_title=norm.j_title,
@@ -87,5 +86,5 @@ def import_artifact_leads(
     return {
         "loaded": len(raw_jobs),
         "upserted": upserted_count,
-        "skipped": skipped_count,
+        "skipped_import_failures": skipped_import_failures,
     }

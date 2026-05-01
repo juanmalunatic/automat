@@ -46,7 +46,7 @@ def test_import_artifact_leads_basics(conn: sqlite3.Connection) -> None:
     
     assert summary["loaded"] == 2
     assert summary["upserted"] == 2
-    assert summary["skipped"] == 0
+    assert summary["skipped_import_failures"] == 0
 
     leads = fetch_raw_leads(conn)
     assert len(leads) == 2
@@ -77,31 +77,20 @@ def test_import_artifact_leads_idempotency(conn: sqlite3.Connection) -> None:
     assert len(fetch_raw_leads(conn)) == 1
 
 
-def test_import_artifact_leads_skips_missing_identity(conn: sqlite3.Connection) -> None:
-    raw_jobs = [
-        {"title": "No identity job"},  # Will have a raw hash
-        {"id": "job123", "title": "Good job"},
-    ]
-    # Actually wait, raw hash works as a stable identity. 
-    # To truly fail normalization / have no stable identity, we pass something that fails normalization completely 
-    # e.g., missing dictionary or a type error. Let's just make sure normalization parses it.
-    
-    # Let's mock normalize_job_payload to return empty job_key for one job
-    # But wait, without mocking, is there a way to fail job_key? 
-    # build_job_key falls back to raw_hash. It always has an identity.
-    # We can test that a job with just a title gets a raw: hash job_key.
+def test_import_artifact_leads_uses_fallback_identity_for_minimal_job(conn: sqlite3.Connection) -> None:
+    raw_jobs = [{"title": "No explicit id"}]
     summary = import_artifact_leads(conn, raw_jobs)
-    assert summary["upserted"] == 2
-    
-    # To test skipped, we can pass something invalid like a list instead of dict,
-    # which causes stable_hash_payload or normalize to fail
-    raw_jobs_invalid = [
-        {"id": "job456"},
-        None,  # type: ignore
-    ]
-    summary2 = import_artifact_leads(conn, raw_jobs_invalid)  # type: ignore
-    assert summary2["upserted"] == 1
-    assert summary2["skipped"] == 1
+    assert summary["upserted"] == 1
+    assert summary["skipped_import_failures"] == 0
+    lead = fetch_raw_leads(conn)[0]
+    assert lead["job_key"].startswith("raw:")
+
+
+def test_import_artifact_leads_skips_invalid_payload(conn: sqlite3.Connection) -> None:
+    raw_jobs = [{"id": "job456"}, None]  # type: ignore
+    summary = import_artifact_leads(conn, raw_jobs)  # type: ignore
+    assert summary["upserted"] == 1
+    assert summary["skipped_import_failures"] == 1
 
 
 def test_import_artifact_leads_cli_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,7 +117,7 @@ def test_import_artifact_leads_cli_command(tmp_path: Path, monkeypatch: pytest.M
     assert "Raw artifact lead import complete." in output
     assert "Jobs loaded: 1" in output
     assert "Leads upserted: 1" in output
-    assert "Skipped missing identity: 0" in output
+    assert "Skipped import failures: 0" in output
 
     # Verify we can list them
     stdout2 = StringIO()

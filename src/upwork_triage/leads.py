@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from typing import Any
-    
+
 ALLOWED_LEAD_STATUSES = {
     "new",
     "face_reviewed",

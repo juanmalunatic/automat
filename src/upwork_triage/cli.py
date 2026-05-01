@@ -821,7 +821,7 @@ def _run_import_artifact_leads(
     print(f"Source: {source}", file=stdout)
     print(f"Jobs loaded: {summary['loaded']}", file=stdout)
     print(f"Leads upserted: {summary['upserted']}", file=stdout)
-    print(f"Skipped missing identity: {summary['skipped']}", file=stdout)
+    print(f"Skipped import failures: {summary['skipped_import_failures']}", file=stdout)
     
     return 0
 
