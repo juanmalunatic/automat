@@ -107,7 +107,23 @@ py -m upwork_triage list-leads --source best_matches_ui --limit 20
 ```
 
 - this preserves the one-based rank and captures raw UI data without scraping
-- future slices will add one-lead-at-a-time review
+
+You can now review leads one at a time:
+
+```powershell
+py -m upwork_triage review-next-lead
+
+# Optional filters
+py -m upwork_triage review-next-lead --source best_matches_ui
+py -m upwork_triage review-next-lead --status new --description-chars 800
+```
+
+- display-only — reads one `raw_leads` row, prints face-value fields, exits
+- no filtering, scoring, tagging, discarding, or status mutation
+- does not call AI or Upwork
+- Best Matches leads shown first (by rank), then other sources newest-first
+- after reviewing, record your judgment in a physical notebook; later slices will let you code approved discard tags
+
 
 ## Next technical work later
 

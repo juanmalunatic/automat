@@ -12,7 +12,7 @@ from typing import TextIO
 from upwork_triage.actions import ActionError, record_user_action
 from upwork_triage.config import ConfigError, load_config
 from upwork_triage.db import connect_db, initialize_db
-from upwork_triage.leads import fetch_raw_lead_counts, fetch_raw_leads, upsert_raw_lead
+from upwork_triage.leads import fetch_next_raw_lead, fetch_raw_lead_counts, fetch_raw_leads, render_raw_lead_review, upsert_raw_lead
 from upwork_triage.dry_run import (
     MVP_MANUAL_FINAL_CHECK_FIELDS,
     RawArtifactError,
@@ -208,6 +208,13 @@ def main(
                 upwork_job_id=args.upwork_job_id,
                 action=args.user_action,
                 notes=args.notes,
+                stdout=out,
+            )
+        if args.command == "review-next-lead":
+            return _run_review_next_lead(
+                status=args.status,
+                source=args.source,
+                description_chars=args.description_chars,
                 stdout=out,
             )
         if args.command == "lead-counts":
@@ -508,6 +515,27 @@ def _build_parser(*, stdout: TextIO, stderr: TextIO) -> argparse.ArgumentParser:
     debug_insert_lead_parser.add_argument("--source", required=True)
     debug_insert_lead_parser.add_argument("--title")
     debug_insert_lead_parser.add_argument("--url")
+
+    review_next_lead_parser = subparsers.add_parser(
+        "review-next-lead",
+        help="Print one pending raw lead for face-value human inspection. Display only — no DB mutation.",
+    )
+    review_next_lead_parser.add_argument(
+        "--status",
+        default="new",
+        help="Lead status to filter by (default: new).",
+    )
+    review_next_lead_parser.add_argument(
+        "--source",
+        default=None,
+        help="Restrict to a specific source (e.g. best_matches_ui).",
+    )
+    review_next_lead_parser.add_argument(
+        "--description-chars",
+        type=int,
+        default=1600,
+        help="Max description characters to display (default: 1600).",
+    )
 
     return parser
 
@@ -1034,6 +1062,37 @@ def _run_list_leads(*, limit: int | None, status: str | None, source: str | None
             )
     finally:
         conn.close()
+    return 0
+
+
+def _run_review_next_lead(
+    *,
+    status: str,
+    source: str | None,
+    description_chars: int,
+    stdout: TextIO,
+) -> int:
+    config = load_config()
+    db_path = Path(config.db_path)
+    _ensure_parent_dir(db_path)
+    conn = connect_db(db_path)
+    try:
+        initialize_db(conn)
+        lead = fetch_next_raw_lead(conn, status=status, source=source)
+    finally:
+        conn.close()
+
+    if lead is None:
+        filter_desc = ""
+        if status != "new" or source is not None:
+            parts = [f"status={status}"]
+            if source is not None:
+                parts.append(f"source={source}")
+            filter_desc = " with " + " ".join(parts)
+        print(f"No raw leads found for review{filter_desc}.", file=stdout)
+        return 0
+
+    print(render_raw_lead_review(lead, description_chars=description_chars), file=stdout)
     return 0
 
 

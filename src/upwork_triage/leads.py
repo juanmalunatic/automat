@@ -86,9 +86,67 @@ def upsert_raw_lead(
     return int(row[0])
 
 
-def fetch_next_raw_lead(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    # Scaffold for future single-lead review
-    return None
+def fetch_next_raw_lead(
+    conn: sqlite3.Connection,
+    *,
+    status: str = "new",
+    source: str | None = None,
+) -> dict[str, Any] | None:
+    if status not in ALLOWED_LEAD_STATUSES:
+        raise ValueError(f"Invalid status: {status}")
+
+    query = """
+        SELECT *
+        FROM raw_leads
+        WHERE lead_status = ?
+    """
+    params: list[Any] = [status]
+
+    if source is not None:
+        query += " AND source = ?\n"
+        params.append(source)
+
+    query += """
+        ORDER BY
+            CASE WHEN source = 'best_matches_ui' THEN 0 ELSE 1 END ASC,
+            CASE WHEN source = 'best_matches_ui' THEN COALESCE(source_rank, 999999) END ASC,
+            CASE WHEN source != 'best_matches_ui' THEN captured_at END DESC,
+            id DESC
+        LIMIT 1
+    """
+
+    cursor = conn.execute(query, params)
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    column_names = [col[0] for col in cursor.description]
+    return dict(zip(column_names, row, strict=True))
+
+
+def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) -> str:
+    lines: list[str] = []
+    lines.append("=" * 60)
+    lines.append(f"Lead id:     {lead.get('id')}")
+    lines.append(f"Status:      {lead.get('lead_status')}")
+    lines.append(f"Source:      {lead.get('source')}")
+    rank = lead.get("source_rank")
+    lines.append(f"Rank:        {rank if rank is not None else '—'}")
+    lines.append(f"Captured:    {lead.get('captured_at')}")
+    lines.append(f"Job key:     {lead.get('job_key')}")
+    lines.append(f"URL:         {lead.get('source_url') or '—'}")
+    lines.append(f"Title:       {lead.get('raw_title') or '—'}")
+    lines.append(f"Pay:         {lead.get('raw_pay_text') or '—'}")
+    lines.append(f"Proposals:   {lead.get('raw_proposals_text') or '—'}")
+    lines.append(f"Client:      {lead.get('raw_client_summary') or '—'}")
+    raw_desc = lead.get("raw_description") or ""
+    if len(raw_desc) > description_chars:
+        raw_desc = raw_desc[:description_chars] + " […]"
+    lines.append(f"Description: {raw_desc or '—'}")
+    lines.append("=" * 60)
+    lines.append(
+        "Next step: inspect this lead manually and decide whether to code a new approved discard tag."
+    )
+    return "\n".join(lines)
 
 
 def fetch_raw_lead_counts(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
