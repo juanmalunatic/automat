@@ -1487,6 +1487,144 @@ def test_by_id_layer_shows_hydration_failure() -> None:
     _assert_face_value_field(by_id_section, "Persons to hire:", ".")
 
 
+def test_non_best_matches_render_includes_marketplace_public_by_id_manual_layers() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    output = render_raw_lead_review(lead)
+
+    # Assert all required layers present/absent
+    assert "marketplace_search_layer" in output
+    assert "public_search_layer" in output
+    assert "by_id_layer" in output
+    assert "manual_scrape_layer" in output
+    assert "graphql_layer" not in output
+    assert "best_matches_layer" not in output
+
+    # Assert layer order
+    marketplace_idx = output.index("marketplace_search_layer")
+    public_idx = output.index("public_search_layer")
+    by_id_idx = output.index("by_id_layer")
+    manual_idx = output.index("manual_scrape_layer")
+    assert marketplace_idx < public_idx < by_id_idx < manual_idx
+
+
+def test_marketplace_layer_reads_from_marketplace_raw() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps({
+        "_source_terms": ["wordpress", "woocommerce"],
+        "_source_surfaces": ["search", "recommendation"],
+        "_marketplace_raw": {
+            "id": "m1",
+            "ciphertext": "~m1",
+            "title": "Marketplace title",
+            "createdDateTime": "2026-05-01T10:00:00Z",
+            "skills": [{"prettyName": "WordPress"}, {"name": "PHP"}],
+            "client": {
+                "verificationStatus": "VERIFIED",
+                "location": {
+                    "country": "United States",
+                    "city": "New York",
+                    "timezone": "America/New_York"
+                },
+                "totalSpent": {"displayValue": "$10K+", "rawValue": 10000},
+                "totalHires": 12,
+                "totalPostedJobs": 20,
+                "totalReviews": 8,
+                "totalFeedback": 4.9,
+                "lastContractTitle": "WordPress maintenance",
+                "hasFinancialPrivacy": False
+            }
+        }
+    })
+    output = render_raw_lead_review(lead)
+
+    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
+    manual_section = _layer_section(output, "manual_scrape_layer", "=" * 60)
+
+    # Marketplace fields
+    _assert_face_value_field(mp_section, "Source terms:", "wordpress, woocommerce")
+    _assert_face_value_field(mp_section, "Source surfaces:", "search, recommendation")
+    _assert_face_value_field(mp_section, "Job id:", "m1")
+    _assert_face_value_field(mp_section, "Ciphertext:", "~m1")
+    _assert_face_value_field(mp_section, "Title:", "Marketplace title")
+    _assert_face_value_field(mp_section, "Posted:", "2026-05-01T10:00:00Z")
+    _assert_face_value_field(mp_section, "Skills:", "WordPress, PHP")
+    _assert_face_value_field(mp_section, "Payment:", "VERIFIED")
+    _assert_face_value_field(mp_section, "Client country:", "United States")
+    _assert_face_value_field(mp_section, "Client city:", "New York")
+    _assert_face_value_field(mp_section, "Client timezone:", "America/New_York")
+    _assert_face_value_field(mp_section, "Client spend:", "$10K+")
+    _assert_face_value_field(mp_section, "Total hires:", "12")
+    _assert_face_value_field(mp_section, "Jobs posted:", "20")
+    _assert_face_value_field(mp_section, "Client reviews:", "8")
+    _assert_face_value_field(mp_section, "Client feedback:", "4.9")
+    _assert_face_value_field(mp_section, "Last contract title:", "WordPress maintenance")
+    _assert_face_value_field(mp_section, "Financial privacy:", "no")
+
+    # Public section has no _public_raw data
+    _assert_face_value_field(pub_section, "Job id:", ".")
+
+    # by_id and manual layers exist
+    assert "by_id_layer" in by_id_section
+    _assert_face_value_field(manual_section, "Manual status:", ".")
+
+
+def test_public_layer_reads_from_public_raw() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps({
+        "_source_terms": ["python", "django"],
+        "_source_surfaces": ["search"],
+        "_public_raw": {
+            "id": "p1",
+            "ciphertext": "~p1",
+            "title": "Public title",
+            "publishedDateTime": "2026-05-01T11:00:00Z",
+            "type": "hourly",
+            "hourlyBudgetMin": 25,
+            "hourlyBudgetMax": 50,
+            "hourlyBudgetType": "FIXED",
+            "amount": {"displayValue": "$500", "rawValue": 500},
+            "weeklyBudget": {"rawValue": 1000},
+            "contractorTier": "Expert",
+            "durationLabel": "Less than 1 month",
+            "engagement": "Less than 30 hrs/week",
+            "jobStatus": "OPEN",
+            "recno": 123,
+            "totalApplicants": 5
+        }
+    })
+    output = render_raw_lead_review(lead)
+
+    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
+
+    # Public fields
+    _assert_face_value_field(pub_section, "Source terms:", "python, django")
+    _assert_face_value_field(pub_section, "Source surfaces:", "search")
+    _assert_face_value_field(pub_section, "Job id:", "p1")
+    _assert_face_value_field(pub_section, "Ciphertext:", "~p1")
+    _assert_face_value_field(pub_section, "Title:", "Public title")
+    _assert_face_value_field(pub_section, "Posted:", "2026-05-01T11:00:00Z")
+    _assert_face_value_field(pub_section, "Contract:", "hourly")
+    _assert_face_value_field(pub_section, "Hourly range:", "$25-$50/hr")
+    _assert_face_value_field(pub_section, "Hourly budget type:", "FIXED")
+    _assert_face_value_field(pub_section, "Budget:", "$500")
+    _assert_face_value_field(pub_section, "Weekly budget:", "$1000")
+    _assert_face_value_field(pub_section, "Tier:", "Expert")
+    _assert_face_value_field(pub_section, "Duration:", "Less than 1 month")
+    _assert_face_value_field(pub_section, "Engagement:", "Less than 30 hrs/week")
+    _assert_face_value_field(pub_section, "Job status:", "OPEN")
+    _assert_face_value_field(pub_section, "Recno:", "123")
+    _assert_face_value_field(pub_section, "Proposals:", "5")
+
+    # Marketplace section has no _marketplace_raw data
+    _assert_face_value_field(mp_section, "Job id:", ".")
+
+
 # ---------------------------------------------------------------------------
 # Required New Tests for manual_scrape_layer
 # ---------------------------------------------------------------------------
