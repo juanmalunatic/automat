@@ -284,8 +284,39 @@ _GRAPHQL_LAYER_LABELS = (
 )
 
 _BY_ID_LAYER_LABELS = (
+    "Contract:",
+    "Hourly range:",
+    "Budget:",
+    "Max budget:",
+    "Experience level:",
+    "Engagement type:",
+    "Project duration unsure:",
     "Hires:",
     "Persons to hire:",
+    "Invites sent:",
+    "Invited to interview:",
+    "Unanswered invites:",
+    "Offers sent:",
+    "Recommended:",
+    "Client last activity:",
+    "Payment:",
+    "Client country:",
+    "Client city:",
+    "Client timezone:",
+    "Cover letter required:",
+    "Milestones allowed:",
+    "Contractor type:",
+    "English proficiency:",
+    "Portfolio required:",
+    "Hours worked required:",
+    "Rising talent required:",
+    "JSS required:",
+    "Min earning required:",
+    "Local check required:",
+    "Local market:",
+    "Location preference unsure:",
+    "Location description:",
+    "Location flexibility:",
 )
 
 
@@ -373,20 +404,207 @@ def _apply_best_matches_mapping(values: dict[str, str], data: dict[str, Any]) ->
 
 
 def _apply_exact_marketplace_mapping(values: dict[str, str], data: dict[str, Any]) -> None:
-    # Hires from exact marketplace raw activity stat
-    hires = _get_nested_value(
-        data,
-        ("_exact_marketplace_raw", "activityStat", "jobActivity", "totalHired"),
-    )
+    exact_raw = _get_nested_value(data, ("_exact_marketplace_raw",))
+    if not isinstance(exact_raw, dict):
+        return
+
+    # Contract: contractTerms.contractType
+    contract_type = _get_nested_value(exact_raw, ("contractTerms", "contractType"))
+    if contract_type is not None:
+        values["Contract:"] = _fmt_face_val(contract_type)
+
+    # Hourly range: hourlyBudgetMin/hourlyBudgetMax
+    hourly_terms = _get_nested_value(exact_raw, ("contractTerms", "hourlyContractTerms"))
+    min_hourly = None
+    max_hourly = None
+    if isinstance(hourly_terms, dict):
+        min_hourly = hourly_terms.get("hourlyBudgetMin")
+        max_hourly = hourly_terms.get("hourlyBudgetMax")
+    if min_hourly is not None or max_hourly is not None:
+        hourly_range = _format_hourly_range(min_hourly, max_hourly)
+        values["Hourly range:"] = hourly_range
+
+    # Budget: fixedPriceContractTerms.amount (prefer displayValue, else rawValue formatted)
+    amount = _get_nested_value(exact_raw, ("contractTerms", "fixedPriceContractTerms", "amount"))
+    budget_val = None
+    if isinstance(amount, dict):
+        display_val = amount.get("displayValue")
+        if display_val is not None and str(display_val).strip() != "":
+            budget_val = str(display_val).strip()
+        else:
+            raw_val = amount.get("rawValue")
+            if raw_val is not None:
+                budget_val = _format_money(raw_val)
+    if budget_val is not None:
+        values["Budget:"] = budget_val
+
+    # Max budget: fixedPriceContractTerms.maxAmount (prefer displayValue, else rawValue formatted)
+    max_amount = _get_nested_value(exact_raw, ("contractTerms", "fixedPriceContractTerms", "maxAmount"))
+    max_budget_val = None
+    if isinstance(max_amount, dict):
+        display_val = max_amount.get("displayValue")
+        if display_val is not None and str(display_val).strip() != "":
+            max_budget_val = str(display_val).strip()
+        else:
+            raw_val = max_amount.get("rawValue")
+            if raw_val is not None:
+                max_budget_val = _format_money(raw_val)
+    if max_budget_val is not None:
+        values["Max budget:"] = max_budget_val
+
+    # Experience level: contractTerms.experienceLevel
+    exp_level = _get_nested_value(exact_raw, ("contractTerms", "experienceLevel"))
+    if exp_level is not None:
+        values["Experience level:"] = _fmt_face_val(exp_level)
+
+    # Engagement type: hourlyContractTerms.engagementType
+    engagement = _get_nested_value(exact_raw, ("contractTerms", "hourlyContractTerms", "engagementType"))
+    if engagement is not None:
+        values["Engagement type:"] = _fmt_face_val(engagement)
+
+    # Project duration unsure: hourlyContractTerms.notSureProjectDuration
+    proj_unsure = _get_nested_value(exact_raw, ("contractTerms", "hourlyContractTerms", "notSureProjectDuration"))
+    if proj_unsure is not None:
+        values["Project duration unsure:"] = _fmt_face_val(proj_unsure)
+
+    # Hires: activityStat.jobActivity.totalHired
+    hires = _get_nested_value(exact_raw, ("activityStat", "jobActivity", "totalHired"))
     if hires is not None:
         values["Hires:"] = _fmt_face_val(hires)
-    # Persons to hire from exact marketplace raw contract terms
-    persons_to_hire = _get_nested_value(
-        data,
-        ("_exact_marketplace_raw", "contractTerms", "personsToHire"),
-    )
+
+    # Persons to hire: contractTerms.personsToHire
+    persons_to_hire = _get_nested_value(exact_raw, ("contractTerms", "personsToHire"))
     if persons_to_hire is not None:
         values["Persons to hire:"] = _fmt_face_val(persons_to_hire)
+
+    # Invites sent: activityStat.jobActivity.invitesSent
+    invites_sent = _get_nested_value(exact_raw, ("activityStat", "jobActivity", "invitesSent"))
+    if invites_sent is not None:
+        values["Invites sent:"] = _fmt_face_val(invites_sent)
+
+    # Invited to interview: activityStat.jobActivity.totalInvitedToInterview
+    invited_interview = _get_nested_value(exact_raw, ("activityStat", "jobActivity", "totalInvitedToInterview"))
+    if invited_interview is not None:
+        values["Invited to interview:"] = _fmt_face_val(invited_interview)
+
+    # Unanswered invites: activityStat.jobActivity.totalUnansweredInvites
+    unanswered = _get_nested_value(exact_raw, ("activityStat", "jobActivity", "totalUnansweredInvites"))
+    if unanswered is not None:
+        values["Unanswered invites:"] = _fmt_face_val(unanswered)
+
+    # Offers sent: activityStat.jobActivity.totalOffered
+    offers = _get_nested_value(exact_raw, ("activityStat", "jobActivity", "totalOffered"))
+    if offers is not None:
+        values["Offers sent:"] = _fmt_face_val(offers)
+
+    # Recommended: activityStat.jobActivity.totalRecommended
+    recommended = _get_nested_value(exact_raw, ("activityStat", "jobActivity", "totalRecommended"))
+    if recommended is not None:
+        values["Recommended:"] = _fmt_face_val(recommended)
+
+    # Client last activity: activityStat.jobActivity.lastClientActivity
+    last_activity = _get_nested_value(exact_raw, ("activityStat", "jobActivity", "lastClientActivity"))
+    if last_activity is not None:
+        values["Client last activity:"] = _fmt_face_val(last_activity)
+
+    # Payment: prefer paymentVerification.status, else paymentVerified
+    payment_ver = _get_nested_value(exact_raw, ("clientCompanyPublic", "paymentVerification"))
+    payment_val = None
+    if isinstance(payment_ver, dict):
+        status = payment_ver.get("status")
+        if status is not None and str(status).strip() != "":
+            payment_val = str(status).strip()
+        else:
+            payment_val = _fmt_face_val(payment_ver.get("paymentVerified"))
+    if payment_val is not None:
+        values["Payment:"] = payment_val
+
+    # Client country: clientCompanyPublic.country.name
+    country = _get_nested_value(exact_raw, ("clientCompanyPublic", "country"))
+    if isinstance(country, dict):
+        country_name = country.get("name")
+        if country_name is not None:
+            values["Client country:"] = _fmt_face_val(country_name)
+
+    # Client city: clientCompanyPublic.city
+    city = _get_nested_value(exact_raw, ("clientCompanyPublic", "city"))
+    if city is not None:
+        values["Client city:"] = _fmt_face_val(city)
+
+    # Client timezone: clientCompanyPublic.timezone
+    tz = _get_nested_value(exact_raw, ("clientCompanyPublic", "timezone"))
+    if tz is not None:
+        values["Client timezone:"] = _fmt_face_val(tz)
+
+    # Cover letter required: contractorSelection.proposalRequirement.coverLetterRequired
+    cover_letter = _get_nested_value(exact_raw, ("contractorSelection", "proposalRequirement", "coverLetterRequired"))
+    if cover_letter is not None:
+        values["Cover letter required:"] = _fmt_face_val(cover_letter)
+
+    # Milestones allowed: contractorSelection.proposalRequirement.freelancerMilestonesAllowed
+    milestones = _get_nested_value(exact_raw, ("contractorSelection", "proposalRequirement", "freelancerMilestonesAllowed"))
+    if milestones is not None:
+        values["Milestones allowed:"] = _fmt_face_val(milestones)
+
+    # Contractor type: contractorSelection.qualification.contractorType
+    contractor_type = _get_nested_value(exact_raw, ("contractorSelection", "qualification", "contractorType"))
+    if contractor_type is not None:
+        values["Contractor type:"] = _fmt_face_val(contractor_type)
+
+    # English proficiency: contractorSelection.qualification.englishProficiency
+    english_prof = _get_nested_value(exact_raw, ("contractorSelection", "qualification", "englishProficiency"))
+    if english_prof is not None:
+        values["English proficiency:"] = _fmt_face_val(english_prof)
+
+    # Portfolio required: contractorSelection.qualification.hasPortfolio
+    portfolio = _get_nested_value(exact_raw, ("contractorSelection", "qualification", "hasPortfolio"))
+    if portfolio is not None:
+        values["Portfolio required:"] = _fmt_face_val(portfolio)
+
+    # Hours worked required: contractorSelection.qualification.hoursWorked
+    hours_worked = _get_nested_value(exact_raw, ("contractorSelection", "qualification", "hoursWorked"))
+    if hours_worked is not None:
+        values["Hours worked required:"] = _fmt_face_val(hours_worked)
+
+    # Rising talent required: contractorSelection.qualification.risingTalent
+    rising_talent = _get_nested_value(exact_raw, ("contractorSelection", "qualification", "risingTalent"))
+    if rising_talent is not None:
+        values["Rising talent required:"] = _fmt_face_val(rising_talent)
+
+    # JSS required: contractorSelection.qualification.jobSuccessScore
+    jss = _get_nested_value(exact_raw, ("contractorSelection", "qualification", "jobSuccessScore"))
+    if jss is not None:
+        values["JSS required:"] = _fmt_face_val(jss)
+
+    # Min earning required: contractorSelection.qualification.minEarning
+    min_earning = _get_nested_value(exact_raw, ("contractorSelection", "qualification", "minEarning"))
+    if min_earning is not None:
+        values["Min earning required:"] = _fmt_face_val(min_earning)
+
+    # Local check required: contractorSelection.location.localCheckRequired
+    local_check = _get_nested_value(exact_raw, ("contractorSelection", "location", "localCheckRequired"))
+    if local_check is not None:
+        values["Local check required:"] = _fmt_face_val(local_check)
+
+    # Local market: contractorSelection.location.localMarket
+    local_market = _get_nested_value(exact_raw, ("contractorSelection", "location", "localMarket"))
+    if local_market is not None:
+        values["Local market:"] = _fmt_face_val(local_market)
+
+    # Location preference unsure: contractorSelection.location.notSureLocationPreference
+    loc_pref_unsure = _get_nested_value(exact_raw, ("contractorSelection", "location", "notSureLocationPreference"))
+    if loc_pref_unsure is not None:
+        values["Location preference unsure:"] = _fmt_face_val(loc_pref_unsure)
+
+    # Location description: contractorSelection.location.localDescription
+    loc_desc = _get_nested_value(exact_raw, ("contractorSelection", "location", "localDescription"))
+    if loc_desc is not None:
+        values["Location description:"] = _fmt_face_val(loc_desc)
+
+    # Location flexibility: contractorSelection.location.localFlexibilityDescription
+    loc_flex = _get_nested_value(exact_raw, ("contractorSelection", "location", "localFlexibilityDescription"))
+    if loc_flex is not None:
+        values["Location flexibility:"] = _fmt_face_val(loc_flex)
 
 
 def _apply_normalized_mapping(values: dict[str, str], norm: Any) -> None:
