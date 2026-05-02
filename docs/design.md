@@ -534,6 +534,40 @@ Use nullable typed columns plus `field_status_json` to preserve these statuses:
 
 Manual-only fields should remain unavailable in official normalization until manual enrichment is imported.
 
+### Data layers and normalized projection
+
+A lead represents a stable job/opportunity. Data layers are independent evidence sources attached to that lead; source layers are distinct from derived normalized projections. All source layers store raw, unmodified data from their origin for full auditability; no transformation is applied before storage.
+
+#### Canonical layer definitions
+- `marketplace_search_layer`: Raw marketplace GraphQL search data, fetched via official Upwork GraphQL endpoints for targeted search terms.
+- `public_search_layer`: Raw public marketplace GraphQL search data, fetched via public search surfaces to supplement contract type, budget, and applicant count fields.
+- `best_matches_layer`: Browser outerHTML tile parse from Upwork Best Matches, capturing UI-only discovery signals not available via official APIs.
+- `by_id_layer`: Exact `marketplaceJobPosting(id)` hydration data, fetched via exact job ID lookups for full field coverage.
+- `manual_scrape_layer`: Parsed/preserved manual UI text imported via the CSV bridge. CSV is only a transport mechanism; this layer name is canonical, not `csv_layer`. This layer maps to existing `manual_job_enrichments` and `manual_job_enrichment_parses` tables.
+- `normalized_projection`: Derived typed common fields used by filters and prospect dumps. This is not a source layer. It maps fields from one or more source layers into a consistent schema for downstream deterministic logic, but is never treated as a source of truth for raw data inspection.
+
+#### Layer parity targets
+Leads are displayed with all available source layers for full auditability, with no merged hidden data in raw lead review:
+- `graphql_search` leads: `marketplace_search_layer` + `public_search_layer` + `by_id_layer` + `manual_scrape_layer` + `normalized_projection`
+- `best_matches_ui` leads: `best_matches_layer` + `marketplace_search_layer` + `public_search_layer` + `by_id_layer` + `manual_scrape_layer` + `normalized_projection`
+
+#### Current implementation reality
+- Current `graphql_layer` console display is a transitional normalized/source hybrid; it will be split into `marketplace_search_layer` and `public_search_layer` using direct raw-path mappings, not merged normalized output.
+- Current `best_matches_layer` and `by_id_layer` displays are closer to raw-path output but remain implemented in `leads.py`.
+- `manual_scrape_layer` exists conceptually via manual enrichment tables/parsing but is not yet joined into raw lead review.
+- Best Matches leads do not yet have marketplace/public GraphQL layer parity.
+- Layers are not yet split into modular files/classes.
+
+#### Refactor roadmap
+1. Documentation slice: Define layers, projection, parity targets, and canonical naming (this step).
+2. Update raw lead review to display source layers via explicit raw-path mappers, not `normalize_job_payload`, to preserve raw data fidelity.
+3. Split current `graphql_layer` display into `marketplace_search_layer` and `public_search_layer` for graphql_search leads.
+4. Add `manual_scrape_layer` to raw lead review by joining latest parsed manual enrichment by `job_key`, reusing existing manual enrichment table logic.
+5. Add GraphQL parity/backfill for `best_matches_ui` leads, preserving `best_matches_layer` as an extra discovery layer.
+6. Move layer display/mapping code out of `leads.py` into modular layer files once behavior is stable.
+7. Keep deterministic discard tags and official/enriched filters separate from source-layer display, to avoid conflating evidence with decision logic.
+8. Preserve normalization/projections: do not delete normalization. Normalized data is a derived projection for filtering/prospect packets, not a source-layer audit display.
+
 ### Manual enrichment data
 
 Manual UI-only decision inputs should live in their own enrichment table or equivalent explicit persisted structure.
@@ -959,6 +993,8 @@ It does not replace the current enriched prospect workflow.
 It stores discovered opportunities before hydration.
 Future slices will import GraphQL search results, Best Matches outerHTML, and manual URL/ID leads into this table.
 Current slice only adds storage and inspection commands.
+
+Raw lead review for this lane will adopt the layer-aware architecture defined in the *Data layers and normalized projection* subsection of Section 5. It will display independent source layers rather than merged normalized data for full auditability.
 
 Example usage:
 
