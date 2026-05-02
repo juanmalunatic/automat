@@ -12,6 +12,9 @@ from upwork_triage.cli import main
 from upwork_triage.db import connect_db, initialize_db
 from upwork_triage.leads import (
     ALLOWED_LEAD_STATUSES,
+    _BEST_MATCHES_LAYER_LABELS,
+    _GRAPHQL_LAYER_LABELS,
+    _BY_ID_LAYER_LABELS,
     fetch_next_raw_lead,
     promote_raw_lead,
     render_raw_lead_review,
@@ -30,7 +33,6 @@ _NOW2 = "2026-05-01T01:00:00Z"  # newer
 
 def _assert_face_value_field(output: str, label: str, value: str) -> None:
     """Helper to assert a face-value field exists with the expected value, ignoring padding."""
-    # Escape label for regex, match the label, some whitespace, then the value
     pattern = rf"{re.escape(label)}\s+{re.escape(value)}"
     assert re.search(pattern, output), f"Field {label!r} with value {value!r} not found in output"
 
@@ -112,7 +114,6 @@ def test_render_raw_lead_review_truncates_description() -> None:
     lead["raw_description"] = "A" * 2000
     output = render_raw_lead_review(lead, description_chars=10)
 
-    # 10 chars + space + […]
     assert "Description: AAAAAAAAAA […]" in output
     assert "Next step: inspect this lead manually" in output
 
@@ -371,21 +372,25 @@ def test_render_best_matches_payload_fields() -> None:
     )
     output = render_raw_lead_review(lead)
 
-    assert "Face-value fields:" in output
-    assert "Best Matches fields:" not in output
-    _assert_face_value_field(output, "Posted:", "Posted 12 minutes ago")
-    _assert_face_value_field(output, "Featured:", "yes")
-    _assert_face_value_field(output, "Contract:", "Hourly")
-    _assert_face_value_field(output, "Tier:", "Expert")
-    _assert_face_value_field(output, "Duration:", "Less than 1 month")
-    _assert_face_value_field(output, "Budget:", "$500")
-    _assert_face_value_field(output, "Payment:", "Payment verified")
-    _assert_face_value_field(output, "Client country:", "United States")
-    _assert_face_value_field(output, "Client spend:", "$900K+")
-    _assert_face_value_field(output, "Skills:", "WooCommerce, WordPress, PHP")
+    assert "best_matches_layer" in output
+    source_section = _section_between(output, "best_matches_layer", "-" * 30)
+    _assert_face_value_field(source_section, "Posted:", "Posted 12 minutes ago")
+    _assert_face_value_field(source_section, "Featured:", "yes")
+    _assert_face_value_field(source_section, "Contract:", "Hourly")
+    _assert_face_value_field(source_section, "Tier:", "Expert")
+    _assert_face_value_field(source_section, "Duration:", "Less than 1 month")
+    _assert_face_value_field(source_section, "Budget:", "$500")
+    _assert_face_value_field(source_section, "Payment:", "Payment verified")
+    _assert_face_value_field(source_section, "Client country:", "United States")
+    _assert_face_value_field(source_section, "Client spend:", "$900K+")
+    _assert_face_value_field(source_section, "Skills:", "WooCommerce, WordPress, PHP")
+    # Unsupported labels absent from best_matches_layer
+    assert "Connects:" not in source_section
+    assert "Hourly range:" not in source_section
+    assert "Hires:" not in source_section
 
 
-def test_render_best_matches_payload_missing_fields_shows_dash() -> None:
+def test_render_best_matches_payload_missing_fields_shows_dot() -> None:
     lead = _make_lead()
     lead["source"] = "best_matches_ui"
     lead["raw_payload_json"] = json.dumps(
@@ -395,10 +400,13 @@ def test_render_best_matches_payload_missing_fields_shows_dash() -> None:
     )
     output = render_raw_lead_review(lead)
 
-    assert "Face-value fields:" in output
-    _assert_face_value_field(output, "Posted:", "Posted 12 minutes ago")
-    _assert_face_value_field(output, "Featured:", "—")
-    _assert_face_value_field(output, "Skills:", "—")
+    assert "best_matches_layer" in output
+    source_section = _section_between(output, "best_matches_layer", "-" * 30)
+    _assert_face_value_field(source_section, "Posted:", "Posted 12 minutes ago")
+    _assert_face_value_field(source_section, "Featured:", ".")
+    _assert_face_value_field(source_section, "Skills:", ".")
+    # Unsupported labels absent
+    assert "Connects:" not in source_section
 
 
 def test_render_best_matches_payload_invalid_json_is_safe() -> None:
@@ -408,12 +416,13 @@ def test_render_best_matches_payload_invalid_json_is_safe() -> None:
     lead["raw_payload_json"] = "invalid json {"
     output = render_raw_lead_review(lead)
 
-    assert "Face-value fields:" in output
-    assert "Best Matches fields:" not in output
-    _assert_face_value_field(output, "Proposals:", "5 to 10")
+    assert "best_matches_layer" in output
+    source_section = _section_between(output, "best_matches_layer", "-" * 30)
+    _assert_face_value_field(source_section, "Proposals:", "5 to 10")
+    _assert_face_value_field(source_section, "Contract:", ".")
 
 
-def test_render_graphql_payload_fills_universal_fields() -> None:
+def test_render_graphql_payload_fills_layer_fields() -> None:
     lead = _make_lead()
     lead["source"] = "graphql_wordpress"
     lead["raw_payload_json"] = json.dumps({
@@ -446,23 +455,24 @@ def test_render_graphql_payload_fills_universal_fields() -> None:
     })
     output = render_raw_lead_review(lead)
 
-    assert "Face-value fields:" in output
-    _assert_face_value_field(output, "Connects:", "12")
-    _assert_face_value_field(output, "Contract:", "hourly")
-    _assert_face_value_field(output, "Hourly range:", "$25-$50/hr")
-    _assert_face_value_field(output, "Skills:", "WordPress, WooCommerce, PHP")
-    _assert_face_value_field(output, "Proposals:", "10 to 15")
-    _assert_face_value_field(output, "Interviewing:", "2")
-    _assert_face_value_field(output, "Invites sent:", "1")
-    _assert_face_value_field(output, "Client last viewed:", "30 min ago")
-    _assert_face_value_field(output, "Payment:", "Payment verified")
-    _assert_face_value_field(output, "Client country:", "United States")
-    _assert_face_value_field(output, "Client spend:", "$10000")
-    _assert_face_value_field(output, "Hire rate:", "80.0")
-    _assert_face_value_field(output, "Total hires:", "12")
-    _assert_face_value_field(output, "Jobs posted:", "20")
-    _assert_face_value_field(output, "Jobs open:", "2")
-    _assert_face_value_field(output, "Avg hourly paid:", "$35")
+    assert "graphql_layer" in output
+    source_section = _section_between(output, "graphql_layer", "-" * 30)
+    _assert_face_value_field(source_section, "Contract:", "hourly")
+    _assert_face_value_field(source_section, "Hourly range:", "$25-$50/hr")
+    _assert_face_value_field(source_section, "Skills:", "WordPress, WooCommerce, PHP")
+    _assert_face_value_field(source_section, "Proposals:", "10 to 15")
+    _assert_face_value_field(source_section, "Payment:", "Payment verified")
+    _assert_face_value_field(source_section, "Client country:", "United States")
+    _assert_face_value_field(source_section, "Client spend:", "$10000")
+    _assert_face_value_field(source_section, "Total hires:", "12")
+    _assert_face_value_field(source_section, "Jobs posted:", "20")
+    # Unsupported labels absent from graphql_layer
+    assert "Connects:" not in source_section
+    assert "Tier:" not in source_section
+    assert "Featured:" not in source_section
+    assert "Interviewing:" not in source_section
+    assert "Hire rate:" not in source_section
+    assert "Jobs open:" not in source_section
 
 
 def test_render_graphql_fixed_price_budget() -> None:
@@ -474,9 +484,11 @@ def test_render_graphql_fixed_price_budget() -> None:
     })
     output = render_raw_lead_review(lead)
 
-    _assert_face_value_field(output, "Contract:", "fixed")
-    _assert_face_value_field(output, "Budget:", "$500")
-    _assert_face_value_field(output, "Hourly range:", "—")
+    assert "graphql_layer" in output
+    source_section = _section_between(output, "graphql_layer", "-" * 30)
+    _assert_face_value_field(source_section, "Contract:", "fixed")
+    _assert_face_value_field(source_section, "Budget:", "$500")
+    _assert_face_value_field(source_section, "Hourly range:", ".")
 
 
 def test_render_graphql_invalid_json_is_safe() -> None:
@@ -486,9 +498,10 @@ def test_render_graphql_invalid_json_is_safe() -> None:
     lead["raw_payload_json"] = "invalid json {"
     output = render_raw_lead_review(lead)
 
-    assert "Face-value fields:" in output
-    _assert_face_value_field(output, "Proposals:", "20 to 50")
-    _assert_face_value_field(output, "Contract:", "—")
+    assert "graphql_layer" in output
+    source_section = _section_between(output, "graphql_layer", "-" * 30)
+    _assert_face_value_field(source_section, "Proposals:", "20 to 50")
+    _assert_face_value_field(source_section, "Contract:", ".")
 
 
 def test_render_graphql_non_dict_json_is_safe() -> None:
@@ -497,9 +510,10 @@ def test_render_graphql_non_dict_json_is_safe() -> None:
     lead["raw_payload_json"] = json.dumps(["not", "a", "dict"])
     output = render_raw_lead_review(lead)
 
-    assert "Face-value fields:" in output
-    _assert_face_value_field(output, "Contract:", "—")
-    _assert_face_value_field(output, "Client country:", "—")
+    assert "graphql_layer" in output
+    source_section = _section_between(output, "graphql_layer", "-" * 30)
+    _assert_face_value_field(source_section, "Contract:", ".")
+    _assert_face_value_field(source_section, "Client country:", ".")
 
 
 def test_render_graphql_string_json_is_safe() -> None:
@@ -508,24 +522,11 @@ def test_render_graphql_string_json_is_safe() -> None:
     lead["raw_payload_json"] = json.dumps("just a string")
     output = render_raw_lead_review(lead)
 
-    assert "Face-value fields:" in output
-    _assert_face_value_field(output, "Contract:", "—")
+    assert "graphql_layer" in output
+    source_section = _section_between(output, "graphql_layer", "-" * 30)
+    _assert_face_value_field(source_section, "Contract:", ".")
+    _assert_face_value_field(source_section, "Client country:", ".")
 
-
-def test_render_universal_section_contains_all_labels() -> None:
-    lead = _make_lead()
-    output = render_raw_lead_review(lead)
-
-    labels = [
-        "Posted:", "Connects:", "Contract:", "Budget:", "Hourly range:",
-        "Tier:", "Duration:", "Skills:", "Qualifications:", "Proposals:",
-        "Hires:", "Persons to hire:", "Interviewing:", "Invites sent:", "Client last viewed:",
-        "Payment:", "Client country:", "Client spend:", "Hire rate:",
-        "Total hires:", "Jobs posted:", "Jobs open:", "Avg hourly paid:",
-        "Hours hired:", "Member since:", "Market high/avg/low:", "Featured:"
-    ]
-    for label in labels:
-        assert label in output
 
 def test_render_graphql_exact_payload_shows_persons_to_hire() -> None:
     lead = _make_lead()
@@ -545,9 +546,13 @@ def test_render_graphql_exact_payload_shows_persons_to_hire() -> None:
 
     output = render_raw_lead_review(lead)
 
-    _assert_face_value_field(output, "Persons to hire:", "1")
+    assert "by_id_layer" in output
+    by_id_section = _section_between(output, "by_id_layer", "=" * 60)
+    _assert_face_value_field(by_id_section, "Hires:", "1")
+    _assert_face_value_field(by_id_section, "Persons to hire:", "1")
 
-def test_render_graphql_exact_payload_missing_persons_to_hire_shows_dash() -> None:
+
+def test_render_graphql_exact_payload_missing_persons_to_hire_shows_dot() -> None:
     lead = _make_lead()
     lead["source"] = "graphql_search"
     lead["raw_payload_json"] = json.dumps({
@@ -563,7 +568,10 @@ def test_render_graphql_exact_payload_missing_persons_to_hire_shows_dash() -> No
 
     output = render_raw_lead_review(lead)
 
-    _assert_face_value_field(output, "Persons to hire:", "—")
+    assert "by_id_layer" in output
+    by_id_section = _section_between(output, "by_id_layer", "=" * 60)
+    _assert_face_value_field(by_id_section, "Hires:", "1")
+    _assert_face_value_field(by_id_section, "Persons to hire:", ".")
 
 
 def test_render_best_matches_exact_hydrated_shows_hires_and_persons_to_hire() -> None:
@@ -576,8 +584,10 @@ def test_render_best_matches_exact_hydrated_shows_hires_and_persons_to_hire() ->
         }
     })
     output = render_raw_lead_review(lead)
-    _assert_face_value_field(output, "Hires:", "1")
-    _assert_face_value_field(output, "Persons to hire:", "1")
+    assert "by_id_layer" in output
+    by_id_section = _section_between(output, "by_id_layer", "=" * 60)
+    _assert_face_value_field(by_id_section, "Hires:", "1")
+    _assert_face_value_field(by_id_section, "Persons to hire:", "1")
 
 
 def test_render_split_face_value_sections_source_vs_exact() -> None:
@@ -593,28 +603,30 @@ def test_render_split_face_value_sections_source_vs_exact() -> None:
     output = render_raw_lead_review(lead)
 
     # Verify both section headers exist
-    assert "Face-value fields: source payload" in output
-    assert "Face-value fields: exact hydration" in output
+    assert "graphql_layer" in output
+    assert "by_id_layer" in output
 
     # Split into isolated sections
     source_section = _section_between(
         output,
-        "Face-value fields: source payload",
-        "Face-value fields: exact hydration"
+        "graphql_layer",
+        "-" * 30
     )
-    exact_section = _section_between(
+    by_id_section = _section_between(
         output,
-        "Face-value fields: exact hydration"
+        "by_id_layer",
+        "=" * 60
     )
 
     # Assert source payload section (no exact hydration data)
     _assert_face_value_field(source_section, "Contract:", "hourly")
-    _assert_face_value_field(source_section, "Hires:", "—")
-    _assert_face_value_field(source_section, "Persons to hire:", "—")
+    assert "Hires:" not in source_section
+    assert "Persons to hire:" not in source_section
 
     # Assert exact hydration section (only exact marketplace data)
-    _assert_face_value_field(exact_section, "Hires:", "1")
-    _assert_face_value_field(exact_section, "Persons to hire:", "1")
+    _assert_face_value_field(by_id_section, "Hires:", "1")
+    _assert_face_value_field(by_id_section, "Persons to hire:", "1")
+    assert "Contract:" not in by_id_section
 
 
 # ---------------------------------------------------------------------------
@@ -1265,3 +1277,68 @@ def test_promote_next_lead_source_filter(tmp_path: Path) -> None:
     assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id1,)).fetchone()[0] == "new"
     assert conn.execute("SELECT lead_status FROM raw_leads WHERE id = ?", (id2,)).fetchone()[0] == "promote"
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# New Layer-Specific Tests
+# ---------------------------------------------------------------------------
+
+def test_best_matches_layer_section_exists_for_best_matches_lead() -> None:
+    lead = _make_lead()
+    lead["source"] = "best_matches_ui"
+    output = render_raw_lead_review(lead)
+    assert "best_matches_layer" in output
+    source_section = _section_between(output, "best_matches_layer", "-" * 30)
+    for label in _BEST_MATCHES_LAYER_LABELS:
+        assert label in source_section, f"Missing {label} in best_matches_layer"
+    # Unsupported labels absent
+    assert "Connects:" not in source_section
+    assert "Hourly range:" not in source_section
+
+
+def test_graphql_layer_section_exists_for_graphql_lead() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    output = render_raw_lead_review(lead)
+    assert "graphql_layer" in output
+    source_section = _section_between(output, "graphql_layer", "-" * 30)
+    for label in _GRAPHQL_LAYER_LABELS:
+        assert label in source_section, f"Missing {label} in graphql_layer"
+    # Unsupported labels absent
+    assert "Tier:" not in source_section
+    assert "Featured:" not in source_section
+    assert "Connects:" not in source_section
+
+
+def test_by_id_layer_section_exists() -> None:
+    lead = _make_lead()
+    output = render_raw_lead_review(lead)
+    assert "by_id_layer" in output
+
+
+def test_supported_but_missing_fields_render_dot() -> None:
+    lead = _make_lead()
+    lead["source"] = "best_matches_ui"
+    # No "posted-on" in payload, so Posted: should be "."
+    lead["raw_payload_json"] = json.dumps({"job-type": "Hourly"})
+    output = render_raw_lead_review(lead)
+    source_section = _section_between(output, "best_matches_layer", "-" * 30)
+    _assert_face_value_field(source_section, "Posted:", ".")
+    _assert_face_value_field(source_section, "Contract:", "Hourly")
+
+
+def test_by_id_layer_only_renders_supported_labels() -> None:
+    lead = _make_lead()
+    lead["raw_payload_json"] = json.dumps({
+        "_exact_marketplace_raw": {
+            "activityStat": {"jobActivity": {"totalHired": 5}},
+            "contractTerms": {"personsToHire": 2}
+        }
+    })
+    output = render_raw_lead_review(lead)
+    by_id_section = _section_between(output, "by_id_layer", "=" * 60)
+    assert "Hires:" in by_id_section
+    assert "Persons to hire:" in by_id_section
+    # Unsupported labels absent
+    assert "Posted:" not in by_id_section
+    assert "Contract:" not in by_id_section

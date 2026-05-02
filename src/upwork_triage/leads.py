@@ -202,12 +202,17 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
     lines.append(f"Description: {raw_desc or '—'}")
 
     lines.append("-" * 30)
-    lines.append("Face-value fields: source payload")
+    # Dynamic source layer header
+    source = lead.get("source")
+    if source == "best_matches_ui":
+        lines.append("best_matches_layer")
+    else:
+        lines.append("graphql_layer")
     source_lines = _format_source_payload_fields(lead)
     lines.extend(source_lines)
 
     lines.append("-" * 30)
-    lines.append("Face-value fields: exact hydration")
+    lines.append("by_id_layer")
     exact_lines = _format_exact_hydration_fields(lead)
     lines.extend(exact_lines)
 
@@ -216,6 +221,8 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
         "Next step: inspect this lead manually and decide whether to code a new approved discard tag."
     )
     return "\n".join(lines)
+
+
 _FACE_VALUE_LABELS = [
     "Posted:",
     "Connects:",
@@ -245,6 +252,39 @@ _FACE_VALUE_LABELS = [
     "Market high/avg/low:",
     "Featured:",
 ]
+
+_BEST_MATCHES_LAYER_LABELS = (
+    "Posted:",
+    "Contract:",
+    "Budget:",
+    "Tier:",
+    "Duration:",
+    "Skills:",
+    "Proposals:",
+    "Payment:",
+    "Client country:",
+    "Client spend:",
+    "Featured:",
+)
+
+_GRAPHQL_LAYER_LABELS = (
+    "Posted:",
+    "Contract:",
+    "Budget:",
+    "Hourly range:",
+    "Skills:",
+    "Proposals:",
+    "Payment:",
+    "Client country:",
+    "Client spend:",
+    "Total hires:",
+    "Jobs posted:",
+)
+
+_BY_ID_LAYER_LABELS = (
+    "Hires:",
+    "Persons to hire:",
+)
 
 
 def _format_face_value_fields(lead: dict[str, Any]) -> list[str]:
@@ -329,6 +369,7 @@ def _apply_best_matches_mapping(values: dict[str, str], data: dict[str, Any]) ->
         if json_key in data:
             values[label] = _fmt_face_val(data[json_key])
 
+
 def _apply_exact_marketplace_mapping(values: dict[str, str], data: dict[str, Any]) -> None:
     # Hires from exact marketplace raw activity stat
     hires = _get_nested_value(
@@ -344,6 +385,7 @@ def _apply_exact_marketplace_mapping(values: dict[str, str], data: dict[str, Any
     )
     if persons_to_hire is not None:
         values["Persons to hire:"] = _fmt_face_val(persons_to_hire)
+
 
 def _apply_normalized_mapping(values: dict[str, str], norm: Any) -> None:
     # Posted
@@ -405,6 +447,7 @@ def _apply_normalized_mapping(values: dict[str, str], norm: Any) -> None:
             f"{_format_money(norm.mkt_low)}"
         )
 
+
 def _get_nested_value(data: dict[str, Any], path: tuple[str, ...]) -> Any:
     current: Any = data
     for key in path:
@@ -412,6 +455,7 @@ def _get_nested_value(data: dict[str, Any], path: tuple[str, ...]) -> Any:
             return None
         current = current.get(key)
     return current
+
 
 def _format_money(value: Any) -> str:
     """Helper to format numeric money values safely."""
@@ -442,6 +486,7 @@ def _format_hourly_range(low: Any, high: Any) -> str:
 
 def _format_source_payload_fields(lead: dict[str, Any]) -> list[str]:
     """Format face-value fields from the source payload only, excluding exact hydration data."""
+    # Initialize with all universal labels to avoid KeyError in mapping functions
     values = {label: "—" for label in _FACE_VALUE_LABELS}
 
     # 1. Always fill from raw_leads columns where available
@@ -465,26 +510,39 @@ def _format_source_payload_fields(lead: dict[str, Any]) -> list[str]:
             if norm:
                 _apply_normalized_mapping(values, norm)
 
-    # Build final lines
+    # Determine supported labels for this lead's source
+    source = lead.get("source")
+    if source == "best_matches_ui":
+        supported_labels = _BEST_MATCHES_LAYER_LABELS
+    else:
+        supported_labels = _GRAPHQL_LAYER_LABELS
+
+    # Build final lines: only supported labels, convert "—" to "."
     lines: list[str] = []
-    for label in _FACE_VALUE_LABELS:
-        val = values[label]
+    for label in supported_labels:
+        val = values.get(label, "—")
+        if val == "—":
+            val = "."
         lines.append(f"{label:<20} {val}")
     return lines
 
 
 def _format_exact_hydration_fields(lead: dict[str, Any]) -> list[str]:
     """Format face-value fields from exact marketplace hydration only."""
+    # Initialize with all universal labels to avoid KeyError in mapping functions
     values = {label: "—" for label in _FACE_VALUE_LABELS}
 
     payload = _load_payload_dict(lead.get("raw_payload_json"))
     if payload:
         _apply_exact_marketplace_mapping(values, payload)
 
-    # Build final lines
+    # Only render by_id layer supported labels, convert "—" to "."
+    supported_labels = _BY_ID_LAYER_LABELS
     lines: list[str] = []
-    for label in _FACE_VALUE_LABELS:
-        val = values[label]
+    for label in supported_labels:
+        val = values.get(label, "—")
+        if val == "—":
+            val = "."
         lines.append(f"{label:<20} {val}")
     return lines
 
