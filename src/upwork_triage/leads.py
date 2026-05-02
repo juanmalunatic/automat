@@ -202,9 +202,14 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
     lines.append(f"Description: {raw_desc or '—'}")
 
     lines.append("-" * 30)
-    lines.append("Face-value fields:")
-    face_value_lines = _format_face_value_fields(lead)
-    lines.extend(face_value_lines)
+    lines.append("Face-value fields: source payload")
+    source_lines = _format_source_payload_fields(lead)
+    lines.extend(source_lines)
+
+    lines.append("-" * 30)
+    lines.append("Face-value fields: exact hydration")
+    exact_lines = _format_exact_hydration_fields(lead)
+    lines.extend(exact_lines)
 
     lines.append("=" * 60)
     lines.append(
@@ -433,6 +438,55 @@ def _format_hourly_range(low: Any, high: Any) -> str:
     if h != "—":
         return f"{h}/hr"
     return "—"
+
+
+def _format_source_payload_fields(lead: dict[str, Any]) -> list[str]:
+    """Format face-value fields from the source payload only, excluding exact hydration data."""
+    values = {label: "—" for label in _FACE_VALUE_LABELS}
+
+    # 1. Always fill from raw_leads columns where available
+    proposals_from_col = lead.get("raw_proposals_text")
+    if proposals_from_col:
+        values["Proposals:"] = _fmt_face_val(proposals_from_col)
+
+    # 2. Extract from payload if available
+    payload = _load_payload_dict(lead.get("raw_payload_json"))
+    if payload:
+        source = lead.get("source")
+        if source == "best_matches_ui":
+            _apply_best_matches_mapping(values, payload)
+        else:
+            # Strip exact hydration keys to prevent contamination
+            stripped_payload = {
+                k: v for k, v in payload.items()
+                if k not in ("_exact_marketplace_raw", "_exact_hydration_status", "_exact_hydration_error")
+            }
+            norm = _try_normalize_payload_for_display(stripped_payload)
+            if norm:
+                _apply_normalized_mapping(values, norm)
+
+    # Build final lines
+    lines: list[str] = []
+    for label in _FACE_VALUE_LABELS:
+        val = values[label]
+        lines.append(f"{label:<20} {val}")
+    return lines
+
+
+def _format_exact_hydration_fields(lead: dict[str, Any]) -> list[str]:
+    """Format face-value fields from exact marketplace hydration only."""
+    values = {label: "—" for label in _FACE_VALUE_LABELS}
+
+    payload = _load_payload_dict(lead.get("raw_payload_json"))
+    if payload:
+        _apply_exact_marketplace_mapping(values, payload)
+
+    # Build final lines
+    lines: list[str] = []
+    for label in _FACE_VALUE_LABELS:
+        val = values[label]
+        lines.append(f"{label:<20} {val}")
+    return lines
 
 
 def fetch_raw_lead_counts(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:

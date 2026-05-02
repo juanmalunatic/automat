@@ -74,6 +74,15 @@ def _make_lead() -> dict[str, Any]:
     }
 
 
+def _section_between(output: str, start: str, end: str | None = None) -> str:
+    """Extract text between start and end markers in output."""
+    start_idx = output.index(start)
+    if end is None:
+        return output[start_idx:]
+    end_idx = output.index(end, start_idx + len(start))
+    return output[start_idx:end_idx]
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -569,6 +578,43 @@ def test_render_best_matches_exact_hydrated_shows_hires_and_persons_to_hire() ->
     output = render_raw_lead_review(lead)
     _assert_face_value_field(output, "Hires:", "1")
     _assert_face_value_field(output, "Persons to hire:", "1")
+
+
+def test_render_split_face_value_sections_source_vs_exact() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps({
+        "contract_type": "hourly",
+        "_exact_marketplace_raw": {
+            "activityStat": {"jobActivity": {"totalHired": 1}},
+            "contractTerms": {"personsToHire": 1}
+        }
+    })
+    output = render_raw_lead_review(lead)
+
+    # Verify both section headers exist
+    assert "Face-value fields: source payload" in output
+    assert "Face-value fields: exact hydration" in output
+
+    # Split into isolated sections
+    source_section = _section_between(
+        output,
+        "Face-value fields: source payload",
+        "Face-value fields: exact hydration"
+    )
+    exact_section = _section_between(
+        output,
+        "Face-value fields: exact hydration"
+    )
+
+    # Assert source payload section (no exact hydration data)
+    _assert_face_value_field(source_section, "Contract:", "hourly")
+    _assert_face_value_field(source_section, "Hires:", "—")
+    _assert_face_value_field(source_section, "Persons to hire:", "—")
+
+    # Assert exact hydration section (only exact marketplace data)
+    _assert_face_value_field(exact_section, "Hires:", "1")
+    _assert_face_value_field(exact_section, "Persons to hire:", "1")
 
 
 # ---------------------------------------------------------------------------
