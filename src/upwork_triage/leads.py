@@ -208,11 +208,13 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
         lines.append("best_matches_layer")
     else:
         lines.append("graphql_layer")
+    lines.append("-" * 30)
     source_lines = _format_source_payload_fields(lead)
     lines.extend(source_lines)
 
     lines.append("-" * 30)
     lines.append("by_id_layer")
+    lines.append("-" * 30)
     exact_lines = _format_exact_hydration_fields(lead)
     lines.extend(exact_lines)
 
