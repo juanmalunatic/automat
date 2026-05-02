@@ -371,8 +371,8 @@ def test_render_best_matches_payload_fields() -> None:
     _assert_face_value_field(output, "Duration:", "Less than 1 month")
     _assert_face_value_field(output, "Budget:", "$500")
     _assert_face_value_field(output, "Payment:", "Payment verified")
-    _assert_face_value_field(output, "Client spend:", "$900K+")
     _assert_face_value_field(output, "Client country:", "United States")
+    _assert_face_value_field(output, "Client spend:", "$900K+")
     _assert_face_value_field(output, "Skills:", "WooCommerce, WordPress, PHP")
 
 
@@ -555,6 +555,21 @@ def test_render_graphql_exact_payload_missing_persons_to_hire_shows_dash() -> No
     output = render_raw_lead_review(lead)
 
     _assert_face_value_field(output, "Persons to hire:", "—")
+
+
+def test_render_best_matches_exact_hydrated_shows_hires_and_persons_to_hire() -> None:
+    lead = _make_lead()
+    lead["raw_payload_json"] = json.dumps({
+        "job-type": "Hourly",
+        "_exact_marketplace_raw": {
+            "activityStat": {"jobActivity": {"totalHired": 1}},
+            "contractTerms": {"personsToHire": 1}
+        }
+    })
+    output = render_raw_lead_review(lead)
+    _assert_face_value_field(output, "Hires:", "1")
+    _assert_face_value_field(output, "Persons to hire:", "1")
+
 
 # ---------------------------------------------------------------------------
 # Promotion Tests

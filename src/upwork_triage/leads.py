@@ -261,7 +261,8 @@ def _format_face_value_fields(lead: dict[str, Any]) -> list[str]:
             norm = _try_normalize_payload_for_display(payload)
             if norm:
                 _apply_normalized_mapping(values, norm)
-            _apply_exact_marketplace_mapping(values, payload)
+
+        _apply_exact_marketplace_mapping(values, payload)
 
     # Build final lines
     lines: list[str] = []
@@ -324,6 +325,14 @@ def _apply_best_matches_mapping(values: dict[str, str], data: dict[str, Any]) ->
             values[label] = _fmt_face_val(data[json_key])
 
 def _apply_exact_marketplace_mapping(values: dict[str, str], data: dict[str, Any]) -> None:
+    # Hires from exact marketplace raw activity stat
+    hires = _get_nested_value(
+        data,
+        ("_exact_marketplace_raw", "activityStat", "jobActivity", "totalHired"),
+    )
+    if hires is not None:
+        values["Hires:"] = _fmt_face_val(hires)
+    # Persons to hire from exact marketplace raw contract terms
     persons_to_hire = _get_nested_value(
         data,
         ("_exact_marketplace_raw", "contractTerms", "personsToHire"),
