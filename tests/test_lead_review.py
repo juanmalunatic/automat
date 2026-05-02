@@ -15,6 +15,8 @@ from upwork_triage.leads import (
     _BEST_MATCHES_LAYER_LABELS,
     _GRAPHQL_LAYER_LABELS,
     _BY_ID_LAYER_LABELS,
+    _MARKETPLACE_SEARCH_LAYER_LABELS,
+    _PUBLIC_SEARCH_LAYER_LABELS,
     fetch_next_raw_lead,
     promote_raw_lead,
     render_raw_lead_review,
@@ -433,69 +435,67 @@ def test_render_graphql_payload_fills_layer_fields() -> None:
     lead = _make_lead()
     lead["source"] = "graphql_wordpress"
     lead["raw_payload_json"] = json.dumps({
-        "title": "Test WordPress job",
-        "description": "Test description",
-        "connects_required": 12,
-        "contract_type": "hourly",
-        "hourly_low": 25,
-        "hourly_high": 50,
-        "skills": ["WordPress", "WooCommerce", "PHP"],
-        "client": {
-            "payment_verified": True,
-            "country": "United States",
-            "total_spent": "$10K",
-            "hire_rate": "80%",
-            "total_hires": 12,
-            "jobs_posted": 20,
-            "jobs_open": 2,
-            "avg_hourly_rate": "$35",
-            "hours_hired": 1000,
-            "member_since": "2020",
+        "_public_raw": {
+            "title": "Test WordPress job",
+            "type": "hourly",
+            "hourlyBudgetMin": 25,
+            "hourlyBudgetMax": 50,
+            "totalApplicants": 10,
+            "contractorTier": "Expert",
+            "durationLabel": "Less than 1 month",
         },
-        "activity": {
-            "proposals": "10 to 15",
-            "hires": 0,
-            "interviewing": 2,
-            "invites_sent": 1,
-            "client_last_viewed": "30 minutes ago",
-        },
+        "_marketplace_raw": {
+            "skills": [{"prettyName": "WordPress"}, {"prettyName": "WooCommerce"}, {"name": "PHP"}],
+            "client": {
+                "verificationStatus": "VERIFIED",
+                "location": {"country": "United States"},
+                "totalSpent": {"displayValue": "$10K"},
+                "totalHires": 12,
+                "totalPostedJobs": 20,
+            }
+        }
     })
     output = render_raw_lead_review(lead)
 
-    assert "graphql_layer" in output
-    source_section = _layer_section(output, "graphql_layer", "by_id_layer")
-    _assert_face_value_field(source_section, "Contract:", "hourly")
-    _assert_face_value_field(source_section, "Hourly range:", "$25-$50/hr")
-    _assert_face_value_field(source_section, "Skills:", "WordPress, WooCommerce, PHP")
-    _assert_face_value_field(source_section, "Proposals:", "10 to 15")
-    _assert_face_value_field(source_section, "Payment:", "Payment verified")
-    _assert_face_value_field(source_section, "Client country:", "United States")
-    _assert_face_value_field(source_section, "Client spend:", "$10000")
-    _assert_face_value_field(source_section, "Total hires:", "12")
-    _assert_face_value_field(source_section, "Jobs posted:", "20")
-    # Unsupported labels absent from graphql_layer
-    assert "Connects:" not in source_section
-    assert "Tier:" not in source_section
-    assert "Featured:" not in source_section
-    assert "Interviewing:" not in source_section
-    assert "Hire rate:" not in source_section
-    assert "Jobs open:" not in source_section
+    assert "graphql_layer" not in output
+    # Marketplace section
+    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
+    _assert_face_value_field(mp_section, "Payment:", "VERIFIED")
+    _assert_face_value_field(mp_section, "Client country:", "United States")
+    _assert_face_value_field(mp_section, "Client spend:", "$10K")
+    _assert_face_value_field(mp_section, "Total hires:", "12")
+    _assert_face_value_field(mp_section, "Jobs posted:", "20")
+    _assert_face_value_field(mp_section, "Skills:", "WordPress, WooCommerce, PHP")
+    # Public section
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
+    _assert_face_value_field(pub_section, "Contract:", "hourly")
+    _assert_face_value_field(pub_section, "Hourly range:", "$25-$50/hr")
+    _assert_face_value_field(pub_section, "Proposals:", "10")
+    _assert_face_value_field(pub_section, "Tier:", "Expert")
+    _assert_face_value_field(pub_section, "Duration:", "Less than 1 month")
+    # Unsupported labels absent from public layer
+    assert "Connects:" not in pub_section
+    # by_id layer unchanged
+    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    assert "by_id_layer" in by_id_section
 
 
 def test_render_graphql_fixed_price_budget() -> None:
     lead = _make_lead()
     lead["source"] = "graphql_fixed"
     lead["raw_payload_json"] = json.dumps({
-        "contract_type": "fixed",
-        "budget": "$500",
+        "_public_raw": {
+            "type": "fixed",
+            "amount": {"displayValue": "$500"},
+        }
     })
     output = render_raw_lead_review(lead)
 
-    assert "graphql_layer" in output
-    source_section = _layer_section(output, "graphql_layer", "by_id_layer")
-    _assert_face_value_field(source_section, "Contract:", "fixed")
-    _assert_face_value_field(source_section, "Budget:", "$500")
-    _assert_face_value_field(source_section, "Hourly range:", ".")
+    assert "graphql_layer" not in output
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
+    _assert_face_value_field(pub_section, "Contract:", "fixed")
+    _assert_face_value_field(pub_section, "Budget:", "$500")
+    _assert_face_value_field(pub_section, "Hourly range:", ".")
 
 
 def test_render_graphql_invalid_json_is_safe() -> None:
@@ -505,22 +505,38 @@ def test_render_graphql_invalid_json_is_safe() -> None:
     lead["raw_payload_json"] = "invalid json {"
     output = render_raw_lead_review(lead)
 
-    assert "graphql_layer" in output
-    source_section = _layer_section(output, "graphql_layer", "by_id_layer")
-    _assert_face_value_field(source_section, "Proposals:", "20 to 50")
-    _assert_face_value_field(source_section, "Contract:", ".")
+    assert "graphql_layer" not in output
+    assert "marketplace_search_layer" in output
+    assert "public_search_layer" in output
+    # Initial face-value section still has proposals
+    assert "Proposals:   20 to 50" in output
+    # Marketplace and public layers have missing fields
+    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
+    _assert_face_value_field(mp_section, "Title:", ".")
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
+    _assert_face_value_field(pub_section, "Contract:", ".")
+    # Unsupported labels absent from public layer
+    assert "Client country:" not in pub_section
 
 
 def test_render_graphql_non_dict_json_is_safe() -> None:
     lead = _make_lead()
     lead["source"] = "graphql_search"
+    lead["raw_proposals_text"] = "20 to 50"
     lead["raw_payload_json"] = json.dumps(["not", "a", "dict"])
     output = render_raw_lead_review(lead)
 
-    assert "graphql_layer" in output
-    source_section = _layer_section(output, "graphql_layer", "by_id_layer")
-    _assert_face_value_field(source_section, "Contract:", ".")
-    _assert_face_value_field(source_section, "Client country:", ".")
+    assert "graphql_layer" not in output
+    assert "marketplace_search_layer" in output
+    assert "public_search_layer" in output
+    # Initial face-value section still has proposals
+    assert "Proposals:   20 to 50" in output
+    # Marketplace and public layers have missing fields
+    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
+    _assert_face_value_field(mp_section, "Title:", ".")
+    _assert_face_value_field(mp_section, "Client country:", ".")
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
+    _assert_face_value_field(pub_section, "Contract:", ".")
 
 
 def test_render_graphql_string_json_is_safe() -> None:
@@ -529,10 +545,11 @@ def test_render_graphql_string_json_is_safe() -> None:
     lead["raw_payload_json"] = json.dumps("just a string")
     output = render_raw_lead_review(lead)
 
-    assert "graphql_layer" in output
-    source_section = _layer_section(output, "graphql_layer", "by_id_layer")
-    _assert_face_value_field(source_section, "Contract:", ".")
-    _assert_face_value_field(source_section, "Client country:", ".")
+    assert "graphql_layer" not in output
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
+    _assert_face_value_field(pub_section, "Contract:", ".")
+    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
+    _assert_face_value_field(mp_section, "Client country:", ".")
 
 
 def test_render_graphql_exact_payload_missing_persons_to_hire_shows_dot() -> None:
@@ -547,6 +564,7 @@ def test_render_graphql_exact_payload_missing_persons_to_hire_shows_dot() -> Non
 
     output = render_raw_lead_review(lead)
 
+    assert "graphql_layer" not in output
     assert "by_id_layer" in output
     by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
     _assert_face_value_field(by_id_section, "Hires:", "1")
@@ -573,7 +591,9 @@ def test_render_split_face_value_sections_source_vs_exact() -> None:
     lead = _make_lead()
     lead["source"] = "graphql_search"
     lead["raw_payload_json"] = json.dumps({
-        "contract_type": "hourly",
+        "_public_raw": {
+            "type": "hourly",
+        },
         "_exact_marketplace_raw": {
             "activityStat": {"jobActivity": {"totalHired": 1}},
             "contractTerms": {"personsToHire": 1}
@@ -581,18 +601,18 @@ def test_render_split_face_value_sections_source_vs_exact() -> None:
     })
     output = render_raw_lead_review(lead)
 
-    # Verify both section headers exist
-    assert "graphql_layer" in output
-    assert "by_id_layer" in output
+    # Verify both new source sections exist
+    assert "marketplace_search_layer" in output
+    assert "public_search_layer" in output
 
     # Split into isolated sections
-    source_section = _layer_section(output, "graphql_layer", "by_id_layer")
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
     by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
 
-    # Assert source payload section (no exact hydration data)
-    _assert_face_value_field(source_section, "Contract:", "hourly")
-    assert "Hires:" not in source_section
-    assert "Persons to hire:" not in source_section
+    # Assert public payload section (no exact hydration data)
+    _assert_face_value_field(pub_section, "Contract:", "hourly")
+    assert "Hires:" not in pub_section
+    assert "Persons to hire:" not in pub_section
 
     # Assert exact hydration section (only exact marketplace data)
     _assert_face_value_field(by_id_section, "Hires:", "1")
@@ -1268,18 +1288,15 @@ def test_best_matches_layer_section_exists_for_best_matches_lead() -> None:
     assert "Hourly range:" not in source_section
 
 
-def test_graphql_layer_section_exists_for_graphql_lead() -> None:
+def test_marketplace_and_public_layers_exist_for_non_best_matches_lead() -> None:
     lead = _make_lead()
     lead["source"] = "graphql_search"
     output = render_raw_lead_review(lead)
-    assert "graphql_layer" in output
-    source_section = _layer_section(output, "graphql_layer", "by_id_layer")
-    for label in _GRAPHQL_LAYER_LABELS:
-        assert label in source_section, f"Missing {label} in graphql_layer"
-    # Unsupported labels absent
-    assert "Tier:" not in source_section
-    assert "Featured:" not in source_section
-    assert "Connects:" not in source_section
+    assert "marketplace_search_layer" in output
+    assert "public_search_layer" in output
+    assert "by_id_layer" in output
+    assert "graphql_layer" not in output
+    assert "best_matches_layer" not in output
 
 
 def test_by_id_layer_section_exists() -> None:
@@ -1467,3 +1484,130 @@ def test_by_id_layer_shows_hydration_failure() -> None:
     )
     _assert_face_value_field(by_id_section, "Hires:", ".")
     _assert_face_value_field(by_id_section, "Persons to hire:", ".")
+
+
+# ---------------------------------------------------------------------------
+# Required New Tests
+# ---------------------------------------------------------------------------
+
+def test_non_best_matches_render_includes_marketplace_public_by_id_layers() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    output = render_raw_lead_review(lead)
+
+    assert "marketplace_search_layer" in output
+    assert "public_search_layer" in output
+    assert "by_id_layer" in output
+    assert "graphql_layer" not in output
+    assert "best_matches_layer" not in output
+
+
+def test_marketplace_layer_reads_from_marketplace_raw() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps({
+        "_source_terms": ["wordpress", "woocommerce"],
+        "_source_surfaces": ["search", "recommendation"],
+        "_marketplace_raw": {
+            "id": "m1",
+            "ciphertext": "~m1",
+            "title": "Marketplace title",
+            "createdDateTime": "2026-05-01T10:00:00Z",
+            "skills": [{"prettyName": "WordPress"}, {"name": "PHP"}],
+            "client": {
+                "verificationStatus": "VERIFIED",
+                "location": {"country": "United States", "city": "New York", "timezone": "America/New_York"},
+                "totalSpent": {"displayValue": "$10K+", "rawValue": 10000},
+                "totalHires": 12,
+                "totalPostedJobs": 20,
+                "totalReviews": 8,
+                "totalFeedback": 4.9,
+                "lastContractTitle": "WordPress maintenance",
+                "hasFinancialPrivacy": False
+            }
+        }
+    })
+    output = render_raw_lead_review(lead)
+
+    # Extract isolated sections
+    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
+    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+
+    # Marketplace section assertions
+    _assert_face_value_field(mp_section, "Source terms:", "wordpress, woocommerce")
+    _assert_face_value_field(mp_section, "Source surfaces:", "search, recommendation")
+    _assert_face_value_field(mp_section, "Job id:", "m1")
+    _assert_face_value_field(mp_section, "Ciphertext:", "~m1")
+    _assert_face_value_field(mp_section, "Title:", "Marketplace title")
+    _assert_face_value_field(mp_section, "Posted:", "2026-05-01T10:00:00Z")
+    _assert_face_value_field(mp_section, "Skills:", "WordPress, PHP")
+    _assert_face_value_field(mp_section, "Payment:", "VERIFIED")
+    _assert_face_value_field(mp_section, "Client country:", "United States")
+    _assert_face_value_field(mp_section, "Client city:", "New York")
+    _assert_face_value_field(mp_section, "Client timezone:", "America/New_York")
+    _assert_face_value_field(mp_section, "Client spend:", "$10K+")
+    _assert_face_value_field(mp_section, "Total hires:", "12")
+    _assert_face_value_field(mp_section, "Jobs posted:", "20")
+    _assert_face_value_field(mp_section, "Client reviews:", "8")
+    _assert_face_value_field(mp_section, "Client feedback:", "4.9")
+    _assert_face_value_field(mp_section, "Last contract title:", "WordPress maintenance")
+    _assert_face_value_field(mp_section, "Financial privacy:", "no")
+
+    # Public section should have most fields as "." since no _public_raw
+    _assert_face_value_field(pub_section, "Job id:", ".")
+    # by_id layer unchanged
+    assert "by_id_layer" in by_id_section
+
+
+def test_public_layer_reads_from_public_raw() -> None:
+    lead = _make_lead()
+    lead["source"] = "graphql_search"
+    lead["raw_payload_json"] = json.dumps({
+        "_source_terms": ["python", "django"],
+        "_source_surfaces": ["search"],
+        "_public_raw": {
+            "id": "p1",
+            "ciphertext": "~p1",
+            "title": "Public title",
+            "publishedDateTime": "2026-05-01T11:00:00Z",
+            "type": "hourly",
+            "hourlyBudgetMin": 25,
+            "hourlyBudgetMax": 50,
+            "hourlyBudgetType": "FIXED",
+            "amount": {"displayValue": "$500", "rawValue": 500},
+            "weeklyBudget": {"rawValue": 1000},
+            "contractorTier": "Expert",
+            "durationLabel": "Less than 1 month",
+            "engagement": "Less than 30 hrs/week",
+            "jobStatus": "OPEN",
+            "recno": 123,
+            "totalApplicants": 5
+        }
+    })
+    output = render_raw_lead_review(lead)
+
+    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
+    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
+
+    # Public section assertions
+    _assert_face_value_field(pub_section, "Source terms:", "python, django")
+    _assert_face_value_field(pub_section, "Source surfaces:", "search")
+    _assert_face_value_field(pub_section, "Job id:", "p1")
+    _assert_face_value_field(pub_section, "Ciphertext:", "~p1")
+    _assert_face_value_field(pub_section, "Title:", "Public title")
+    _assert_face_value_field(pub_section, "Posted:", "2026-05-01T11:00:00Z")
+    _assert_face_value_field(pub_section, "Contract:", "hourly")
+    _assert_face_value_field(pub_section, "Hourly range:", "$25-$50/hr")
+    _assert_face_value_field(pub_section, "Hourly budget type:", "FIXED")
+    _assert_face_value_field(pub_section, "Budget:", "$500")
+    _assert_face_value_field(pub_section, "Weekly budget:", "$1000")
+    _assert_face_value_field(pub_section, "Tier:", "Expert")
+    _assert_face_value_field(pub_section, "Duration:", "Less than 1 month")
+    _assert_face_value_field(pub_section, "Engagement:", "Less than 30 hrs/week")
+    _assert_face_value_field(pub_section, "Job status:", "OPEN")
+    _assert_face_value_field(pub_section, "Recno:", "123")
+    _assert_face_value_field(pub_section, "Proposals:", "5")
+
+    # Marketplace section has no _marketplace_raw, so most fields "."
+    _assert_face_value_field(mp_section, "Job id:", ".")
