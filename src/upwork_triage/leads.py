@@ -242,7 +242,6 @@ _FACE_VALUE_LABELS = [
     "Invites sent:",
     "Client last viewed:",
     "Payment:",
-    "Client country:",
     "Client spend:",
     "Hire rate:",
     "Total hires:",
@@ -284,6 +283,8 @@ _GRAPHQL_LAYER_LABELS = (
 )
 
 _BY_ID_LAYER_LABELS = (
+    "Hydration status:",
+    "Hydration error:",
     "Contract:",
     "Hourly range:",
     "Budget:",
@@ -753,7 +754,15 @@ def _format_exact_hydration_fields(lead: dict[str, Any]) -> list[str]:
     values = {label: "—" for label in _FACE_VALUE_LABELS}
 
     payload = _load_payload_dict(lead.get("raw_payload_json"))
-    if payload:
+    if payload is not None:
+        # Populate hydration status/error from top-level payload keys
+        status = payload.get("_exact_hydration_status")
+        if status is not None:
+            values["Hydration status:"] = _fmt_face_val(status)
+        error = payload.get("_exact_hydration_error")
+        if error is not None:
+            values["Hydration error:"] = _fmt_face_val(error)
+        # Apply exact marketplace mappings (uses _exact_marketplace_raw if present)
         _apply_exact_marketplace_mapping(values, payload)
 
     # Only render by_id layer supported labels, convert "—" to "."

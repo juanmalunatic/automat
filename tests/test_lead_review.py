@@ -1432,3 +1432,38 @@ def test_by_id_layer_representative_mapping() -> None:
     _assert_face_value_field(by_id_section, "Min earning required:", "10000.0")
     _assert_face_value_field(by_id_section, "Local check required:", "yes")
     _assert_face_value_field(by_id_section, "Local market:", "US Only")
+
+
+def test_by_id_layer_shows_hydration_success() -> None:
+    lead = _make_lead()
+    lead["raw_payload_json"] = json.dumps({
+        "_exact_hydration_status": "success",
+        "_exact_marketplace_raw": {
+            "activityStat": {"jobActivity": {"totalHired": 0}},
+            "contractTerms": {"personsToHire": 1}
+        }
+    })
+    output = render_raw_lead_review(lead)
+    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    _assert_face_value_field(by_id_section, "Hydration status:", "success")
+    _assert_face_value_field(by_id_section, "Hydration error:", ".")
+    _assert_face_value_field(by_id_section, "Hires:", "0")
+    _assert_face_value_field(by_id_section, "Persons to hire:", "1")
+
+
+def test_by_id_layer_shows_hydration_failure() -> None:
+    lead = _make_lead()
+    lead["raw_payload_json"] = json.dumps({
+        "_exact_hydration_status": "failed",
+        "_exact_hydration_error": "Upwork GraphQL returned errors: Target service returned error 403"
+    })
+    output = render_raw_lead_review(lead)
+    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    _assert_face_value_field(by_id_section, "Hydration status:", "failed")
+    _assert_face_value_field(
+        by_id_section,
+        "Hydration error:",
+        "Upwork GraphQL returned errors: Target service returned error 403"
+    )
+    _assert_face_value_field(by_id_section, "Hires:", ".")
+    _assert_face_value_field(by_id_section, "Persons to hire:", ".")
