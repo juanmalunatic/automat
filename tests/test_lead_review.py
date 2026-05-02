@@ -17,6 +17,7 @@ from upwork_triage.leads import (
     _BY_ID_LAYER_LABELS,
     _MARKETPLACE_SEARCH_LAYER_LABELS,
     _PUBLIC_SEARCH_LAYER_LABELS,
+    _MANUAL_SCRAPE_LAYER_LABELS,
     fetch_next_raw_lead,
     promote_raw_lead,
     render_raw_lead_review,
@@ -123,7 +124,7 @@ def test_render_raw_lead_review_truncates_description() -> None:
     lead["raw_description"] = "A" * 2000
     output = render_raw_lead_review(lead, description_chars=10)
 
-    assert "Description: AAAAAAAAAA […]" in output
+    assert "Description: AAAAAAAAAA [...]" in output
     assert "Next step: inspect this lead manually" in output
 
 
@@ -476,7 +477,7 @@ def test_render_graphql_payload_fills_layer_fields() -> None:
     # Unsupported labels absent from public layer
     assert "Connects:" not in pub_section
     # by_id layer unchanged
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
     assert "by_id_layer" in by_id_section
 
 
@@ -566,7 +567,7 @@ def test_render_graphql_exact_payload_missing_persons_to_hire_shows_dot() -> Non
 
     assert "graphql_layer" not in output
     assert "by_id_layer" in output
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
     _assert_face_value_field(by_id_section, "Hires:", "1")
     _assert_face_value_field(by_id_section, "Persons to hire:", ".")
 
@@ -582,7 +583,7 @@ def test_render_best_matches_exact_hydrated_shows_hires_and_persons_to_hire() ->
     })
     output = render_raw_lead_review(lead)
     assert "by_id_layer" in output
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
     _assert_face_value_field(by_id_section, "Hires:", "1")
     _assert_face_value_field(by_id_section, "Persons to hire:", "1")
 
@@ -607,7 +608,7 @@ def test_render_split_face_value_sections_source_vs_exact() -> None:
 
     # Split into isolated sections
     pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
 
     # Assert public payload section (no exact hydration data)
     _assert_face_value_field(pub_section, "Contract:", "hourly")
@@ -1325,7 +1326,7 @@ def test_by_id_layer_only_renders_supported_labels() -> None:
         }
     })
     output = render_raw_lead_review(lead)
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
     # Assert all supported labels are present
     for label in _BY_ID_LAYER_LABELS:
         assert label in by_id_section, f"Missing {label} in by_id_layer"
@@ -1352,7 +1353,7 @@ def test_render_graphql_exact_payload_shows_persons_to_hire() -> None:
     output = render_raw_lead_review(lead)
 
     assert "by_id_layer" in output
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
     _assert_face_value_field(by_id_section, "Hires:", "1")
     _assert_face_value_field(by_id_section, "Persons to hire:", "1")
     _assert_face_value_field(by_id_section, "Contract:", "hourly")
@@ -1367,7 +1368,7 @@ def test_by_id_layer_missing_supported_fields_render_dot() -> None:
         }
     })
     output = render_raw_lead_review(lead)
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
     # Missing supported labels render "."
     _assert_face_value_field(by_id_section, "Contract:", ".")
     _assert_face_value_field(by_id_section, "Persons to hire:", ".")
@@ -1424,7 +1425,7 @@ def test_by_id_layer_representative_mapping() -> None:
     }
     lead["raw_payload_json"] = json.dumps({"_exact_marketplace_raw": exact_raw})
     output = render_raw_lead_review(lead)
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
 
     # Assert all representative rendered values
     _assert_face_value_field(by_id_section, "Contract:", "hourly")
@@ -1461,7 +1462,7 @@ def test_by_id_layer_shows_hydration_success() -> None:
         }
     })
     output = render_raw_lead_review(lead)
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
     _assert_face_value_field(by_id_section, "Hydration status:", "success")
     _assert_face_value_field(by_id_section, "Hydration error:", ".")
     _assert_face_value_field(by_id_section, "Hires:", "0")
@@ -1475,7 +1476,7 @@ def test_by_id_layer_shows_hydration_failure() -> None:
         "_exact_hydration_error": "Upwork GraphQL returned errors: Target service returned error 403"
     })
     output = render_raw_lead_review(lead)
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
+    by_id_section = _layer_section(output, "by_id_layer", "manual_scrape_layer")
     _assert_face_value_field(by_id_section, "Hydration status:", "failed")
     _assert_face_value_field(
         by_id_section,
@@ -1487,127 +1488,154 @@ def test_by_id_layer_shows_hydration_failure() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Required New Tests
+# Required New Tests for manual_scrape_layer
 # ---------------------------------------------------------------------------
 
-def test_non_best_matches_render_includes_marketplace_public_by_id_layers() -> None:
+def test_render_graphql_lead_includes_manual_scrape_layer() -> None:
     lead = _make_lead()
     lead["source"] = "graphql_search"
     output = render_raw_lead_review(lead)
 
+    # Check that manual_scrape_layer is present after by_id_layer
+    assert "manual_scrape_layer" in output
+    # Ensure it appears after by_id_layer
+    by_id_idx = output.index("by_id_layer")
+    manual_idx = output.index("manual_scrape_layer")
+    assert manual_idx > by_id_idx
+    # Check that Manual status: . is present (since no manual data)
+    manual_section = _layer_section(output, "manual_scrape_layer", "=" * 60)
+    _assert_face_value_field(manual_section, "Manual status:", ".")
+    # Ensure other layers still present
     assert "marketplace_search_layer" in output
     assert "public_search_layer" in output
+    # Ensure by_id_layer still present
     assert "by_id_layer" in output
-    assert "graphql_layer" not in output
-    assert "best_matches_layer" not in output
 
 
-def test_marketplace_layer_reads_from_marketplace_raw() -> None:
+def test_render_best_matches_lead_includes_manual_scrape_layer() -> None:
     lead = _make_lead()
-    lead["source"] = "graphql_search"
-    lead["raw_payload_json"] = json.dumps({
-        "_source_terms": ["wordpress", "woocommerce"],
-        "_source_surfaces": ["search", "recommendation"],
-        "_marketplace_raw": {
-            "id": "m1",
-            "ciphertext": "~m1",
-            "title": "Marketplace title",
-            "createdDateTime": "2026-05-01T10:00:00Z",
-            "skills": [{"prettyName": "WordPress"}, {"name": "PHP"}],
-            "client": {
-                "verificationStatus": "VERIFIED",
-                "location": {"country": "United States", "city": "New York", "timezone": "America/New_York"},
-                "totalSpent": {"displayValue": "$10K+", "rawValue": 10000},
-                "totalHires": 12,
-                "totalPostedJobs": 20,
-                "totalReviews": 8,
-                "totalFeedback": 4.9,
-                "lastContractTitle": "WordPress maintenance",
-                "hasFinancialPrivacy": False
-            }
-        }
-    })
+    lead["source"] = "best_matches_ui"
     output = render_raw_lead_review(lead)
 
-    # Extract isolated sections
-    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
-    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
-    by_id_section = _layer_section(output, "by_id_layer", "=" * 60)
-
-    # Marketplace section assertions
-    _assert_face_value_field(mp_section, "Source terms:", "wordpress, woocommerce")
-    _assert_face_value_field(mp_section, "Source surfaces:", "search, recommendation")
-    _assert_face_value_field(mp_section, "Job id:", "m1")
-    _assert_face_value_field(mp_section, "Ciphertext:", "~m1")
-    _assert_face_value_field(mp_section, "Title:", "Marketplace title")
-    _assert_face_value_field(mp_section, "Posted:", "2026-05-01T10:00:00Z")
-    _assert_face_value_field(mp_section, "Skills:", "WordPress, PHP")
-    _assert_face_value_field(mp_section, "Payment:", "VERIFIED")
-    _assert_face_value_field(mp_section, "Client country:", "United States")
-    _assert_face_value_field(mp_section, "Client city:", "New York")
-    _assert_face_value_field(mp_section, "Client timezone:", "America/New_York")
-    _assert_face_value_field(mp_section, "Client spend:", "$10K+")
-    _assert_face_value_field(mp_section, "Total hires:", "12")
-    _assert_face_value_field(mp_section, "Jobs posted:", "20")
-    _assert_face_value_field(mp_section, "Client reviews:", "8")
-    _assert_face_value_field(mp_section, "Client feedback:", "4.9")
-    _assert_face_value_field(mp_section, "Last contract title:", "WordPress maintenance")
-    _assert_face_value_field(mp_section, "Financial privacy:", "no")
-
-    # Public section should have most fields as "." since no _public_raw
-    _assert_face_value_field(pub_section, "Job id:", ".")
-    # by_id layer unchanged
-    assert "by_id_layer" in by_id_section
+    assert "manual_scrape_layer" in output
+    # Ensure it appears after by_id_layer
+    by_id_idx = output.index("by_id_layer")
+    manual_idx = output.index("manual_scrape_layer")
+    assert manual_idx > by_id_idx
+    # Check Manual status: .
+    manual_section = _layer_section(output, "manual_scrape_layer", "=" * 60)
+    _assert_face_value_field(manual_section, "Manual status:", ".")
+    # best_matches_layer should still be present
+    assert "best_matches_layer" in output
 
 
-def test_public_layer_reads_from_public_raw() -> None:
+def test_fetch_next_raw_lead_includes_manual_fields(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = connect_db(db_path)
+    initialize_db(conn)
+    # Insert a raw lead
+    _insert(conn, job_key="upwork:manual1", source="graphql_search", captured_at=_NOW1)
+    # Insert parent jobs row to satisfy FK constraint for manual_job_enrichments
+    with conn:
+        conn.execute(
+            "INSERT INTO jobs (job_key, first_seen_at, last_seen_at) VALUES (?, ?, ?)",
+            ("upwork:manual1", _NOW1, _NOW1)
+        )
+    # Insert manual_job_enrichments
+    with conn:
+        conn.execute(
+            "INSERT INTO manual_job_enrichments (job_key, raw_manual_text, is_latest, parse_status, created_at, raw_manual_text_hash) VALUES (?, ?, ?, ?, ?, ?)",
+            ("upwork:manual1", "some raw text", 1, "raw_imported", _NOW1, "hash1")
+        )
+        # Get the id
+        me_id = conn.execute("SELECT id FROM manual_job_enrichments WHERE job_key = ?", ("upwork:manual1",)).fetchone()[0]
+        # Insert manual_job_enrichment_parses
+        conn.execute(
+            """INSERT INTO manual_job_enrichment_parses (
+                manual_enrichment_id, job_key, created_at, parse_status, manual_title, connects_required, manual_proposals
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (me_id, "upwork:manual1", _NOW1, "parsed_ok", "Test Manual Title", 5, "10 to 20")
+        )
+    conn.close()
+    # Reopen to fetch
+    conn2 = connect_db(db_path)
+    lead = fetch_next_raw_lead(conn2)
+    conn2.close()
+    assert lead is not None
+    assert lead["job_key"] == "upwork:manual1"
+    assert lead["manual_scrape_import_status"] == "raw_imported"
+    assert lead["manual_scrape_parse_status"] == "parsed_ok"
+    assert lead["manual_scrape_manual_title"] == "Test Manual Title"
+    assert lead["manual_scrape_connects_required"] == 5
+    assert lead["manual_scrape_manual_proposals"] == "10 to 20"
+    # raw manual text should be present
+    assert lead["manual_scrape_raw_manual_text"] == "some raw text"
+
+
+def test_render_manual_scrape_layer_displays_parsed_fields() -> None:
     lead = _make_lead()
-    lead["source"] = "graphql_search"
-    lead["raw_payload_json"] = json.dumps({
-        "_source_terms": ["python", "django"],
-        "_source_surfaces": ["search"],
-        "_public_raw": {
-            "id": "p1",
-            "ciphertext": "~p1",
-            "title": "Public title",
-            "publishedDateTime": "2026-05-01T11:00:00Z",
-            "type": "hourly",
-            "hourlyBudgetMin": 25,
-            "hourlyBudgetMax": 50,
-            "hourlyBudgetType": "FIXED",
-            "amount": {"displayValue": "$500", "rawValue": 500},
-            "weeklyBudget": {"rawValue": 1000},
-            "contractorTier": "Expert",
-            "durationLabel": "Less than 1 month",
-            "engagement": "Less than 30 hrs/week",
-            "jobStatus": "OPEN",
-            "recno": 123,
-            "totalApplicants": 5
-        }
-    })
+    # Populate manual_scrape_* keys directly
+    lead["manual_scrape_import_status"] = "raw_imported"
+    lead["manual_scrape_parse_status"] = "parsed_ok"
+    lead["manual_scrape_manual_title"] = "Manual Title"
+    lead["manual_scrape_manual_title_match_status"] = "match"
+    lead["manual_scrape_manual_title_match_warning"] = "."
+    lead["manual_scrape_connects_required"] = 5
+    lead["manual_scrape_manual_proposals"] = "10 to 20"
+    lead["manual_scrape_manual_last_viewed_by_client"] = "2 hours ago"
+    lead["manual_scrape_manual_hires_on_job"] = 3
+    lead["manual_scrape_manual_interviewing"] = 2
+    lead["manual_scrape_manual_invites_sent"] = 5
+    lead["manual_scrape_manual_unanswered_invites"] = 1
+    lead["manual_scrape_bid_high"] = 100
+    lead["manual_scrape_bid_avg"] = 80
+    lead["manual_scrape_bid_low"] = 60
+    lead["manual_scrape_client_payment_verified"] = 1
+    lead["manual_scrape_client_phone_verified"] = 0
+    lead["manual_scrape_client_rating"] = 4.5
+    lead["manual_scrape_client_reviews_count"] = 10
+    lead["manual_scrape_client_country_normalized"] = "United States"
+    lead["manual_scrape_client_location_text"] = "New York"
+    lead["manual_scrape_client_jobs_posted"] = 20
+    lead["manual_scrape_client_hire_rate"] = "50%"
+    lead["manual_scrape_client_open_jobs"] = 2
+    lead["manual_scrape_client_total_spent"] = 5000
+    lead["manual_scrape_client_hires_total"] = 15
+    lead["manual_scrape_client_hires_active"] = 3
+    lead["manual_scrape_client_avg_hourly_paid"] = 25.0
+    lead["manual_scrape_client_hours_hired"] = 1000
+    lead["manual_scrape_client_member_since"] = "2020-01-01"
+    lead["manual_scrape_raw_manual_text"] = "This is a raw manual text\nwith newlines\nand more."
+
     output = render_raw_lead_review(lead)
+    manual_section = _layer_section(output, "manual_scrape_layer", "=" * 60)
 
-    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
-    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
-
-    # Public section assertions
-    _assert_face_value_field(pub_section, "Source terms:", "python, django")
-    _assert_face_value_field(pub_section, "Source surfaces:", "search")
-    _assert_face_value_field(pub_section, "Job id:", "p1")
-    _assert_face_value_field(pub_section, "Ciphertext:", "~p1")
-    _assert_face_value_field(pub_section, "Title:", "Public title")
-    _assert_face_value_field(pub_section, "Posted:", "2026-05-01T11:00:00Z")
-    _assert_face_value_field(pub_section, "Contract:", "hourly")
-    _assert_face_value_field(pub_section, "Hourly range:", "$25-$50/hr")
-    _assert_face_value_field(pub_section, "Hourly budget type:", "FIXED")
-    _assert_face_value_field(pub_section, "Budget:", "$500")
-    _assert_face_value_field(pub_section, "Weekly budget:", "$1000")
-    _assert_face_value_field(pub_section, "Tier:", "Expert")
-    _assert_face_value_field(pub_section, "Duration:", "Less than 1 month")
-    _assert_face_value_field(pub_section, "Engagement:", "Less than 30 hrs/week")
-    _assert_face_value_field(pub_section, "Job status:", "OPEN")
-    _assert_face_value_field(pub_section, "Recno:", "123")
-    _assert_face_value_field(pub_section, "Proposals:", "5")
-
-    # Marketplace section has no _marketplace_raw, so most fields "."
-    _assert_face_value_field(mp_section, "Job id:", ".")
+    _assert_face_value_field(manual_section, "Manual status:", "parsed_ok")
+    _assert_face_value_field(manual_section, "Manual title:", "Manual Title")
+    _assert_face_value_field(manual_section, "Title match:", "match")
+    _assert_face_value_field(manual_section, "Title warning:", ".")
+    _assert_face_value_field(manual_section, "Connects:", "5")
+    _assert_face_value_field(manual_section, "Proposals:", "10 to 20")
+    _assert_face_value_field(manual_section, "Last viewed:", "2 hours ago")
+    _assert_face_value_field(manual_section, "Hires:", "3")
+    _assert_face_value_field(manual_section, "Interviewing:", "2")
+    _assert_face_value_field(manual_section, "Invites sent:", "5")
+    _assert_face_value_field(manual_section, "Unanswered invites:", "1")
+    _assert_face_value_field(manual_section, "Bid high/avg/low:", "$100/$80/$60")
+    _assert_face_value_field(manual_section, "Payment verified:", "yes")
+    _assert_face_value_field(manual_section, "Phone verified:", "no")
+    _assert_face_value_field(manual_section, "Client rating:", "4.5")
+    _assert_face_value_field(manual_section, "Client reviews:", "10")
+    _assert_face_value_field(manual_section, "Client country:", "United States")
+    _assert_face_value_field(manual_section, "Client location:", "New York")
+    _assert_face_value_field(manual_section, "Jobs posted:", "20")
+    _assert_face_value_field(manual_section, "Hire rate:", "50%")
+    _assert_face_value_field(manual_section, "Open jobs:", "2")
+    _assert_face_value_field(manual_section, "Client spend:", "$5000")
+    _assert_face_value_field(manual_section, "Total hires:", "15")
+    _assert_face_value_field(manual_section, "Active hires:", "3")
+    _assert_face_value_field(manual_section, "Avg hourly paid:", "$25")
+    _assert_face_value_field(manual_section, "Hours hired:", "1000")
+    _assert_face_value_field(manual_section, "Member since:", "2020-01-01")
+    # Raw manual text preview: newlines replaced, truncated to 240 chars
+    assert "This is a raw manual text | with newlines | and more." in manual_section

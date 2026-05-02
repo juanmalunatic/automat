@@ -109,22 +109,59 @@ def fetch_next_raw_lead(
         raise ValueError(f"Invalid status: {status}")
 
     query = """
-        SELECT *
+        SELECT
+            raw_leads.*,
+            me.parse_status AS manual_scrape_import_status,
+            me.raw_manual_text AS manual_scrape_raw_manual_text,
+            mp.parse_status AS manual_scrape_parse_status,
+            mp.manual_title AS manual_scrape_manual_title,
+            mp.manual_title_match_status AS manual_scrape_manual_title_match_status,
+            mp.manual_title_match_warning AS manual_scrape_manual_title_match_warning,
+            mp.connects_required AS manual_scrape_connects_required,
+            mp.manual_proposals AS manual_scrape_manual_proposals,
+            mp.manual_last_viewed_by_client AS manual_scrape_manual_last_viewed_by_client,
+            mp.manual_hires_on_job AS manual_scrape_manual_hires_on_job,
+            mp.manual_interviewing AS manual_scrape_manual_interviewing,
+            mp.manual_invites_sent AS manual_scrape_manual_invites_sent,
+            mp.manual_unanswered_invites AS manual_scrape_manual_unanswered_invites,
+            mp.bid_high AS manual_scrape_bid_high,
+            mp.bid_avg AS manual_scrape_bid_avg,
+            mp.bid_low AS manual_scrape_bid_low,
+            mp.client_payment_verified AS manual_scrape_client_payment_verified,
+            mp.client_phone_verified AS manual_scrape_client_phone_verified,
+            mp.client_rating AS manual_scrape_client_rating,
+            mp.client_reviews_count AS manual_scrape_client_reviews_count,
+            mp.client_country_normalized AS manual_scrape_client_country_normalized,
+            mp.client_country_raw AS manual_scrape_client_country_raw,
+            mp.client_location_text AS manual_scrape_client_location_text,
+            mp.client_jobs_posted AS manual_scrape_client_jobs_posted,
+            mp.client_hire_rate AS manual_scrape_client_hire_rate,
+            mp.client_open_jobs AS manual_scrape_client_open_jobs,
+            mp.client_total_spent AS manual_scrape_client_total_spent,
+            mp.client_hires_total AS manual_scrape_client_hires_total,
+            mp.client_hires_active AS manual_scrape_client_hires_active,
+            mp.client_avg_hourly_paid AS manual_scrape_client_avg_hourly_paid,
+            mp.client_hours_hired AS manual_scrape_client_hours_hired,
+            mp.client_member_since AS manual_scrape_client_member_since
         FROM raw_leads
-        WHERE lead_status = ?
+        LEFT JOIN manual_job_enrichments AS me
+            ON me.job_key = raw_leads.job_key AND me.is_latest = 1
+        LEFT JOIN manual_job_enrichment_parses AS mp
+            ON mp.manual_enrichment_id = me.id
+        WHERE raw_leads.lead_status = ?
     """
     params: list[Any] = [status]
 
     if source is not None:
-        query += " AND source = ?\n"
+        query += " AND raw_leads.source = ?\n"
         params.append(source)
 
     query += """
         ORDER BY
-            CASE WHEN source = 'best_matches_ui' THEN 0 ELSE 1 END ASC,
-            CASE WHEN source = 'best_matches_ui' THEN COALESCE(source_rank, 999999) ELSE 999999 END ASC,
-            captured_at DESC,
-            id DESC
+            CASE WHEN raw_leads.source = 'best_matches_ui' THEN 0 ELSE 1 END ASC,
+            CASE WHEN raw_leads.source = 'best_matches_ui' THEN COALESCE(raw_leads.source_rank, 999999) ELSE 999999 END ASC,
+            raw_leads.captured_at DESC,
+            raw_leads.id DESC
         LIMIT 1
     """
 
@@ -198,7 +235,7 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
     lines.append(f"Client:      {lead.get('raw_client_summary') or '—'}")
     raw_desc = lead.get("raw_description") or ""
     if len(raw_desc) > description_chars:
-        raw_desc = raw_desc[:description_chars] + " […]"
+        raw_desc = raw_desc[:description_chars] + " [...]"
     lines.append(f"Description: {raw_desc or '—'}")
 
     lines.append("-" * 30)
@@ -229,6 +266,13 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
     lines.append("-" * 30)
     exact_lines = _format_exact_hydration_fields(lead)
     lines.extend(exact_lines)
+
+    # manual_scrape_layer (new)
+    lines.append("-" * 30)
+    lines.append("manual_scrape_layer")
+    lines.append("-" * 30)
+    manual_lines = _format_manual_scrape_layer_fields(lead)
+    lines.extend(manual_lines)
 
     lines.append("=" * 60)
     lines.append(
@@ -277,8 +321,7 @@ _BEST_MATCHES_LAYER_LABELS = (
     "Payment:",
     "Client country:",
     "Client spend:",
-    "Featured:",
-)
+    "Featured:",)
 
 _GRAPHQL_LAYER_LABELS = (
     "Posted:",
@@ -291,8 +334,7 @@ _GRAPHQL_LAYER_LABELS = (
     "Client country:",
     "Client spend:",
     "Total hires:",
-    "Jobs posted:",
-)
+    "Jobs posted:",)
 
 _MARKETPLACE_SEARCH_LAYER_LABELS = (
     "Source terms:",
@@ -373,6 +415,37 @@ _BY_ID_LAYER_LABELS = (
     "Location flexibility:",
 )
 
+_MANUAL_SCRAPE_LAYER_LABELS = (
+    "Manual status:",
+    "Manual title:",
+    "Title match:",
+    "Title warning:",
+    "Connects:",
+    "Proposals:",
+    "Last viewed:",
+    "Hires:",
+    "Interviewing:",
+    "Invites sent:",
+    "Unanswered invites:",
+    "Bid high/avg/low:",
+    "Payment verified:",
+    "Phone verified:",
+    "Client rating:",
+    "Client reviews:",
+    "Client country:",
+    "Client location:",
+    "Jobs posted:",
+    "Hire rate:",
+    "Open jobs:",
+    "Client spend:",
+    "Total hires:",
+    "Active hires:",
+    "Avg hourly paid:",
+    "Hours hired:",
+    "Member since:",
+    "Raw manual text:",
+)
+
 
 def _format_face_value_fields(lead: dict[str, Any]) -> list[str]:
     """Helper to format a universal list of face-value fields for any lead."""
@@ -436,6 +509,34 @@ def _fmt_face_val(val: Any) -> str:
     if isinstance(val, list):
         return ", ".join(str(v) for v in val)
     return str(val)
+
+
+def _format_manual_boolish(value: Any) -> str:
+    """Format manual int/bool/string fields to yes/no/. for display."""
+    if value is None:
+        return "."
+    # Handle boolean type first
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    # Handle integer type
+    if isinstance(value, int):
+        if value == 1:
+            return "yes"
+        if value == 0:
+            return "no"
+        return "."  # Unknown integer value
+    # Handle string type (case-insensitive, stripped)
+    if isinstance(value, str):
+        stripped = value.strip().lower()
+        if stripped in ("1", "true", "yes"):
+            return "yes"
+        if stripped in ("0", "false", "no"):
+            return "no"
+        if stripped == "":
+            return "."
+        return "."  # Unknown string value
+    # All other types (float, etc.) are unknown
+    return "."
 
 
 def _apply_best_matches_mapping(values: dict[str, str], data: dict[str, Any]) -> None:
@@ -1010,6 +1111,174 @@ def _format_public_search_layer_fields(lead: dict[str, Any]) -> list[str]:
         values["Proposals:"] = _fmt_face_val(pub_raw["totalApplicants"])
 
     return _format_layer_rows(_PUBLIC_SEARCH_LAYER_LABELS, values)
+
+
+# ---------------------------------------------------------------------------
+# New manual_scrape_layer helper
+# ---------------------------------------------------------------------------
+
+def _format_manual_scrape_layer_fields(lead: dict[str, Any]) -> list[str]:
+    """Format manual scrape layer fields from aliased manual columns."""
+    values = {label: "." for label in _MANUAL_SCRAPE_LAYER_LABELS}
+
+    # Manual status: prefer parse_status, then import_status
+    parse_status = lead.get("manual_scrape_parse_status")
+    import_status = lead.get("manual_scrape_import_status")
+    if parse_status is not None and str(parse_status).strip() != "":
+        values["Manual status:"] = str(parse_status)
+    elif import_status is not None and str(import_status).strip() != "":
+        values["Manual status:"] = str(import_status)
+
+    # Manual title
+    manual_title = lead.get("manual_scrape_manual_title")
+    if manual_title is not None:
+        values["Manual title:"] = str(manual_title)
+
+    # Title match
+    title_match = lead.get("manual_scrape_manual_title_match_status")
+    if title_match is not None:
+        values["Title match:"] = str(title_match)
+
+    # Title warning
+    title_warning = lead.get("manual_scrape_manual_title_match_warning")
+    if title_warning is not None:
+        values["Title warning:"] = str(title_warning)
+
+    # Connects
+    connects = lead.get("manual_scrape_connects_required")
+    if connects is not None:
+        values["Connects:"] = _fmt_face_val(connects)
+
+    # Proposals
+    proposals = lead.get("manual_scrape_manual_proposals")
+    if proposals is not None:
+        values["Proposals:"] = _fmt_face_val(proposals)
+
+    # Last viewed
+    last_viewed = lead.get("manual_scrape_manual_last_viewed_by_client")
+    if last_viewed is not None:
+        values["Last viewed:"] = _fmt_face_val(last_viewed)
+
+    # Hires
+    hires = lead.get("manual_scrape_manual_hires_on_job")
+    if hires is not None:
+        values["Hires:"] = _fmt_face_val(hires)
+
+    # Interviewing
+    interviewing = lead.get("manual_scrape_manual_interviewing")
+    if interviewing is not None:
+        values["Interviewing:"] = _fmt_face_val(interviewing)
+
+    # Invites sent
+    invites_sent = lead.get("manual_scrape_manual_invites_sent")
+    if invites_sent is not None:
+        values["Invites sent:"] = _fmt_face_val(invites_sent)
+
+    # Unanswered invites
+    unanswered = lead.get("manual_scrape_manual_unanswered_invites")
+    if unanswered is not None:
+        values["Unanswered invites:"] = _fmt_face_val(unanswered)
+
+    # Bid high/avg/low
+    def fmt_bid(val: Any) -> str:
+        if val is None:
+            return "."
+        return _format_money(val)
+
+    bid_high = lead.get("manual_scrape_bid_high")
+    bid_avg = lead.get("manual_scrape_bid_avg")
+    bid_low = lead.get("manual_scrape_bid_low")
+    values["Bid high/avg/low:"] = f"{fmt_bid(bid_high)}/{fmt_bid(bid_avg)}/{fmt_bid(bid_low)}"
+
+    # Payment verified
+    pay_ver = lead.get("manual_scrape_client_payment_verified")
+    if pay_ver is not None:
+        values["Payment verified:"] = _format_manual_boolish(pay_ver)
+
+    # Phone verified
+    phone_ver = lead.get("manual_scrape_client_phone_verified")
+    if phone_ver is not None:
+        values["Phone verified:"] = _format_manual_boolish(phone_ver)
+
+    # Client rating
+    rating = lead.get("manual_scrape_client_rating")
+    if rating is not None:
+        values["Client rating:"] = _fmt_face_val(rating)
+
+    # Client reviews
+    reviews = lead.get("manual_scrape_client_reviews_count")
+    if reviews is not None:
+        values["Client reviews:"] = _fmt_face_val(reviews)
+
+    # Client country: prefer normalized, fallback raw
+    country_norm = lead.get("manual_scrape_client_country_normalized")
+    if country_norm is not None and str(country_norm).strip() != "":
+        values["Client country:"] = str(country_norm)
+    else:
+        country_raw = lead.get("manual_scrape_client_country_raw")
+        if country_raw is not None and str(country_raw).strip() != "":
+            values["Client country:"] = str(country_raw)
+
+    # Client location
+    location = lead.get("manual_scrape_client_location_text")
+    if location is not None:
+        values["Client location:"] = str(location)
+
+    # Jobs posted
+    jobs_posted = lead.get("manual_scrape_client_jobs_posted")
+    if jobs_posted is not None:
+        values["Jobs posted:"] = _fmt_face_val(jobs_posted)
+
+    # Hire rate
+    hire_rate = lead.get("manual_scrape_client_hire_rate")
+    if hire_rate is not None:
+        values["Hire rate:"] = _fmt_face_val(hire_rate)
+
+    # Open jobs
+    open_jobs = lead.get("manual_scrape_client_open_jobs")
+    if open_jobs is not None:
+        values["Open jobs:"] = _fmt_face_val(open_jobs)
+
+    # Client spend
+    spend = lead.get("manual_scrape_client_total_spent")
+    if spend is not None:
+        values["Client spend:"] = _format_money(spend)
+
+    # Total hires
+    total_hires = lead.get("manual_scrape_client_hires_total")
+    if total_hires is not None:
+        values["Total hires:"] = _fmt_face_val(total_hires)
+
+    # Active hires
+    active_hires = lead.get("manual_scrape_client_hires_active")
+    if active_hires is not None:
+        values["Active hires:"] = _fmt_face_val(active_hires)
+
+    # Avg hourly paid
+    avg_hourly = lead.get("manual_scrape_client_avg_hourly_paid")
+    if avg_hourly is not None:
+        values["Avg hourly paid:"] = _format_money(avg_hourly)
+
+    # Hours hired
+    hours_hired = lead.get("manual_scrape_client_hours_hired")
+    if hours_hired is not None:
+        values["Hours hired:"] = _fmt_face_val(hours_hired)
+
+    # Member since
+    member_since = lead.get("manual_scrape_client_member_since")
+    if member_since is not None:
+        values["Member since:"] = str(member_since)
+
+    # Raw manual text: truncate to 240 chars, replace newlines with " | "
+    raw_text = lead.get("manual_scrape_raw_manual_text")
+    if raw_text is not None:
+        text = str(raw_text)
+        text = text.replace("\n", " | ")
+        if len(text) > 240:
+            text = text[:240] + " [...]"
+        values["Raw manual text:"] = text
+
+    return _format_layer_rows(_MANUAL_SCRAPE_LAYER_LABELS, values)
 
 
 def fetch_raw_lead_counts(conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
