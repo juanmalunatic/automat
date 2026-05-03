@@ -40,6 +40,12 @@ def _assert_face_value_field(output: str, label: str, value: str) -> None:
     assert re.search(pattern, output), f"Field {label!r} with value {value!r} not found in output"
 
 
+def _assert_layer_missing(output: str, layer_name: str) -> None:
+    """Verify that a layer renders compactly as 'layer_name: missing'."""
+    pattern = rf"^{re.escape(layer_name)}: missing"
+    assert re.search(pattern, output, re.MULTILINE), f"{layer_name}: missing not found in output"
+
+
 def _insert(
     conn: sqlite3.Connection,
     *,
@@ -512,14 +518,10 @@ def test_render_graphql_invalid_json_is_safe() -> None:
     # Initial face-value section still has proposals
     assert "Proposals:   20 to 50" in output
     # Marketplace and public layers have missing fields
-    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
-    _assert_face_value_field(mp_section, "Layer status:", "missing")
-    _assert_face_value_field(mp_section, "Title:", ".")
-    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
-    _assert_face_value_field(pub_section, "Layer status:", "missing")
-    _assert_face_value_field(pub_section, "Contract:", ".")
-    # Unsupported labels absent from public layer
-    assert "Client country:" not in pub_section
+    _assert_layer_missing(output, "marketplace_search_layer")
+    _assert_layer_missing(output, "public_search_layer")
+    # Unsupported labels absent from public layer (they should not be present at all now)
+    assert "Job id:" not in output 
 
 
 def test_render_graphql_non_dict_json_is_safe() -> None:
@@ -535,13 +537,8 @@ def test_render_graphql_non_dict_json_is_safe() -> None:
     # Initial face-value section still has proposals
     assert "Proposals:   20 to 50" in output
     # Marketplace and public layers have missing fields
-    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
-    _assert_face_value_field(mp_section, "Layer status:", "missing")
-    _assert_face_value_field(mp_section, "Title:", ".")
-    _assert_face_value_field(mp_section, "Client country:", ".")
-    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
-    _assert_face_value_field(pub_section, "Layer status:", "missing")
-    _assert_face_value_field(pub_section, "Contract:", ".")
+    _assert_layer_missing(output, "marketplace_search_layer")
+    _assert_layer_missing(output, "public_search_layer")
 
 
 def test_render_graphql_string_json_is_safe() -> None:
@@ -551,12 +548,8 @@ def test_render_graphql_string_json_is_safe() -> None:
     output = render_raw_lead_review(lead)
 
     assert "graphql_layer" not in output
-    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
-    _assert_face_value_field(pub_section, "Layer status:", "missing")
-    _assert_face_value_field(pub_section, "Contract:", ".")
-    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
-    _assert_face_value_field(mp_section, "Layer status:", "missing")
-    _assert_face_value_field(mp_section, "Client country:", ".")
+    _assert_layer_missing(output, "public_search_layer")
+    _assert_layer_missing(output, "marketplace_search_layer")
 
 
 def test_render_graphql_exact_payload_missing_persons_to_hire_shows_dot() -> None:
@@ -1526,10 +1519,8 @@ def test_non_best_matches_render_includes_marketplace_public_by_id_manual_layers
     assert marketplace_idx < public_idx < by_id_idx < manual_idx
 
     # Check that layer statuses are present
-    mp_section = _layer_section(output, "marketplace_search_layer", "public_search_layer")
-    _assert_face_value_field(mp_section, "Layer status:", "missing") # No specific fragment data provided for this lead
-    pub_section = _layer_section(output, "public_search_layer", "by_id_layer")
-    _assert_face_value_field(pub_section, "Layer status:", "missing") # No specific fragment data provided for this lead
+    _assert_layer_missing(output, "marketplace_search_layer")
+    _assert_layer_missing(output, "public_search_layer")
 
 
 def test_marketplace_layer_reads_from_marketplace_raw() -> None:
@@ -1569,7 +1560,6 @@ def test_marketplace_layer_reads_from_marketplace_raw() -> None:
     manual_section = _layer_section(output, "manual_scrape_layer", "=" * 60)
 
     # Marketplace fields
-    _assert_face_value_field(mp_section, "Layer status:", "present")
     _assert_face_value_field(mp_section, "Source terms:", "wordpress, woocommerce")
     _assert_face_value_field(mp_section, "Source surfaces:", "search, recommendation")
     _assert_face_value_field(mp_section, "Job id:", "m1")
@@ -1590,8 +1580,7 @@ def test_marketplace_layer_reads_from_marketplace_raw() -> None:
     _assert_face_value_field(mp_section, "Financial privacy:", "no")
 
     # Public section has no _public_raw data
-    _assert_face_value_field(pub_section, "Layer status:", "missing")
-    _assert_face_value_field(pub_section, "Job id:", ".")
+    _assert_layer_missing(output, "public_search_layer")
 
     # by_id and manual layers exist
     assert "by_id_layer" in by_id_section
@@ -1649,8 +1638,7 @@ def test_public_layer_reads_from_public_raw() -> None:
     _assert_face_value_field(pub_section, "Proposals:", "5")
 
     # Marketplace section has no _marketplace_raw data
-    _assert_face_value_field(mp_section, "Layer status:", "missing")
-    _assert_face_value_field(mp_section, "Job id:", ".")
+    _assert_layer_missing(output, "marketplace_search_layer")
 
 
 # ---------------------------------------------------------------------------
@@ -1763,11 +1751,7 @@ def test_marketplace_layer_only_renders_from_marketplace_raw_fragment() -> None:
     _assert_face_value_field(mp_section, "Title:", "Marketplace Only Job")
     _assert_face_value_field(mp_section, "Client country:", "United States")
     # Public layer should be missing and show dots
-    _assert_face_value_field(pub_section, "Layer status:", "missing")
-    _assert_face_value_field(pub_section, "Source terms:", "wordpress") # Source terms can still be there if top level
-    _assert_face_value_field(pub_section, "Job id:", ".")
-    _assert_face_value_field(pub_section, "Contract:", ".")
-    assert "some_top_level_key" not in pub_section # Top level fallback should not occur
+    _assert_layer_missing(output, "public_search_layer")
 
 
 def test_public_layer_only_renders_from_public_raw_fragment() -> None:
@@ -1797,10 +1781,7 @@ def test_public_layer_only_renders_from_public_raw_fragment() -> None:
     _assert_face_value_field(pub_section, "Contract:", "hourly")
     _assert_face_value_field(pub_section, "Hourly range:", "$30/hr")
     # Marketplace layer should be missing and show dots
-    _assert_face_value_field(mp_section, "Layer status:", "missing")
-    _assert_face_value_field(mp_section, "Source terms:", "python") # Source terms can still be there if top level
-    _assert_face_value_field(mp_section, "Job id:", ".")
-    _assert_face_value_field(mp_section, "Client country:", ".")
+    _assert_layer_missing(output, "marketplace_search_layer")
     assert "some_top_level_key" not in mp_section # Top level fallback should not occur
 
 

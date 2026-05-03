@@ -218,6 +218,20 @@ def promote_raw_lead(
     )
 
 
+def _layer_rows_have_status(rows: list[str], expected_status: str) -> bool:
+    for row in rows:
+        # Expected row format from _format_layer_rows: "Label:               Value"
+        if not row.startswith("Layer status:"):
+            continue
+        parts = row.split(":", 1)
+        if len(parts) < 2:
+            continue
+        value = parts[1].strip()
+        if value == expected_status:
+            return True
+    return False
+
+
 def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) -> str:
     lines: list[str] = []
     lines.append("=" * 60)
@@ -250,7 +264,7 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
 
     # Marketplace search layer
     mp_lines = _format_marketplace_search_layer_fields(lead)
-    if any("Layer status: missing" in line for line in mp_lines):
+    if _layer_rows_have_status(mp_lines, "missing"):
         lines.append("marketplace_search_layer: missing")
     else:
         lines.append("marketplace_search_layer")
@@ -259,7 +273,7 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
 
     # Public search layer
     pub_lines = _format_public_search_layer_fields(lead)
-    if any("Layer status: missing" in line for line in pub_lines):
+    if _layer_rows_have_status(pub_lines, "missing"):
         lines.append("-" * 30)
         lines.append("public_search_layer: missing")
     else:
