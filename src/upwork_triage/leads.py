@@ -337,6 +337,7 @@ _GRAPHQL_LAYER_LABELS = (
     "Jobs posted:",)
 
 _MARKETPLACE_SEARCH_LAYER_LABELS = (
+    "Layer status:",
     "Source terms:",
     "Source surfaces:",
     "Job id:",
@@ -358,6 +359,7 @@ _MARKETPLACE_SEARCH_LAYER_LABELS = (
 )
 
 _PUBLIC_SEARCH_LAYER_LABELS = (
+    "Layer status:",
     "Source terms:",
     "Source surfaces:",
     "Job id:",
@@ -935,15 +937,12 @@ def _format_exact_hydration_fields(lead: dict[str, Any]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _select_layer_payload(payload: dict[str, Any] | None, fragment_key: str) -> dict[str, Any] | None:
-    """Return fragment dict if present, else fall back to top-level payload if fragment is absent."""
+    """Return fragment dict if present and is a dict."""
     if not payload:
         return None
     fragment = payload.get(fragment_key)
     if isinstance(fragment, dict):
         return fragment
-    # Fall back to top-level only if fragment key is completely missing
-    if fragment_key not in payload:
-        return payload
     return None
 
 
@@ -990,61 +989,61 @@ def _format_marketplace_search_layer_fields(lead: dict[str, Any]) -> list[str]:
     """Format raw marketplace search layer fields from _marketplace_raw."""
     values = {label: "." for label in _MARKETPLACE_SEARCH_LAYER_LABELS}
     payload = _load_payload_dict(lead.get("raw_payload_json"))
-    if not payload:
-        return _format_layer_rows(_MARKETPLACE_SEARCH_LAYER_LABELS, values)
 
-    # Source terms/surfaces are always top-level
-    source_terms = payload.get("_source_terms")
-    if source_terms is not None:
-        values["Source terms:"] = _fmt_face_val(source_terms)
-    source_surfaces = payload.get("_source_surfaces")
-    if source_surfaces is not None:
-        values["Source surfaces:"] = _fmt_face_val(source_surfaces)
+    # Source terms/surfaces are always top-level if present
+    if payload:
+        source_terms = payload.get("_source_terms")
+        if source_terms is not None:
+            values["Source terms:"] = _fmt_face_val(source_terms)
+        source_surfaces = payload.get("_source_surfaces")
+        if source_surfaces is not None:
+            values["Source surfaces:"] = _fmt_face_val(source_surfaces)
 
-    # Get marketplace raw fragment or fall back to top-level
     mp_raw = _select_layer_payload(payload, "_marketplace_raw")
-    if not mp_raw:
-        return _format_layer_rows(_MARKETPLACE_SEARCH_LAYER_LABELS, values)
+    if mp_raw:
+        values["Layer status:"] = "present"
+        # Populate marketplace fields
+        if mp_raw.get("id") is not None:
+            values["Job id:"] = _fmt_face_val(mp_raw["id"])
+        if mp_raw.get("ciphertext") is not None:
+            values["Ciphertext:"] = _fmt_face_val(mp_raw["ciphertext"])
+        if mp_raw.get("title") is not None:
+            values["Title:"] = _fmt_face_val(mp_raw["title"])
+        if mp_raw.get("createdDateTime") is not None:
+            values["Posted:"] = _fmt_face_val(mp_raw["createdDateTime"])
+        if mp_raw.get("skills") is not None:
+            values["Skills:"] = _format_skills(mp_raw["skills"])
 
-    # Populate marketplace fields
-    if mp_raw.get("id") is not None:
-        values["Job id:"] = _fmt_face_val(mp_raw["id"])
-    if mp_raw.get("ciphertext") is not None:
-        values["Ciphertext:"] = _fmt_face_val(mp_raw["ciphertext"])
-    if mp_raw.get("title") is not None:
-        values["Title:"] = _fmt_face_val(mp_raw["title"])
-    if mp_raw.get("createdDateTime") is not None:
-        values["Posted:"] = _fmt_face_val(mp_raw["createdDateTime"])
-    if mp_raw.get("skills") is not None:
-        values["Skills:"] = _format_skills(mp_raw["skills"])
+        # Client fields
+        client = mp_raw.get("client")
+        if isinstance(client, dict):
+            if client.get("verificationStatus") is not None:
+                values["Payment:"] = _fmt_face_val(client["verificationStatus"])
+            location = client.get("location")
+            if isinstance(location, dict):
+                if location.get("country") is not None:
+                    values["Client country:"] = _fmt_face_val(location["country"])
+                if location.get("city") is not None:
+                    values["Client city:"] = _fmt_face_val(location["city"])
+                if location.get("timezone") is not None:
+                    values["Client timezone:"] = _fmt_face_val(location["timezone"])
+            if client.get("totalSpent") is not None:
+                values["Client spend:"] = _format_money_obj(client["totalSpent"])
+            if client.get("totalHires") is not None:
+                values["Total hires:"] = _fmt_face_val(client["totalHires"])
+            if client.get("totalPostedJobs") is not None:
+                values["Jobs posted:"] = _fmt_face_val(client["totalPostedJobs"])
+            if client.get("totalReviews") is not None:
+                values["Client reviews:"] = _fmt_face_val(client["totalReviews"])
+            if client.get("totalFeedback") is not None:
+                values["Client feedback:"] = _fmt_face_val(client["totalFeedback"])
+            if client.get("lastContractTitle") is not None:
+                values["Last contract title:"] = _fmt_face_val(client["lastContractTitle"])
+            if client.get("hasFinancialPrivacy") is not None:
+                values["Financial privacy:"] = _fmt_face_val(client["hasFinancialPrivacy"])
+    else:
+        values["Layer status:"] = "missing"
 
-    # Client fields
-    client = mp_raw.get("client")
-    if isinstance(client, dict):
-        if client.get("verificationStatus") is not None:
-            values["Payment:"] = _fmt_face_val(client["verificationStatus"])
-        location = client.get("location")
-        if isinstance(location, dict):
-            if location.get("country") is not None:
-                values["Client country:"] = _fmt_face_val(location["country"])
-            if location.get("city") is not None:
-                values["Client city:"] = _fmt_face_val(location["city"])
-            if location.get("timezone") is not None:
-                values["Client timezone:"] = _fmt_face_val(location["timezone"])
-        if client.get("totalSpent") is not None:
-            values["Client spend:"] = _format_money_obj(client["totalSpent"])
-        if client.get("totalHires") is not None:
-            values["Total hires:"] = _fmt_face_val(client["totalHires"])
-        if client.get("totalPostedJobs") is not None:
-            values["Jobs posted:"] = _fmt_face_val(client["totalPostedJobs"])
-        if client.get("totalReviews") is not None:
-            values["Client reviews:"] = _fmt_face_val(client["totalReviews"])
-        if client.get("totalFeedback") is not None:
-            values["Client feedback:"] = _fmt_face_val(client["totalFeedback"])
-        if client.get("lastContractTitle") is not None:
-            values["Last contract title:"] = _fmt_face_val(client["lastContractTitle"])
-        if client.get("hasFinancialPrivacy") is not None:
-            values["Financial privacy:"] = _fmt_face_val(client["hasFinancialPrivacy"])
 
     return _format_layer_rows(_MARKETPLACE_SEARCH_LAYER_LABELS, values)
 
@@ -1053,62 +1052,61 @@ def _format_public_search_layer_fields(lead: dict[str, Any]) -> list[str]:
     """Format raw public search layer fields from _public_raw."""
     values = {label: "." for label in _PUBLIC_SEARCH_LAYER_LABELS}
     payload = _load_payload_dict(lead.get("raw_payload_json"))
-    if not payload:
-        return _format_layer_rows(_PUBLIC_SEARCH_LAYER_LABELS, values)
 
-    # Source terms/surfaces are always top-level
-    source_terms = payload.get("_source_terms")
-    if source_terms is not None:
-        values["Source terms:"] = _fmt_face_val(source_terms)
-    source_surfaces = payload.get("_source_surfaces")
-    if source_surfaces is not None:
-        values["Source surfaces:"] = _fmt_face_val(source_surfaces)
+    # Source terms/surfaces are always top-level if present
+    if payload:
+        source_terms = payload.get("_source_terms")
+        if source_terms is not None:
+            values["Source terms:"] = _fmt_face_val(source_terms)
+        source_surfaces = payload.get("_source_surfaces")
+        if source_surfaces is not None:
+            values["Source surfaces:"] = _fmt_face_val(source_surfaces)
 
-    # Get public raw fragment or fall back to top-level
     pub_raw = _select_layer_payload(payload, "_public_raw")
-    if not pub_raw:
-        return _format_layer_rows(_PUBLIC_SEARCH_LAYER_LABELS, values)
-
-    # Populate public fields
-    if pub_raw.get("id") is not None:
-        values["Job id:"] = _fmt_face_val(pub_raw["id"])
-    if pub_raw.get("ciphertext") is not None:
-        values["Ciphertext:"] = _fmt_face_val(pub_raw["ciphertext"])
-    if pub_raw.get("title") is not None:
-        values["Title:"] = _fmt_face_val(pub_raw["title"])
-    # Posted: prefer publishedDateTime, fallback createdDateTime
-    posted = pub_raw.get("publishedDateTime") or pub_raw.get("createdDateTime")
-    if posted is not None:
-        values["Posted:"] = _fmt_face_val(posted)
-    if pub_raw.get("type") is not None:
-        values["Contract:"] = _fmt_face_val(pub_raw["type"])
-    # Budget
-    if pub_raw.get("amount") is not None:
-        values["Budget:"] = _format_money_obj(pub_raw["amount"])
-    # Hourly range
-    hourly_min = pub_raw.get("hourlyBudgetMin")
-    hourly_max = pub_raw.get("hourlyBudgetMax")
-    if hourly_min is not None or hourly_max is not None:
-        values["Hourly range:"] = _format_hourly_range(hourly_min, hourly_max)
-    if pub_raw.get("hourlyBudgetType") is not None:
-        values["Hourly budget type:"] = _fmt_face_val(pub_raw["hourlyBudgetType"])
-    # Weekly budget
-    if pub_raw.get("weeklyBudget") is not None:
-        values["Weekly budget:"] = _format_money_obj(pub_raw["weeklyBudget"])
-    if pub_raw.get("contractorTier") is not None:
-        values["Tier:"] = _fmt_face_val(pub_raw["contractorTier"])
-    # Duration: prefer durationLabel, fallback duration
-    duration = pub_raw.get("durationLabel") or pub_raw.get("duration")
-    if duration is not None:
-        values["Duration:"] = _fmt_face_val(duration)
-    if pub_raw.get("engagement") is not None:
-        values["Engagement:"] = _fmt_face_val(pub_raw["engagement"])
-    if pub_raw.get("jobStatus") is not None:
-        values["Job status:"] = _fmt_face_val(pub_raw["jobStatus"])
-    if pub_raw.get("recno") is not None:
-        values["Recno:"] = _fmt_face_val(pub_raw["recno"])
-    if pub_raw.get("totalApplicants") is not None:
-        values["Proposals:"] = _fmt_face_val(pub_raw["totalApplicants"])
+    if pub_raw:
+        values["Layer status:"] = "present"
+        # Populate public fields
+        if pub_raw.get("id") is not None:
+            values["Job id:"] = _fmt_face_val(pub_raw["id"])
+        if pub_raw.get("ciphertext") is not None:
+            values["Ciphertext:"] = _fmt_face_val(pub_raw["ciphertext"])
+        if pub_raw.get("title") is not None:
+            values["Title:"] = _fmt_face_val(pub_raw["title"])
+        # Posted: prefer publishedDateTime, fallback createdDateTime
+        posted = pub_raw.get("publishedDateTime") or pub_raw.get("createdDateTime")
+        if posted is not None:
+            values["Posted:"] = _fmt_face_val(posted)
+        if pub_raw.get("type") is not None:
+            values["Contract:"] = _fmt_face_val(pub_raw["type"])
+        # Budget
+        if pub_raw.get("amount") is not None:
+            values["Budget:"] = _format_money_obj(pub_raw["amount"])
+        # Hourly range
+        hourly_min = pub_raw.get("hourlyBudgetMin")
+        hourly_max = pub_raw.get("hourlyBudgetMax")
+        if hourly_min is not None or hourly_max is not None:
+            values["Hourly range:"] = _format_hourly_range(hourly_min, hourly_max)
+        if pub_raw.get("hourlyBudgetType") is not None:
+            values["Hourly budget type:"] = _fmt_face_val(pub_raw["hourlyBudgetType"])
+        # Weekly budget
+        if pub_raw.get("weeklyBudget") is not None:
+            values["Weekly budget:"] = _format_money_obj(pub_raw["weeklyBudget"])
+        if pub_raw.get("contractorTier") is not None:
+            values["Tier:"] = _fmt_face_val(pub_raw["contractorTier"])
+        # Duration: prefer durationLabel, fallback duration
+        duration = pub_raw.get("durationLabel") or pub_raw.get("duration")
+        if duration is not None:
+            values["Duration:"] = _fmt_face_val(duration)
+        if pub_raw.get("engagement") is not None:
+            values["Engagement:"] = _fmt_face_val(pub_raw["engagement"])
+        if pub_raw.get("jobStatus") is not None:
+            values["Job status:"] = _fmt_face_val(pub_raw["jobStatus"])
+        if pub_raw.get("recno") is not None:
+            values["Recno:"] = _fmt_face_val(pub_raw["recno"])
+        if pub_raw.get("totalApplicants") is not None:
+            values["Proposals:"] = _fmt_face_val(pub_raw["totalApplicants"])
+    else:
+        values["Layer status:"] = "missing"
 
     return _format_layer_rows(_PUBLIC_SEARCH_LAYER_LABELS, values)
 
