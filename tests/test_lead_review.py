@@ -10,17 +10,19 @@ import pytest
 
 from upwork_triage.cli import main
 from upwork_triage.db import connect_db, initialize_db
-from upwork_triage.leads import (
-    ALLOWED_LEAD_STATUSES,
+from upwork_triage.lead_review import (
     _BEST_MATCHES_LAYER_LABELS,
     _GRAPHQL_LAYER_LABELS,
     _BY_ID_LAYER_LABELS,
     _MARKETPLACE_SEARCH_LAYER_LABELS,
     _PUBLIC_SEARCH_LAYER_LABELS,
     _MANUAL_SCRAPE_LAYER_LABELS,
+    render_raw_lead_review,
+)
+from upwork_triage.leads import (
+    ALLOWED_LEAD_STATUSES,
     fetch_next_raw_lead,
     promote_raw_lead,
-    render_raw_lead_review,
     upsert_raw_lead,
 )
 import re
