@@ -1586,7 +1586,7 @@ def test_marketplace_layer_reads_from_marketplace_raw() -> None:
 
     # by_id and manual layers exist
     assert "by_id_layer" in by_id_section
-    _assert_face_value_field(manual_section, "Manual status:", ".")
+    assert "manual_scrape_layer: missing" in output
 
 
 def test_public_layer_reads_from_public_raw() -> None:
@@ -1652,15 +1652,9 @@ def test_render_graphql_lead_includes_manual_scrape_layer() -> None:
     lead["source"] = "graphql_search"
     output = render_raw_lead_review(lead)
 
-    # Check that manual_scrape_layer is present after by_id_layer
+    # Check that manual_scrape_layer is present (as missing)
     assert "manual_scrape_layer" in output
-    # Ensure it appears after by_id_layer
-    by_id_idx = output.index("by_id_layer")
-    manual_idx = output.index("manual_scrape_layer")
-    assert manual_idx > by_id_idx
-    # Check that Manual status: . is present (since no manual data)
-    manual_section = _layer_section(output, "manual_scrape_layer", "=" * 60)
-    _assert_face_value_field(manual_section, "Manual status:", ".")
+    assert "manual_scrape_layer: missing" in output
     # Ensure other layers still present
     assert "marketplace_search_layer" in output
     assert "public_search_layer" in output
@@ -1674,13 +1668,7 @@ def test_render_best_matches_lead_includes_manual_scrape_layer() -> None:
     output = render_raw_lead_review(lead)
 
     assert "manual_scrape_layer" in output
-    # Ensure it appears after by_id_layer
-    by_id_idx = output.index("by_id_layer")
-    manual_idx = output.index("manual_scrape_layer")
-    assert manual_idx > by_id_idx
-    # Check Manual status: .
-    manual_section = _layer_section(output, "manual_scrape_layer", "=" * 60)
-    _assert_face_value_field(manual_section, "Manual status:", ".")
+    assert "manual_scrape_layer: missing" in output
     # best_matches_layer should still be present
     assert "best_matches_layer" in output
 
@@ -1787,70 +1775,30 @@ def test_public_layer_only_renders_from_public_raw_fragment() -> None:
     assert "some_top_level_key" not in mp_section # Top level fallback should not occur
 
 
-def test_render_manual_scrape_layer_displays_parsed_fields() -> None:
+def test_render_manual_scrape_layer_missing_collapses() -> None:
     lead = _make_lead()
-    # Populate manual_scrape_* keys directly
-    lead["manual_scrape_import_status"] = "raw_imported"
-    lead["manual_scrape_parse_status"] = "parsed_ok"
-    lead["manual_scrape_manual_title"] = "Manual Title"
-    lead["manual_scrape_manual_title_match_status"] = "match"
-    lead["manual_scrape_manual_title_match_warning"] = "."
-    lead["manual_scrape_connects_required"] = 5
-    lead["manual_scrape_manual_proposals"] = "10 to 20"
-    lead["manual_scrape_manual_last_viewed_by_client"] = "2 hours ago"
-    lead["manual_scrape_manual_hires_on_job"] = 3
-    lead["manual_scrape_manual_interviewing"] = 2
-    lead["manual_scrape_manual_invites_sent"] = 5
-    lead["manual_scrape_manual_unanswered_invites"] = 1
-    lead["manual_scrape_bid_high"] = 100
-    lead["manual_scrape_bid_avg"] = 80
-    lead["manual_scrape_bid_low"] = 60
-    lead["manual_scrape_client_payment_verified"] = 1
-    lead["manual_scrape_client_phone_verified"] = 0
-    lead["manual_scrape_client_rating"] = 4.5
-    lead["manual_scrape_client_reviews_count"] = 10
-    lead["manual_scrape_client_country_normalized"] = "United States"
-    lead["manual_scrape_client_location_text"] = "New York"
-    lead["manual_scrape_client_jobs_posted"] = 20
-    lead["manual_scrape_client_hire_rate"] = "50%"
-    lead["manual_scrape_client_open_jobs"] = 2
-    lead["manual_scrape_client_total_spent"] = 5000
-    lead["manual_scrape_client_hires_total"] = 15
-    lead["manual_scrape_client_hires_active"] = 3
-    lead["manual_scrape_client_avg_hourly_paid"] = 25.0
-    lead["manual_scrape_client_hours_hired"] = 1000
-    lead["manual_scrape_client_member_since"] = "2020-01-01"
-    lead["manual_scrape_raw_manual_text"] = "This is a raw manual text\nwith newlines\nand more."
-
     output = render_raw_lead_review(lead)
-    manual_section = _layer_section(output, "manual_scrape_layer", "=" * 60)
+    
+    assert "manual_scrape_layer: missing" in output
+    assert "Manual title:" not in output
+    assert "Raw manual text:" not in output
 
-    _assert_face_value_field(manual_section, "Manual status:", "parsed_ok")
-    _assert_face_value_field(manual_section, "Manual title:", "Manual Title")
-    _assert_face_value_field(manual_section, "Title match:", "match")
-    _assert_face_value_field(manual_section, "Title warning:", ".")
-    _assert_face_value_field(manual_section, "Connects:", "5")
-    _assert_face_value_field(manual_section, "Proposals:", "10 to 20")
-    _assert_face_value_field(manual_section, "Last viewed:", "2 hours ago")
-    _assert_face_value_field(manual_section, "Hires:", "3")
-    _assert_face_value_field(manual_section, "Interviewing:", "2")
-    _assert_face_value_field(manual_section, "Invites sent:", "5")
-    _assert_face_value_field(manual_section, "Unanswered invites:", "1")
-    _assert_face_value_field(manual_section, "Bid high/avg/low:", "$100/$80/$60")
-    _assert_face_value_field(manual_section, "Payment verified:", "yes")
-    _assert_face_value_field(manual_section, "Phone verified:", "no")
-    _assert_face_value_field(manual_section, "Client rating:", "4.5")
-    _assert_face_value_field(manual_section, "Client reviews:", "10")
-    _assert_face_value_field(manual_section, "Client country:", "United States")
-    _assert_face_value_field(manual_section, "Client location:", "New York")
-    _assert_face_value_field(manual_section, "Jobs posted:", "20")
-    _assert_face_value_field(manual_section, "Hire rate:", "50%")
-    _assert_face_value_field(manual_section, "Open jobs:", "2")
-    _assert_face_value_field(manual_section, "Client spend:", "$5000")
-    _assert_face_value_field(manual_section, "Total hires:", "15")
-    _assert_face_value_field(manual_section, "Active hires:", "3")
-    _assert_face_value_field(manual_section, "Avg hourly paid:", "$25")
-    _assert_face_value_field(manual_section, "Hours hired:", "1000")
-    _assert_face_value_field(manual_section, "Member since:", "2020-01-01")
-    # Raw manual text preview: newlines replaced, truncated to 240 chars
-    assert "This is a raw manual text | with newlines | and more." in manual_section
+
+def test_render_manual_scrape_layer_with_text_does_not_collapse() -> None:
+    lead = _make_lead()
+    lead["manual_scrape_raw_manual_text"] = "some manual text"
+    output = render_raw_lead_review(lead)
+    
+    assert "manual_scrape_layer" in output
+    assert "manual_scrape_layer: missing" not in output
+    assert "Raw manual text:     some manual text" in output
+
+
+def test_render_manual_scrape_layer_with_parsed_fields_does_not_collapse() -> None:
+    lead = _make_lead()
+    lead["manual_scrape_connects_required"] = 5
+    output = render_raw_lead_review(lead)
+    
+    assert "manual_scrape_layer" in output
+    assert "manual_scrape_layer: missing" not in output
+    assert "Connects:            5" in output

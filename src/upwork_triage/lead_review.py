@@ -186,6 +186,15 @@ def _layer_rows_have_status(rows: list[str], expected_status: str) -> bool:
     return False
 
 
+def _manual_scrape_layer_is_missing(lead: dict[str, Any]) -> bool:
+    manual_keys = [k for k in lead if k.startswith("manual_scrape_")]
+    for key in manual_keys:
+        value = lead.get(key)
+        if value is not None and str(value).strip() not in ("", "."):
+            return False
+    return True
+
+
 def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) -> str:
     lines: list[str] = []
     lines.append("=" * 60)
@@ -240,10 +249,13 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
     lines.extend(exact_lines)
 
     lines.append("-" * 30)
-    lines.append("manual_scrape_layer")
-    lines.append("-" * 30)
-    manual_lines = _format_manual_scrape_layer_fields(lead)
-    lines.extend(manual_lines)
+    if _manual_scrape_layer_is_missing(lead):
+        lines.append("manual_scrape_layer: missing")
+    else:
+        lines.append("manual_scrape_layer")
+        lines.append("-" * 30)
+        manual_lines = _format_manual_scrape_layer_fields(lead)
+        lines.extend(manual_lines)
 
     lines.append("=" * 60)
     lines.append(
