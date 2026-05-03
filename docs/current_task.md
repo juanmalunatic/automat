@@ -118,11 +118,12 @@ py -m upwork_triage review-next-lead --source best_matches_ui
 py -m upwork_triage review-next-lead --status new --description-chars 800
 ```
 
-- display-only — reads one `raw_leads` row, prints face-value fields, exits
-- no filtering, scoring, tagging, discarding, or status mutation
-- does not call AI or Upwork
-- Best Matches leads shown first (by rank), then other sources newest-first
-- after reviewing, record your judgment in a physical notebook; later slices will let you code approved discard tags
+- `review-next-lead` is no longer purely display-only. It currently auto-applies approved discard tags before showing the next surviving lead.
+- Best Matches leads shown first (by rank), then other sources newest-first.
+- If it survives human face-value review, run:
+  ```powershell
+  py -m upwork_triage promote-lead <lead_id>
+  ```
 
 Currently `review-next-lead` automatically applies approved discard tags to `new` leads before displaying them:
 
@@ -130,16 +131,8 @@ Currently `review-next-lead` automatically applies approved discard tags to `new
 py -m upwork_triage review-next-lead
 ```
 
-- if a lead matches an approved discard tag (e.g. `proposals_50_plus`), it is auto-rejected and skipped
-- if a lead is displayed, it survived approved auto-discard tags
-- if it survives human face-value review, run:
-  ```powershell
-  py -m upwork_triage promote-lead <lead_id>
-  ```
-
-`evaluate-lead <lead_id>` still exists for debugging or manually triggering tag evaluation on a specific lead ID.
-Currently the only approved discard tag is `proposals_50_plus`.
-
+- if a lead matches an approved discard tag, it is auto-rejected and skipped.
+- if a lead is displayed, it survived approved auto-discard tags.
 
 You can now promote leads that pass face-value review:
 
@@ -154,11 +147,16 @@ py -m upwork_triage promote-lead <lead_id>
 ```
 
 - `promote-next-lead` repeats the same auto-discard pre-gate as `review-next-lead` and promotes the first surviving lead.
-- only 'new' leads can be promoted
-- marked as 'promote' and will no longer appear in default 'review-next-lead'
-- no discard tags are created for the promoted lead
-- no AI, scoring, or verdicts are used
-- supports `--source` filter to match the review context
+- only 'new' leads can be promoted.
+- marked as 'promote' and will no longer appear in default 'review-next-lead'.
+- no discard tags are created for the promoted lead.
+- no AI, scoring, or verdicts are used.
+- supports `--source` filter to match the review context.
+
+### Next Technical Target: Best Matches-first Lead Filtering/Promotion
+- Do not expand scoring, proposals, or AI yet.
+- Define and implement a layer-aware signal resolver and field contract for Best Matches-first lead filtering/promotion.
+- Lead filtering should consume resolved fields with provenance (e.g., from `best_matches_layer` or `marketplace_search_layer`), not `raw_*` columns or legacy `normalize_job_payload`.
 
 
 ## Next technical work later

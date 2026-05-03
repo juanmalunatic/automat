@@ -536,15 +536,23 @@ Manual-only fields should remain unavailable in official normalization until man
 
 ### Data layers and normalized projection
 
-A lead represents a stable job/opportunity. Data layers are independent evidence sources attached to that lead; source layers are distinct from derived normalized projections. All source layers store raw, unmodified data from their origin for full auditability; no transformation is applied before storage.
+A lead is a stable opportunity identity, not a bag of evidence fields. Data layers are independent evidence sources attached to that lead; source layers are distinct from derived normalized projections. All source layers store raw, unmodified data from their origin for full auditability; no transformation is applied before storage.
 
 #### Canonical layer definitions
+- `best_matches_layer`: Browser outerHTML tile parse from Upwork Best Matches, capturing UI-only discovery signals not available via official APIs.
 - `marketplace_search_layer`: Raw marketplace GraphQL search data, fetched via official Upwork GraphQL endpoints for targeted search terms.
 - `public_search_layer`: Raw public marketplace GraphQL search data, fetched via public search surfaces to supplement contract type, budget, and applicant count fields.
-- `best_matches_layer`: Browser outerHTML tile parse from Upwork Best Matches, capturing UI-only discovery signals not available via official APIs.
 - `by_id_layer`: Exact `marketplaceJobPosting(id)` hydration data, fetched via exact job ID lookups for full field coverage.
 - `manual_scrape_layer`: Parsed/preserved manual UI text imported via the CSV bridge. CSV is only a transport mechanism; this layer name is canonical, not `csv_layer`. This layer maps to existing `manual_job_enrichments` and `manual_job_enrichment_parses` tables.
-- `normalized_projection`: Derived typed common fields used by filters and prospect dumps. This is not a source layer. It maps fields from one or more source layers into a consistent schema for downstream deterministic logic, but is never treated as a source of truth for raw data inspection.
+- `normalized_projection`: Derived typed common fields used by filters and prospect dumps. This is not a source layer. It maps fields from one or more source layers into a consistent schema for downstream deterministic logic.
+
+#### Normalization and Provenance
+- `normalized_projection` is derived, not a source layer.
+- `raw_title`, `raw_description`, `raw_pay_text`, `raw_client_summary`, `raw_proposals_text` are cache/display summaries only and must not be authoritative evidence for filters, AI payloads, or promotion logic.
+- Every decision field must map to an explicit layer path.
+- Phase 1 allows exactly one source path per normalized field. No implicit fallback.
+- Future fallback contracts must be explicit, ordered, visible, and tested.
+- The current normalizer and current `raw_lead_discard_tags` are transitional because they still use mixed `raw_*` fields, legacy `normalize_job_payload`, and direct payload paths.
 
 #### Layer parity targets
 Leads are displayed with all available source layers for full auditability, with no merged hidden data in raw lead review:
@@ -552,11 +560,13 @@ Leads are displayed with all available source layers for full auditability, with
 - `best_matches_ui` leads: `best_matches_layer` + `marketplace_search_layer` + `public_search_layer` + `by_id_layer` + `manual_scrape_layer` + `normalized_projection`
 
 #### Current implementation reality
+- Current implementation already has raw review displaying all layers and collapsing missing marketplace/public/manual layers.
 - Current `graphql_layer` console display is a transitional normalized/source hybrid; it will be split into `marketplace_search_layer` and `public_search_layer` using direct raw-path mappings, not merged normalized output.
 - Current `best_matches_layer` and `by_id_layer` displays are closer to raw-path output but remain implemented in `leads.py`.
 - `manual_scrape_layer` exists conceptually via manual enrichment tables/parsing but is not yet joined into raw lead review.
 - Best Matches leads do not yet have marketplace/public GraphQL layer parity.
 - Layers are not yet split into modular files/classes.
+- Next target: build a layer-aware signal resolver / provenance-aware normalizer contract for Best Matches-first filtering and promotion.
 
 #### Refactor roadmap
 1. Documentation slice: Define layers, projection, parity targets, and canonical naming (this step).
