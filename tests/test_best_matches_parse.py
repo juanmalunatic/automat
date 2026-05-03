@@ -75,6 +75,7 @@ def test_parse_tolerates_missing_optional_fields():
     assert jobs[0]["raw_title"] == "Test Title"
     assert jobs[0]["raw_description"] is None
 
+
 def test_parse_fallback_id_and_url_normalization():
     html = """
     <section class="air3-card-section" data-ev-opening_uid="">
@@ -85,6 +86,7 @@ def test_parse_fallback_id_and_url_normalization():
     assert len(jobs) == 1
     assert jobs[0]["upwork_job_id"] == "02abc123"
     assert jobs[0]["source_url"] == "https://www.upwork.com/jobs/test_~02abc123/"
+
 
 def test_parse_does_not_bleed_fields():
     html = """
@@ -103,6 +105,7 @@ def test_parse_does_not_bleed_fields():
     payload = json.loads(jobs[0]["raw_payload_json"])
     assert "Fake skill" not in payload.get("skills", [])
 
+
 def test_parse_does_not_bleed_fields_void_tags():
     html = """
     <section class="air3-card-section" data-ev-opening_uid="123" data-ev-position="0">
@@ -118,6 +121,7 @@ def test_parse_does_not_bleed_fields_void_tags():
     assert len(jobs) == 1
     assert jobs[0]["raw_title"] == "Test Title"
     assert jobs[0]["raw_description"] == "Real description"
+
 
 def test_parse_absolute_upwork_url():
     html = """
@@ -288,6 +292,320 @@ def test_import_best_matches_html_skips_missing_numeric_id_before_upsert(monkeyp
 
         count = conn.execute("SELECT COUNT(*) FROM raw_leads").fetchone()[0]
         assert count == 0
+    finally:
+        conn.close()
+
+
+def test_import_best_matches_html_enriches_with_graphql_fragments(monkeypatch):
+    calls = []
+
+    def fake_fetch_exact_marketplace_jobs(config, job_ids, *, transport=None):
+        calls.append(tuple(job_ids))
+        return [
+            ExactMarketplaceJobHydrationResult(
+                job_id="123",
+                status="success",
+                payload={
+                    "activityStat": {"jobActivity": {"totalHired": 1}},
+                    "contractTerms": {"personsToHire": 1},
+                },
+                error_message=None,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "upwork_triage.best_matches_parse.fetch_exact_marketplace_jobs",
+        fake_fetch_exact_marketplace_jobs,
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+
+    # Insert a donor graphql_search lead
+    donor_payload = {
+        "_source_terms": ["php", "wordpress"],
+        "_source_surfaces": ["search"],
+        "_marketplace_raw": {"id": "m1", "title": "Donor Marketplace Title"},
+        "_public_raw": {"id": "p1", "title": "Donor Public Title"},
+    }
+    conn.execute(
+        """
+        INSERT INTO raw_leads (job_key, source, captured_at, created_at, updated_at, raw_payload_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "upwork:123",
+            "graphql_search",
+            "2026-05-01T00:00:00Z",
+            "2026-05-01T00:00:00Z",
+            "2026-05-01T00:00:00Z",
+            json.dumps(donor_payload),
+        ),
+    )
+    conn.commit()
+
+    html = """
+    <section class="air3-card-section" data-ev-opening_uid="123" data-ev-position="0">
+        <a href="/jobs/test_~02123/">Test Title</a>
+        <div data-test="token-container">
+           <span data-test="attr-item">Best Matches Skill</span>
+        </div>
+    </section>
+    """
+
+    try:
+        summary = import_best_matches_html(
+            conn,
+            html,
+            config=object(),
+            source_query="test-bm-enrich",
+        )
+
+        assert calls == [("123",)]
+        assert summary["parsed"] == 1
+        assert summary["upserted"] == 1
+        assert summary["exact_hydration_success"] == 1
+
+        row = conn.execute(
+            "SELECT raw_payload_json FROM raw_leads WHERE job_key = ? AND source = ?",
+            ("upwork:123", "best_matches_ui"),
+        ).fetchone()
+        assert row is not None
+
+        payload = json.loads(row["raw_payload_json"])
+        # Original Best Matches tile fields
+        assert "Best Matches Skill" in payload["skills"]
+        # Exact hydration fields
+        assert payload["_exact_hydration_status"] == "success"
+        assert payload["_exact_marketplace_raw"]["activityStat"]["jobActivity"]["totalHired"] == 1
+        # Copied fragments
+        assert payload["_marketplace_raw"]["title"] == "Donor Marketplace Title"
+        assert payload["_public_raw"]["title"] == "Donor Public Title"
+        # Merged source metadata
+        assert sorted(payload["_source_terms"]) == ["php", "wordpress"]
+        assert sorted(payload["_source_surfaces"]) == ["search"]
+    finally:
+        conn.close()
+
+
+def test_import_best_matches_html_enriches_with_partial_graphql_fragments(monkeypatch):
+    calls = []
+
+    def fake_fetch_exact_marketplace_jobs(config, job_ids, *, transport=None):
+        calls.append(tuple(job_ids))
+        return [
+            ExactMarketplaceJobHydrationResult(
+                job_id="123",
+                status="success",
+                payload={}, # Empty payload, but status is success
+                error_message=None,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "upwork_triage.best_matches_parse.fetch_exact_marketplace_jobs",
+        fake_fetch_exact_marketplace_jobs,
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+
+    # Insert a donor graphql_search lead with only _public_raw and _source_terms
+    donor_payload = {
+        "_source_terms": ["python"],
+        "_public_raw": {"id": "p1", "title": "Donor Public Title Only"},
+    }
+    conn.execute(
+        """
+        INSERT INTO raw_leads (job_key, source, captured_at, created_at, updated_at, raw_payload_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "upwork:123",
+            "graphql_search",
+            "2026-05-01T00:00:00Z",
+            "2026-05-01T00:00:00Z",
+            "2026-05-01T00:00:00Z",
+            json.dumps(donor_payload),
+        ),
+    )
+    conn.commit()
+
+    html = """
+    <section class="air3-card-section" data-ev-opening_uid="123" data-ev-position="0">
+        <a href="/jobs/test_~02123/">Test Title</a>
+    </section>
+    """
+
+    try:
+        summary = import_best_matches_html(
+            conn,
+            html,
+            config=object(),
+            source_query="test-bm-partial-enrich",
+        )
+
+        assert calls == [("123",)]
+        assert summary["parsed"] == 1
+        assert summary["upserted"] == 1
+        assert summary["exact_hydration_success"] == 1
+
+        row = conn.execute(
+            "SELECT raw_payload_json FROM raw_leads WHERE job_key = ? AND source = ?",
+            ("upwork:123", "best_matches_ui"),
+        ).fetchone()
+        assert row is not None
+
+        payload = json.loads(row["raw_payload_json"])
+        # Only _public_raw should be copied
+        assert "_marketplace_raw" not in payload
+        assert payload["_public_raw"]["title"] == "Donor Public Title Only"
+        assert sorted(payload["_source_terms"]) == ["python"]
+        assert "_source_surfaces" not in payload
+    finally:
+        conn.close()
+
+
+def test_import_best_matches_html_no_donor_no_enrichment(monkeypatch):
+    calls = []
+
+    def fake_fetch_exact_marketplace_jobs(config, job_ids, *, transport=None):
+        calls.append(tuple(job_ids))
+        return [
+            ExactMarketplaceJobHydrationResult(
+                job_id="123",
+                status="success",
+                payload={
+                    "contractTerms": {"personsToHire": 2},
+                },
+                error_message=None,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "upwork_triage.best_matches_parse.fetch_exact_marketplace_jobs",
+        fake_fetch_exact_marketplace_jobs,
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+
+    html = """
+    <section class="air3-card-section" data-ev-opening_uid="123" data-ev-position="0">
+        <a href="/jobs/test_~02123/">Test Title</a>
+        <div data-test="token-container">
+           <span data-test="attr-item">BM Skill</span>
+        </div>
+    </section>
+    """
+
+    try:
+        summary = import_best_matches_html(
+            conn,
+            html,
+            config=object(),
+            source_query="test-bm-no-donor",
+        )
+
+        assert calls == [("123",)]
+        assert summary["parsed"] == 1
+        assert summary["upserted"] == 1
+        assert summary["exact_hydration_success"] == 1
+
+        row = conn.execute(
+            "SELECT raw_payload_json FROM raw_leads WHERE job_key = ? AND source = ?",
+            ("upwork:123", "best_matches_ui"),
+        ).fetchone()
+        assert row is not None
+
+        payload = json.loads(row["raw_payload_json"])
+        # Should only have Best Matches tile fields and exact hydration, no other fragments
+        assert "BM Skill" in payload["skills"]
+        assert payload["_exact_hydration_status"] == "success"
+        assert payload["_exact_marketplace_raw"]["contractTerms"]["personsToHire"] == 2
+        assert "_marketplace_raw" not in payload
+        assert "_public_raw" not in payload
+        assert "_source_terms" not in payload
+        assert "_source_surfaces" not in payload
+    finally:
+        conn.close()
+
+
+def test_import_best_matches_html_donor_without_fragments_is_skipped(monkeypatch):
+    calls = []
+
+    def fake_fetch_exact_marketplace_jobs(config, job_ids, *, transport=None):
+        calls.append(tuple(job_ids))
+        return [
+            ExactMarketplaceJobHydrationResult(
+                job_id="123",
+                status="success",
+                payload={},
+                error_message=None,
+            )
+        ]
+
+    monkeypatch.setattr(
+        "upwork_triage.best_matches_parse.fetch_exact_marketplace_jobs",
+        fake_fetch_exact_marketplace_jobs,
+    )
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    initialize_db(conn)
+
+    # Insert a donor graphql_search lead without _marketplace_raw or _public_raw
+    donor_payload = {"some_other_key": "some_value"}
+    conn.execute(
+        """
+        INSERT INTO raw_leads (job_key, source, captured_at, created_at, updated_at, raw_payload_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "upwork:123",
+            "graphql_search",
+            "2026-05-01T00:00:00Z",
+            "2026-05-01T00:00:00Z",
+            "2026-05-01T00:00:00Z",
+            json.dumps(donor_payload),
+        ),
+    )
+    conn.commit()
+
+    html = """
+    <section class="air3-card-section" data-ev-opening_uid="123" data-ev-position="0">
+        <a href="/jobs/test_~02123/">Test Title</a>
+    </section>
+    """
+
+    try:
+        summary = import_best_matches_html(
+            conn,
+            html,
+            config=object(),
+            source_query="test-bm-donor-no-fragments",
+        )
+
+        assert calls == [("123",)]
+        assert summary["parsed"] == 1
+        assert summary["upserted"] == 1
+        assert summary["exact_hydration_success"] == 1
+
+        row = conn.execute(
+            "SELECT raw_payload_json FROM raw_leads WHERE job_key = ? AND source = ?",
+            ("upwork:123", "best_matches_ui"),
+        ).fetchone()
+        assert row is not None
+
+        payload = json.loads(row["raw_payload_json"])
+        assert "_marketplace_raw" not in payload
+        assert "_public_raw" not in payload
+        assert "_source_terms" not in payload
+        assert "_source_surfaces" not in payload
+        assert "some_other_key" not in payload # Ensure no unrelated keys bleed through
     finally:
         conn.close()
 

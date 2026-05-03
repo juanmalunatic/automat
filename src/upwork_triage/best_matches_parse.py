@@ -134,6 +134,74 @@ def _normalize_upwork_url(url: str | None) -> str | None:
     return f"https://www.upwork.com/{url}"
 
 
+def _enrich_best_match_with_donor_fragments(
+    conn: sqlite3.Connection,
+    current_job: dict[str, Any],
+) -> None:
+    """
+    Enriches a Best Matches job's payload with _marketplace_raw, _public_raw,
+    _source_terms, and _source_surfaces from a donor raw_lead if available.
+    """
+    job_key = current_job.get("job_key")
+    if not job_key:
+        return # Cannot enrich without a job_key
+
+    # Query for donor lead that is not from 'best_matches_ui' and has marketplace/public fragments.
+    # We use LIKE for a pragmatic check for JSON fragments within the string content.
+    # Order by captured_at DESC, id DESC to get the latest suitable donor.
+    cursor = conn.execute(
+        """
+        SELECT raw_payload_json
+        FROM raw_leads
+        WHERE job_key = ?
+          AND source != 'best_matches_ui'
+          AND (raw_payload_json LIKE '%"_marketplace_raw"%' OR raw_payload_json LIKE '%"_public_raw"%')
+        ORDER BY captured_at DESC, id DESC
+        LIMIT 1
+        """,
+        (job_key,),
+    )
+    donor_row = cursor.fetchone()
+
+    if not donor_row:
+        return # No suitable donor found
+
+    donor_payload_str = donor_row[0]
+    donor_payload = _raw_payload_dict({"raw_payload_json": donor_payload_str})
+    if not donor_payload:
+        return # Donor payload invalid
+
+    current_payload = _raw_payload_dict({"raw_payload_json": current_job.get("raw_payload_json")})
+
+    # Copy _marketplace_raw if present in donor and missing from current job
+    if "_marketplace_raw" in donor_payload and "_marketplace_raw" not in current_payload:
+        current_payload["_marketplace_raw"] = donor_payload["_marketplace_raw"]
+
+    # Copy _public_raw if present in donor and missing from current job
+    if "_public_raw" in donor_payload and "_public_raw" not in current_payload:
+        current_payload["_public_raw"] = donor_payload["_public_raw"]
+
+    # Merge _source_terms (if lists)
+    donor_source_terms = donor_payload.get("_source_terms")
+    if isinstance(donor_source_terms, list):
+        current_source_terms = current_payload.get("_source_terms")
+        if isinstance(current_source_terms, list):
+            current_payload["_source_terms"] = sorted(list(set(current_source_terms + donor_source_terms)))
+        else:
+            current_payload["_source_terms"] = donor_source_terms
+
+    # Merge _source_surfaces (if lists)
+    donor_source_surfaces = donor_payload.get("_source_surfaces")
+    if isinstance(donor_source_surfaces, list):
+        current_source_surfaces = current_payload.get("_source_surfaces")
+        if isinstance(current_source_surfaces, list):
+            current_payload["_source_surfaces"] = sorted(list(set(current_source_surfaces + donor_source_surfaces)))
+        else:
+            current_payload["_source_surfaces"] = donor_source_surfaces
+
+    current_job["raw_payload_json"] = json.dumps(current_payload, ensure_ascii=False)
+
+
 def parse_best_matches_html(html: str) -> list[dict[str, Any]]:
     parser = _BestMatchesParser()
     parser.feed(html)
@@ -383,6 +451,9 @@ def import_best_matches_html(
 
         if job.get("_exact_hydration_status") != "success":
             continue
+
+        # Enrich the best matches job payload with fragments from a donor if available
+        _enrich_best_match_with_donor_fragments(conn, job)
 
         upsert_raw_lead(
             conn,
