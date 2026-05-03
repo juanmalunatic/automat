@@ -249,17 +249,24 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
         lines.append("-" * 30)
 
     # Marketplace search layer
-    lines.append("marketplace_search_layer")
-    lines.append("-" * 30)
     mp_lines = _format_marketplace_search_layer_fields(lead)
-    lines.extend(mp_lines)
+    if any("Layer status: missing" in line for line in mp_lines):
+        lines.append("marketplace_search_layer: missing")
+    else:
+        lines.append("marketplace_search_layer")
+        lines.append("-" * 30)
+        lines.extend(mp_lines)
 
     # Public search layer
-    lines.append("-" * 30)
-    lines.append("public_search_layer")
-    lines.append("-" * 30)
     pub_lines = _format_public_search_layer_fields(lead)
-    lines.extend(pub_lines)
+    if any("Layer status: missing" in line for line in pub_lines):
+        lines.append("-" * 30)
+        lines.append("public_search_layer: missing")
+    else:
+        lines.append("-" * 30)
+        lines.append("public_search_layer")
+        lines.append("-" * 30)
+        lines.extend(pub_lines)
 
     # by_id layer (unchanged)
     lines.append("-" * 30)
