@@ -383,7 +383,7 @@ def test_render_best_matches_payload_fields() -> None:
     output = render_raw_lead_review(lead)
 
     assert "best_matches_layer" in output
-    source_section = _layer_section(output, "best_matches_layer", "by_id_layer")
+    source_section = _layer_section(output, "best_matches_layer", "marketplace_search_layer")
     _assert_face_value_field(source_section, "Posted:", "Posted 12 minutes ago")
     _assert_face_value_field(source_section, "Featured:", "yes")
     _assert_face_value_field(source_section, "Contract:", "Hourly")
@@ -1287,7 +1287,7 @@ def test_best_matches_layer_section_exists_for_best_matches_lead() -> None:
     lead["source"] = "best_matches_ui"
     output = render_raw_lead_review(lead)
     assert "best_matches_layer" in output
-    source_section = _layer_section(output, "best_matches_layer", "by_id_layer")
+    source_section = _layer_section(output, "best_matches_layer", "marketplace_search_layer")
     for label in _BEST_MATCHES_LAYER_LABELS:
         assert label in source_section, f"Missing {label} in best_matches_layer"
     # Unsupported labels absent

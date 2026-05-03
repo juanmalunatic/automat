@@ -241,24 +241,25 @@ def render_raw_lead_review(lead: dict[str, Any], description_chars: int = 1600) 
     lines.append("-" * 30)
     source = lead.get("source")
     if source == "best_matches_ui":
-        # Best matches layer (unchanged)
+        # Best matches layer
         lines.append("best_matches_layer")
         lines.append("-" * 30)
         source_lines = _format_source_payload_fields(lead)
         lines.extend(source_lines)
-    else:
-        # Marketplace search layer
-        lines.append("marketplace_search_layer")
         lines.append("-" * 30)
-        mp_lines = _format_marketplace_search_layer_fields(lead)
-        lines.extend(mp_lines)
 
-        # Public search layer
-        lines.append("-" * 30)
-        lines.append("public_search_layer")
-        lines.append("-" * 30)
-        pub_lines = _format_public_search_layer_fields(lead)
-        lines.extend(pub_lines)
+    # Marketplace search layer
+    lines.append("marketplace_search_layer")
+    lines.append("-" * 30)
+    mp_lines = _format_marketplace_search_layer_fields(lead)
+    lines.extend(mp_lines)
+
+    # Public search layer
+    lines.append("-" * 30)
+    lines.append("public_search_layer")
+    lines.append("-" * 30)
+    pub_lines = _format_public_search_layer_fields(lead)
+    lines.extend(pub_lines)
 
     # by_id layer (unchanged)
     lines.append("-" * 30)
