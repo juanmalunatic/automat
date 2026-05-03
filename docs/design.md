@@ -560,12 +560,13 @@ Leads are displayed with all available source layers for full auditability, with
 - `best_matches_ui` leads: `best_matches_layer` + `marketplace_search_layer` + `public_search_layer` + `by_id_layer` + `manual_scrape_layer` + `normalized_projection`
 
 #### Current implementation reality
-- Current implementation already has raw review displaying all layers and collapsing missing marketplace/public/manual layers.
-- Current `graphql_layer` console display is a transitional normalized/source hybrid; it will be split into `marketplace_search_layer` and `public_search_layer` using direct raw-path mappings, not merged normalized output.
-- Current `best_matches_layer` and `by_id_layer` displays are closer to raw-path output but remain implemented in `leads.py`.
-- `manual_scrape_layer` exists conceptually via manual enrichment tables/parsing but is not yet joined into raw lead review.
-- Best Matches leads do not yet have marketplace/public GraphQL layer parity.
-- Layers are not yet split into modular files/classes.
+
+- Raw lead review now displays independent evidence layers.
+- `graphql_search` leads display `marketplace_search_layer`, `public_search_layer`, `by_id_layer`, and `manual_scrape_layer`.
+- `best_matches_ui` leads display `best_matches_layer`, `marketplace_search_layer`, `public_search_layer`, `by_id_layer`, and `manual_scrape_layer`.
+- Missing `marketplace_search_layer`, `public_search_layer`, and `manual_scrape_layer` collapse compactly.
+- Raw lead rendering now lives in `lead_review.py`; `leads.py` is mainly raw-lead DB/query/mutation logic plus compatibility re-export.
+- Current filtering and normalization are still transitional: discard tags still use a mix of `raw_*` columns, direct payload paths, and legacy `normalize_job_payload`.
 - Next target: build a layer-aware signal resolver / provenance-aware normalizer contract for Best Matches-first filtering and promotion.
 
 #### Refactor roadmap
